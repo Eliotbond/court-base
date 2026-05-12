@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@club-app/shared-types": "*",
+    "@primevue/themes": "^4.5.4",
     "firebase": "^11.0.0",
     "pinia": "^2.2.0",
     "primeicons": "^7.0.0",
