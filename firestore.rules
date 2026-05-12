@@ -28,6 +28,20 @@ service cloud.firestore {
     }
     function isAdmin() { return hasRole('admin'); }
     function isCoach() { return hasRole('coach'); }
+    // Le user est lié à ce member (auto-lecture autorisée).
+    function isLinkedMember(memberId) {
+      return isSignedIn() && userDoc().memberId == memberId;
+    }
+    // Le coach est attaché à cette team (via /users/{uid}.teamIds).
+    function isCoachOfTeam(teamId) {
+      return isCoach() && teamId != null && teamId in userDoc().teamIds;
+    }
+    // Coach attaché à la team de ce booking parent.
+    function isCoachOfBooking(bookingId) {
+      return isCoachOfTeam(
+        get(/databases/$(database)/documents/bookings/$(bookingId)).data.teamId
+      );
+    }
 
     // -------- rootAdmin bypass (à placer en premier dans chaque match) --------
     // Approche : check rootAdmin dans chaque règle.
@@ -52,8 +66,18 @@ service cloud.firestore {
     // /members, /roles, /invitations
     // ========================================================================
     match /members/{memberId} {
-      allow read: if isRootAdmin() || isAdmin() || isCoach() || hasRole('official');
+      // Doc parent : pas de contact info. Lisible par tous les rôles club et le membre lui-même.
+      allow read: if isRootAdmin() || isAdmin() || isCoach() ||
+        hasRole('official') || isLinkedMember(memberId);
       allow write: if isRootAdmin() || isAdmin();
+
+      // Contact info isolés ici : email + phone.
+      // Lecture : admin, coach, et le membre lui-même. PAS les official-only.
+      // Écriture : admin et le membre lui-même.
+      match /private/contact {
+        allow read: if isRootAdmin() || isAdmin() || isCoach() || isLinkedMember(memberId);
+        allow write: if isRootAdmin() || isAdmin() || isLinkedMember(memberId);
+      }
     }
     match /roles/{roleId} {
       allow read: if isSignedIn();
@@ -110,8 +134,14 @@ service cloud.firestore {
     // ========================================================================
     match /bookings/{bookingId} {
       allow read: if isSignedIn();
-      // Write rules à raffiner (coach pour ses team slots, admin pour tout)
-      allow write: if isRootAdmin() || isAdmin() || isCoach();
+      // Create/delete : admin only (les bookings sont générés par Function ou créés par admin).
+      allow create: if isRootAdmin() || isAdmin();
+      allow delete: if isRootAdmin() || isAdmin();
+      // Update : admin tout, coach uniquement pour sa team + champs limités (cancel + log).
+      allow update: if isRootAdmin() || isAdmin() ||
+        (isCoachOfTeam(resource.data.teamId) &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['status', 'cancelReason', 'actionLog']));
 
       match /officialAssignments/{assignmentId} {
         allow read: if isSignedIn();
@@ -127,8 +157,9 @@ service cloud.firestore {
       }
 
       match /attendance/{attendanceId} {
-        allow read: if isRootAdmin() || isAdmin() || isCoach();
-        allow write: if isRootAdmin() || isAdmin() || isCoach();
+        // Coach restreint à sa team (via teamId du booking parent).
+        allow read: if isRootAdmin() || isAdmin() || isCoachOfBooking(bookingId);
+        allow write: if isRootAdmin() || isAdmin() || isCoachOfBooking(bookingId);
       }
     }
 

@@ -42,4 +42,7 @@ admin.initializeApp()
 // Migrations
 // export { runMigrations } from './migrations/runMigrations'
 
+// Admin
+export { setRootAdminClaim } from './admin/setRootAdminClaim'
+
 export const ping = () => 'pong'

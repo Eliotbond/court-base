@@ -61,6 +61,19 @@ Functions à version `N+1` doivent gérer le schéma `N` jusqu'à fin de migrati
 - [ ] Si nouvelle Function : ajoutée à `docs/firebase.md` (section Functions)
 - [ ] Si touche schéma : `docs/firebase.md` + `firestore.rules` + `packages/shared-types` à jour
 
+## Bootstrap du premier rootAdmin
+
+Pour seeder le premier rootAdmin sur un nouveau projet Firebase : exécuter le script `scripts/setRootAdmin.ts` localement avec les credentials d'un compte de service.
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+npx ts-node scripts/setRootAdmin.ts user@example.com
+```
+
+Ce script n'est **pas** une Cloud Function déployée — c'est une opération de bootstrap unique par projet, car `setRootAdminClaim` (Function) nécessite déjà un rootAdmin existant.
+
+Pour révoquer : ajouter le flag `--revoke`.
+
 ## Ce qu'il NE FAUT PAS faire ici
 
 - Hardcoder un `projectId` (toujours via env / context).

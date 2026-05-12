@@ -10,6 +10,7 @@
 /config/club                          (singleton)
 /users/{uid}
 /members/{memberId}
+  /private/contact                    (singleton, ID fixe — email, phone)
 /roles/{roleId}
 /invitations/{inviteId}
 /venues/{venueId}
@@ -63,7 +64,7 @@ Un user appartient à **un seul projet**. Pas de `clubMemberships[]`.
 ### `/members/{memberId}`
 ```ts
 {
-  firstName, lastName, email, phone: string
+  firstName, lastName: string
   roles: string[]                       // refs vers /roles
   linkedUserId: string | null           // uid Auth
   licenseNumber: string
@@ -74,6 +75,18 @@ Un user appartient à **un seul projet**. Pas de `clubMemberships[]`.
   active: boolean
 }
 ```
+**Pas de `email`/`phone` ici** — voir `/members/{memberId}/private/contact` ci-dessous. Le doc parent est lisible par tous les rôles club (incl. `official`-only). Les contacts sont gated séparément.
+
+### `/members/{memberId}/private/contact` (singleton, ID fixe `contact`)
+```ts
+{
+  email: string
+  phone: string
+}
+```
+Lecture : `rootAdmin`, `admin`, `coach`, et le membre lui-même (via `linkedUserId == request.auth.uid`).
+Écriture : `rootAdmin`, `admin`, et le membre lui-même.
+Les `official`-only (pas admin, pas coach) **ne voient pas** ce doc.
 
 ### `/roles/{roleId}`
 ```ts
@@ -340,6 +353,7 @@ Déployées sur **chaque projet client** via CI cross-projet (voir `deployment.m
 | `applyPaymentException` | `paymentExceptionRequests/*` update | Approve → applique new dates au `due`. Reject → restore. |
 | `applyLicenseRequest` | `licenseRequests/*` update | Approve → `member.licensed = true`. |
 | `runMigrations` | Callable (admin-only) | Applique migrations en attente jusqu'à version cible. Idempotent. |
+| `setRootAdminClaim` | Callable (rootAdmin-only) | Toggle le claim `rootAdmin` sur un user (par email). Préserve les autres claims. Le caller ne peut pas se révoquer lui-même. Bootstrap du tout premier rootAdmin : via script Admin SDK hors-app. |
 
 ## Auth
 
