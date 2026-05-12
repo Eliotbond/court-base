@@ -74,7 +74,10 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
       <div
         class="w-7 h-7 rounded-md bg-emerald-600 flex items-center justify-center text-white"
       >
-        <Dribbble :size="16" :stroke-width="2" />
+        <Dribbble
+          :size="16"
+          :stroke-width="2"
+        />
       </div>
       <div class="flex flex-col leading-tight">
         <span class="text-[13px] font-semibold tracking-tight">Courtbase</span>
@@ -91,10 +94,18 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
         BC
       </div>
       <div class="flex-1 min-w-0">
-        <div class="text-[12px] font-medium truncate">BC Lausanne-Sud</div>
-        <div class="text-[10px] text-surface-500 truncate">Saison 2025-26</div>
+        <div class="text-[12px] font-medium truncate">
+          BC Lausanne-Sud
+        </div>
+        <div class="text-[10px] text-surface-500 truncate">
+          Saison 2025-26
+        </div>
       </div>
-      <ChevronsUpDown :size="16" class="text-surface-400" :stroke-width="2" />
+      <ChevronsUpDown
+        :size="16"
+        class="text-surface-400"
+        :stroke-width="2"
+      />
     </button>
 
     <nav class="px-2 py-2 flex-1 overflow-y-auto text-[13px]">
@@ -110,9 +121,16 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
         class="nav-item flex items-center gap-2.5 px-3 h-9 rounded-md text-surface-600 hover:bg-surface-50 relative"
         active-class="nav-item--active"
       >
-        <component :is="item.icon" :size="16" :stroke-width="2" />
+        <component
+          :is="item.icon"
+          :size="16"
+          :stroke-width="2"
+        />
         <span>{{ item.label }}</span>
-        <span v-if="item.count" class="ml-auto text-[11px] text-surface-400 num">
+        <span
+          v-if="item.count"
+          class="ml-auto text-[11px] text-surface-400 num"
+        >
           {{ item.count }}
         </span>
       </RouterLink>
@@ -129,9 +147,17 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
         class="nav-item flex items-center gap-2.5 px-3 h-9 rounded-md text-surface-600 hover:bg-surface-50 relative"
         active-class="nav-item--active"
       >
-        <component :is="item.icon" :size="16" :stroke-width="2" />
+        <component
+          :is="item.icon"
+          :size="16"
+          :stroke-width="2"
+        />
         <span>{{ item.label }}</span>
-        <Pill v-if="item.badge" :variant="item.badge.variant" class="ml-auto !text-[11px] num">
+        <Pill
+          v-if="item.badge"
+          :variant="item.badge.variant"
+          class="ml-auto !text-[11px] num"
+        >
           {{ item.badge.text }}
         </Pill>
       </RouterLink>
@@ -148,7 +174,11 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
         class="nav-item flex items-center gap-2.5 px-3 h-9 rounded-md text-surface-600 hover:bg-surface-50 relative"
         active-class="nav-item--active"
       >
-        <component :is="item.icon" :size="16" :stroke-width="2" />
+        <component
+          :is="item.icon"
+          :size="16"
+          :stroke-width="2"
+        />
         <span>{{ item.label }}</span>
       </RouterLink>
 
@@ -164,7 +194,11 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
         class="nav-item flex items-center gap-2.5 px-3 h-9 rounded-md text-surface-600 hover:bg-surface-50 relative"
         active-class="nav-item--active"
       >
-        <component :is="item.icon" :size="16" :stroke-width="2" />
+        <component
+          :is="item.icon"
+          :size="16"
+          :stroke-width="2"
+        />
         <span>{{ item.label }}</span>
       </RouterLink>
     </nav>

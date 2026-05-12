@@ -9,7 +9,10 @@ const router = useRouter()
   <main class="forbidden">
     <h1>403 — Accès refusé</h1>
     <p>Vous n'avez pas les droits pour accéder à cette page.</p>
-    <Button label="Retour à l'accueil" @click="router.push('/')" />
+    <Button
+      label="Retour à l'accueil"
+      @click="router.push('/')"
+    />
   </main>
 </template>
 

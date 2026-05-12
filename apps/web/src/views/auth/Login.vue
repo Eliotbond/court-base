@@ -101,7 +101,9 @@ async function onApple() {
 <template>
   <main class="login">
     <Card class="login__card">
-      <template #title>Connexion</template>
+      <template #title>
+        Connexion
+      </template>
       <template #content>
         <div class="login__providers">
           <Button
@@ -128,9 +130,14 @@ async function onApple() {
           />
         </div>
 
-        <Divider align="center"><span class="login__divider-text">ou</span></Divider>
+        <Divider align="center">
+          <span class="login__divider-text">ou</span>
+        </Divider>
 
-        <form class="login__form" @submit.prevent="onSubmit">
+        <form
+          class="login__form"
+          @submit.prevent="onSubmit"
+        >
           <div class="login__field">
             <label for="email">Email</label>
             <InputText
@@ -145,8 +152,8 @@ async function onApple() {
           <div class="login__field">
             <label for="password">Mot de passe</label>
             <Password
-              input-id="password"
               v-model="password"
+              input-id="password"
               :feedback="false"
               toggle-mask
               autocomplete="current-password"
@@ -156,7 +163,13 @@ async function onApple() {
             />
           </div>
 
-          <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
+          <Message
+            v-if="error"
+            severity="error"
+            :closable="false"
+          >
+            {{ error }}
+          </Message>
 
           <Button
             type="submit"

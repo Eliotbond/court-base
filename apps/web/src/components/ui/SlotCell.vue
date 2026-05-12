@@ -33,7 +33,7 @@ const isEmpty = computed(() => props.kind === 'empty')
 
 <template>
   <div
-    class="border rounded px-2 py-1.5 text-[11px] leading-tight overflow-hidden transition-transform"
+    class="border rounded-md px-2 py-1.5 text-[11px] leading-tight overflow-hidden transition-transform"
     :class="[
       variantClass,
       isEmpty ? '' : 'cursor-pointer hover:-translate-y-px hover:shadow-pop',

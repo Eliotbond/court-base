@@ -11,6 +11,7 @@ import {
 import { doc, getDoc } from 'firebase/firestore'
 import type { User, UserData } from '@club-app/shared-types'
 import { auth, db } from '@/services/firebase'
+import { acceptInvitation } from '@/services/cloudFunctions'
 
 /**
  * Levée quand un compte Firebase Auth valide signe in mais n'a pas de
@@ -69,11 +70,28 @@ export function signInWithEmail(email: string, password: string): Promise<void> 
 
 /**
  * Vérifie qu'un user Firebase Auth a un doc /users/{uid} de provisioning.
- * Sinon : sign out + throw NotAuthorizedError (pour ne pas laisser un compte
- * Auth orphelin attaché au projet).
+ *
+ * Si absent : on tente d'abord `acceptInvitation` (callable). Cette callable
+ * cherche une invitation pending par email (`/invitations`) et crée le doc
+ * /users/{uid} à partir d'elle. Si pas d'invitation, on sign out et on throw
+ * NotAuthorizedError (deny-orphan : pas d'auto-create sans invitation).
  */
 async function ensureProvisioned(cred: UserCredential): Promise<void> {
-  const userDoc = await getUserDoc(cred.user.uid)
+  let userDoc = await getUserDoc(cred.user.uid)
+  if (userDoc) return
+
+  try {
+    await acceptInvitation()
+  } catch {
+    // Pas d'invitation OU callable indispo → orphan rejected.
+    await signOut(auth)
+    throw new NotAuthorizedError()
+  }
+
+  // Refresh le token pour que les éventuels nouveaux claims soient visibles
+  // immédiatement, et re-fetch le doc qu'on vient de créer.
+  await cred.user.getIdToken(true)
+  userDoc = await getUserDoc(cred.user.uid)
   if (!userDoc) {
     await signOut(auth)
     throw new NotAuthorizedError()

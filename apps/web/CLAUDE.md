@@ -33,7 +33,42 @@ Tout raccourci = à refuser ou refactor.
 - **Stores** : style composition API (`defineStore('name', () => { ... })`).
 - **Dates** : `Timestamp` Firestore en storage, `Date` à la frontière repo. `"HH:MM"` strings pour times.
 - **Types** : importés depuis `@shared-types` (package workspace).
-- **PrimeVue** : `<PButton>`, `<PInputText>`, etc. Pas de réimplémentation maison de composants existants.
+- **PrimeVue** : import local par fichier (`import Button from 'primevue/button'`, `import DataTable from 'primevue/datatable'`, …), pas d'enregistrement global. Utiliser le composant directement dans le template (`<Button>`, `<DataTable>`). Pas de réimplémentation maison de composants existants.
+
+## Cloud Functions — comment les appeler
+
+Le projet expose 17 Cloud Functions (cf. `functions/src/index.ts`). **La plupart sont des triggers** (Firestore writes ou scheduled) — elles tournent automatiquement, rien à faire côté web. **5 sont callables** (= invocables depuis le client) :
+
+| Function | Auth requise | Quand |
+|---|---|---|
+| `previewSeasonBookings({ seasonId })` | admin / rootAdmin | Écran `/seasons/:id/activate` (dry-run avant activation) |
+| `runMigrations({ targetVersion? })` | admin / rootAdmin | Settings → ops (premier appel sur projet vierge crée `/_meta/schema`) |
+| `setRootAdminClaim({ email, value })` | **rootAdmin uniquement** | Settings → Admin team. Anti-self-revoke. |
+| `listRootAdminUids()` | admin / rootAdmin | Settings → Admin team : résout le badge `rootAdmin` (claim Auth, pas dans Firestore). |
+| `acceptInvitation()` | signed-in | Auto-appelée par `users.repo.ts` après une sign-in OAuth si `/users/{uid}` est absent. Cherche `/invitations` par email et provisionne le user. |
+
+**Toujours passer par les wrappers typés** dans `apps/web/src/services/cloudFunctions.ts` :
+
+```ts
+import { previewSeasonBookings } from '@/services/cloudFunctions'
+
+const preview = await previewSeasonBookings({ seasonId: '2025-2026' })
+// preview.count, preview.byCourt, preview.byDayOfWeek
+```
+
+**Pourquoi les wrappers et pas `httpsCallable()` direct dans les composants :**
+1. Types Input/Output garantis.
+2. La région `europe-west6` est gérée dans `services/firebase.ts` (sinon le SDK appelle `us-central1` → 404 cryptique).
+3. Si le contrat de la function change, un seul endroit à mettre à jour.
+
+**Lieu d'appel** : dans un **store Pinia** ou un **composable**, jamais directement dans un composant (cf. architecture en couches ci-dessus). Le wrapper retourne une Promise typée — le store la wrap en `loading/error/result`.
+
+**Erreurs** : `httpsCallable` throw une `FunctionsError` (sous-classe de `FirebaseError`). Codes typiques :
+- `unauthenticated` → user pas signé
+- `permission-denied` → user signé mais pas le bon rôle
+- `invalid-argument` → input mal formé (fix côté caller)
+- `not-found` → ressource cible inexistante
+- `internal` → bug serveur (logger côté Function, retry sans risque)
 
 ## Routing — allowlist
 

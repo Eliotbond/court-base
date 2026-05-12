@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
+import { getFunctions } from 'firebase/functions'
 
 /**
  * Firebase init — un seul projet par instance d'app (cf. modèle SAAS one-project-per-client).
@@ -18,3 +19,8 @@ const firebaseConfig = {
 export const firebaseApp = initializeApp(firebaseConfig)
 export const auth = getAuth(firebaseApp)
 export const db = getFirestore(firebaseApp)
+
+// Functions runtime région-épinglée. Doit matcher `setGlobalOptions({ region: 'europe-west6' })`
+// dans `functions/src/index.ts`. Sans cette région, le SDK appelle un endpoint us-central1
+// qui n'existe pas → erreur "functions/internal" cryptique.
+export const functions = getFunctions(firebaseApp, 'europe-west6')

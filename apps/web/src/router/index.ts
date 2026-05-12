@@ -36,13 +36,13 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'dashboard',
         name: 'dashboard',
-        component: placeholder,
+        component: () => import('@/views/Dashboard.vue'),
         meta: { title: 'Dashboard', subtitle: "Vue d'ensemble du club", allowedRoles: ALL_AUTHED },
       },
       {
         path: 'members',
         name: 'members',
-        component: placeholder,
+        component: () => import('@/views/Members.vue'),
         meta: { title: 'Members', allowedRoles: ADMIN_COACH },
       },
       {
@@ -54,7 +54,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'teams',
         name: 'teams',
-        component: placeholder,
+        component: () => import('@/views/Teams.vue'),
         meta: { title: 'Teams', allowedRoles: ADMIN_COACH },
       },
       {
@@ -66,8 +66,20 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'seasons',
         name: 'seasons',
-        component: placeholder,
+        component: () => import('@/views/Seasons.vue'),
         meta: { title: 'Seasons', allowedRoles: ADMIN_ONLY },
+      },
+      {
+        path: 'seasons/new',
+        name: 'season-new',
+        component: () => import('@/views/SeasonNewWizard.vue'),
+        meta: { title: 'Nouvelle saison', allowedRoles: ADMIN_ONLY },
+      },
+      {
+        path: 'seasons/:id/activate',
+        name: 'season-activate',
+        component: () => import('@/views/SeasonActivate.vue'),
+        meta: { title: 'Activer la saison', allowedRoles: ADMIN_ONLY },
       },
       {
         path: 'bookings',
@@ -120,7 +132,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'settings',
         name: 'settings',
-        component: placeholder,
+        component: () => import('@/views/Settings.vue'),
         meta: { title: 'Settings', allowedRoles: ADMIN_ONLY },
       },
     ],

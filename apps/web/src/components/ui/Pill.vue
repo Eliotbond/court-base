@@ -25,7 +25,7 @@ const variantClass = computed(() => {
       return 'bg-violet-50 text-violet-700'
     case 'slate':
     default:
-      return 'bg-surface-100 text-surface-600'
+      return 'bg-slate-100 text-slate-600'
   }
 })
 </script>
