@@ -58,21 +58,52 @@ Functions à version `N+1` doivent gérer le schéma `N` jusqu'à fin de migrati
 
 - [ ] `npm run build -w functions` passe (TSC)
 - [ ] `npm run lint -w functions` passe
-- [ ] Si nouvelle Function : ajoutée à `docs/firebase.md` (section Functions)
+- [ ] Si nouvelle Function : ajoutée à `docs/firebase.md` (section Functions) **et** ajoutée comme export dans `functions/src/index.ts`
 - [ ] Si touche schéma : `docs/firebase.md` + `firestore.rules` + `packages/shared-types` à jour
+- [ ] Si callable côté web : wrapper typé dans `apps/web/src/services/cloudFunctions.ts` + entrée dans la table de `apps/web/CLAUDE.md`
+
+## Avant de deploy
+
+**Toujours repacker `shared-types` en tarball** (le buildpack Cloud Functions ne sait pas résoudre les workspace symlinks) :
+
+```bash
+cd packages/shared-types && npm pack --pack-destination ../../functions/
+cd - && firebase deploy --only functions:<functionName> -P dev
+```
+
+Cf. `docs/deployment.md` section "Cloud Functions deploy — gotchas" pour le détail (Blaze obligatoire, IAM cloudbuild SA, tarball, cleanup policy).
 
 ## Bootstrap du premier rootAdmin
 
-Pour seeder le premier rootAdmin sur un nouveau projet Firebase : exécuter le script `scripts/setRootAdmin.ts` localement avec les credentials d'un compte de service.
+Pour seeder le premier rootAdmin sur un nouveau projet Firebase : exécuter le script `scripts/setRootAdmin.ts` localement.
 
+**Chemin principal (ADC)** :
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-npx ts-node scripts/setRootAdmin.ts user@example.com
+gcloud auth application-default login
+npm run bootstrap:root-admin -w functions -- --project <projectId> user@example.com
 ```
 
-Ce script n'est **pas** une Cloud Function déployée — c'est une opération de bootstrap unique par projet, car `setRootAdminClaim` (Function) nécessite déjà un rootAdmin existant.
+**Chemin alternatif (service account JSON)** :
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json npm run bootstrap:root-admin -w functions -- --project <projectId> user@example.com
+```
 
-Pour révoquer : ajouter le flag `--revoke`.
+**Révoquer** (n'enlève que le claim `rootAdmin`, ne touche pas `/users/{uid}`) :
+```bash
+npm run bootstrap:root-admin -w functions -- --project <projectId> user@example.com --revoke
+```
+
+**Aide / formes acceptées** :
+```bash
+npm run bootstrap:root-admin -w functions -- --help
+# Équivalents :
+#   --project <id> <email>            (positionnel)
+#   --project=<id> --email=<email>    (formes "="; ordre libre)
+```
+
+Ce script n'est **pas** une Cloud Function déployée — c'est une opération de bootstrap unique par projet, car `setRootAdminClaim` (Function) nécessite déjà un rootAdmin existant. L'utilisateur doit avoir un compte Auth Firebase (créé via Console ou première connexion OAuth) — sinon le script échoue proprement avec un message explicite.
+
+Le script vit volontairement dans `functions/scripts/` (hors `src/`) pour rester exclu du build TypeScript de production (`tsc` rootDir=src). Il est exécuté via `tsx` depuis le devDep — il n'est jamais déployé.
 
 ## Ce qu'il NE FAUT PAS faire ici
 

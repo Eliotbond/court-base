@@ -18,31 +18,36 @@ admin.initializeApp()
 // =============================================================================
 
 // Bookings
-// export { generateSeasonBookings } from './bookings/generateSeasonBookings'
-// export { previewSeasonBookings } from './bookings/previewSeasonBookings'
-// export { applyClosurePeriod } from './bookings/applyClosurePeriod'
+export { generateSeasonBookings } from './bookings/generateSeasonBookings'
+export { previewSeasonBookings } from './bookings/previewSeasonBookings'
+export { applyClosurePeriod } from './bookings/applyClosurePeriod'
 
 // Matches
-// export { handleMatchSlotChange } from './matches/handleMatchSlotChange'
+export { handleMatchSlotChange } from './matches/handleMatchSlotChange'
 
 // Officials
-// export { autoOfficialsNeededNotification } from './officials/autoOfficialsNeeded'
-// export { matchReminders } from './officials/matchReminders'
+export { autoOfficialsNeededNotification } from './officials/autoOfficialsNeeded'
+export { matchReminders } from './officials/matchReminders'
 
 // Dues
-// export { initiateDuesOnPlayerActivation } from './dues/initiate'
-// export { issueDuesScheduled } from './dues/issueScheduled'
-// export { markOverdueScheduled } from './dues/markOverdue'
-// export { syncMemberDuesStatus } from './dues/syncMemberStatus'
+export { initiateDuesOnPlayerActivation } from './dues/initiateDuesOnPlayerActivation'
+export { issueDuesScheduled } from './dues/issueDuesScheduled'
+export { markOverdueScheduled } from './dues/markOverdueScheduled'
+export { syncMemberDuesStatus } from './dues/syncMemberDuesStatus'
 
 // Exceptions / Licenses
-// export { applyPaymentException } from './exceptions/applyPaymentException'
-// export { applyLicenseRequest } from './licenses/applyLicenseRequest'
+export {
+  applyPaymentException,
+  applyPaymentExceptionOnCreate,
+} from './exceptions/applyPaymentException'
+export { applyLicenseRequest } from './licenses/applyLicenseRequest'
 
 // Migrations
-// export { runMigrations } from './migrations/runMigrations'
+export { runMigrations } from './migrations/runMigrations'
 
 // Admin
 export { setRootAdminClaim } from './admin/setRootAdminClaim'
+export { listRootAdminUids } from './admin/listRootAdminUids'
+export { acceptInvitation } from './admin/acceptInvitation'
 
 export const ping = () => 'pong'
