@@ -1,0 +1,192 @@
+rules_version = '2';
+
+// =============================================================================
+// Firestore Security Rules — Club Management App
+// =============================================================================
+// Source de vérité documentée : docs/firebase.md (section "Security rules").
+// Toute modification ici doit être reflétée dans docs/firebase.md.
+//
+// Modèle : un projet Firebase = un club. Pas de filtrage clubId.
+// Rôles : rootAdmin (claim) > admin > coach > official > player (futur).
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------- Helpers --------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isRootAdmin() {
+      return isSignedIn() && request.auth.token.rootAdmin == true;
+    }
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function hasRole(role) {
+      return isSignedIn() && (role in userDoc().roles);
+    }
+    function isAdmin() { return hasRole('admin'); }
+    function isCoach() { return hasRole('coach'); }
+
+    // -------- rootAdmin bypass (à placer en premier dans chaque match) --------
+    // Approche : check rootAdmin dans chaque règle.
+
+    // ========================================================================
+    // /config/club  — singleton config du club
+    // ========================================================================
+    match /config/club {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /users/{uid}
+    // ========================================================================
+    match /users/{uid} {
+      allow read: if isRootAdmin() || isAdmin() || request.auth.uid == uid;
+      allow write: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /members, /roles, /invitations
+    // ========================================================================
+    match /members/{memberId} {
+      allow read: if isRootAdmin() || isAdmin() || isCoach() || hasRole('official');
+      allow write: if isRootAdmin() || isAdmin();
+    }
+    match /roles/{roleId} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+    match /invitations/{inviteId} {
+      allow read, write: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /venues + /courts + /timeSlots
+    // ========================================================================
+    match /venues/{venueId} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+
+      match /courts/{courtId} {
+        allow read: if isSignedIn();
+        allow write: if isRootAdmin() || isAdmin();
+
+        match /timeSlots/{slotId} {
+          allow read: if isSignedIn();
+          allow write: if isRootAdmin() || isAdmin();
+        }
+      }
+    }
+
+    // ========================================================================
+    // /teams
+    // ========================================================================
+    match /teams/{teamId} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /matchTypes, /seasons, /closurePeriods
+    // ========================================================================
+    match /matchTypes/{id} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+    match /seasons/{id} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+    match /closurePeriods/{id} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /bookings + sub-collections
+    // ========================================================================
+    match /bookings/{bookingId} {
+      allow read: if isSignedIn();
+      // Write rules à raffiner (coach pour ses team slots, admin pour tout)
+      allow write: if isRootAdmin() || isAdmin() || isCoach();
+
+      match /officialAssignments/{assignmentId} {
+        allow read: if isSignedIn();
+        allow create: if isRootAdmin() || isAdmin() ||
+          // Self-register : l'official crée son propre assignment
+          (isSignedIn() && request.resource.data.status == 'pending');
+        allow update: if isRootAdmin() || isAdmin() ||
+          // L'official peut update status + respondedAt sur SA propre assignation
+          (resource.data.memberId == userDoc().memberId &&
+           request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'respondedAt']));
+        allow delete: if isRootAdmin() || isAdmin();
+      }
+
+      match /attendance/{attendanceId} {
+        allow read: if isRootAdmin() || isAdmin() || isCoach();
+        allow write: if isRootAdmin() || isAdmin() || isCoach();
+      }
+    }
+
+    // ========================================================================
+    // /matchRequests
+    // ========================================================================
+    match /matchRequests/{id} {
+      allow read: if isRootAdmin() || isAdmin() || isCoach();
+      allow create: if isRootAdmin() || isAdmin() || isCoach();
+      allow update, delete: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /notifications
+    // ========================================================================
+    match /notifications/{id} {
+      allow read: if isSignedIn();
+      allow create: if isRootAdmin() || isAdmin();
+      // tout user peut s'ajouter à readBy[]
+      allow update: if isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']);
+      allow delete: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /dues
+    // ========================================================================
+    match /dues/{id} {
+      allow read: if isRootAdmin() || isAdmin() || isCoach();
+      // Pas d'écriture directe par les coachs. Admin pour paiement manuel, Functions pour transitions.
+      allow write: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /paymentExceptionRequests
+    // ========================================================================
+    match /paymentExceptionRequests/{id} {
+      allow read: if isRootAdmin() || isAdmin() || isCoach();
+      allow create: if isRootAdmin() || isAdmin() || isCoach();
+      allow update, delete: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /licenseRequests
+    // ========================================================================
+    match /licenseRequests/{id} {
+      allow read: if isRootAdmin() || isAdmin() || isCoach();
+      allow create: if isRootAdmin() || isAdmin() || isCoach();
+      allow update, delete: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /_meta/schema — réservé migration runner
+    // ========================================================================
+    match /_meta/{doc} {
+      allow read: if isRootAdmin() || isAdmin();
+      allow write: if isRootAdmin();
+      // En pratique écrit par runMigrations (Function avec privilèges Admin SDK).
+    }
+  }
+}
