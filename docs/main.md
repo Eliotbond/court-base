@@ -51,7 +51,8 @@ Configs indépendantes des saisons, réutilisables.
 - **Season** — `draft` → `active` → `archived`. L'activation déclenche la génération des bookings.
 - **Booking** — instance concrète d'un slot à une date. `scheduled` | `cancelled` | `freed`. `actionLog` append-only.
 - **MatchType** — type de compétition. Définit `requiredCourtSize`, `homeOfficialRequirements`, `awayOfficialCount`.
-- **Team** — persiste cross-saisons via `activeSeasonIds[]`. `schedulingConstraints` + `duesAmount` (CHF par joueur/an).
+- **Team** — persiste cross-saisons via `activeSeasonIds[]`. `schedulingConstraints` + `duesAmount` (CHF par joueur/an). Référence une `Category` (`categoryId`).
+- **Category** — référentiel club (U11, U14, Seniors, Loisirs…). Éditable par l'admin (Settings → Catégories). Porte `name`, `minAge`, `maxAge`, `displayOrder`, `active`. Cf. `firebase.md` (`/categories`).
 - **Closure Period** — manuelle, réutilisable.
 - **Dues** — cotisation joueur/saison. Lifecycle géré par Functions.
 - **Payment Exception Request** — coach demande override d'exclusion ; admin valide.
@@ -66,6 +67,63 @@ Configs indépendantes des saisons, réutilisables.
 | **Editor global root** | Identité Google Cloud IAM (service account ou compte éditeur) | Accès à **tous** les projets clients via IAM. Sert au support, migrations, déploiements. Ne se connecte jamais à l'app cliente normale. |
 
 Le `superAdmin` claim de l'ancienne version est **remplacé** par `rootAdmin`.
+
+## Admin invitation flow
+
+Pour ajouter un nouvel admin à un club existant. **Pas d'auto-inscription** : le modèle multi-tenant impose que tous les comptes soient explicitement invités par un admin existant.
+
+### Lifecycle
+
+1. **Admin invite** (Settings → Admin team) : entre l'email du futur admin → crée `/invitations/{inviteId}` avec `{ email, role: 'admin', invitedBy, invitedByName, createdAt }`. Aucun email envoyé pour le MVP — l'admin partage manuellement le lien de l'app avec l'invité.
+2. **Invité signe in** via OAuth (Google ou Apple) avec **exactement** l'email indiqué.
+3. **Auth flow détecte l'orphelin** (`/users/{uid}` absent) → appelle automatiquement la callable `acceptInvitation` (Admin SDK) qui :
+   - Lookup `/invitations` par email du caller (token Auth)
+   - Crée `/users/{uid}` à partir de l'invitation (`roles: ['admin']`, email, displayName, photoURL hérités du compte OAuth)
+   - Supprime le doc d'invitation
+4. **Force-refresh du token** côté client → l'invité atterrit sur le dashboard avec le rôle admin.
+
+### Cas d'erreur
+
+- Pas d'invitation pour cet email → `acceptInvitation` retourne `not-found` → l'auth flow throw `NotAuthorizedError` (sign-out + écran "compte non autorisé"). Comportement deny-orphan préservé.
+- L'invité signe in avec un autre email que celui invité → même résultat (pas de match dans `/invitations`).
+- L'invité a déjà un `/users/{uid}` → callable retourne `already-exists` (rare, défense en profondeur).
+
+### Annulation
+
+Un admin peut révoquer une invitation pending depuis Settings → Admin team (bouton "Annuler" sur la ligne invitation) → suppression du doc `/invitations/{id}`. L'invité ne pourra plus signer in.
+
+### Limites MVP
+
+- Pas d'envoi d'email automatique (à wired plus tard, soit via Function `onCreate /invitations` soit via SendGrid/Resend trigger).
+- Pas de `expiresAt` — les invitations restent valides indéfiniment tant qu'un admin ne les annule pas.
+- Le rôle est figé à `'admin'`. Pour inviter un coach/officiel, il faudra étendre le formulaire (le schéma `/invitations.role` est déjà extensible).
+
+### Bootstrap du tout premier rootAdmin
+
+Le flow d'invitation suppose un admin existant pour inviter. Pour le **tout premier** admin d'un nouveau projet (chicken-and-egg), utiliser le script local `functions/scripts/setRootAdmin.ts` (cf. `functions/CLAUDE.md`) qui crée à la fois `/users/{uid}` ET le claim `rootAdmin: true` via Admin SDK.
+
+## Catégories d'équipes
+
+Référentiel éditable par l'admin (Settings → Catégories). Schéma : voir `firebase.md` (`/categories`).
+
+### Lifecycle
+
+1. **Création** — admin crée une catégorie depuis Settings : `name` (libellé affiché), `minAge` / `maxAge` (nullable pour les catégories ouvertes type Seniors), `displayOrder`. `active: true` par défaut.
+2. **Sélection à la création/édition d'équipe** — le dialog "Nouvelle équipe" et le mode édition du drawer Team listent les catégories `active: true` via un Select, trié par `displayOrder` puis `minAge`. Le champ `team.categoryId` stocke la référence.
+3. **Rename** — admin renomme une catégorie : `team.category*` (libellé d'affichage et tranche d'âge) reflète automatiquement le changement sur toutes les équipes (référence, pas dénormalisation).
+4. **Archive** — admin toggle `active: false` : la catégorie disparaît des pickers de création/édition, mais les équipes existantes conservent leur `categoryId` et restent affichables.
+5. **Suppression** — **interdite par convention** tant qu'au moins une équipe la référence. Le bouton "Supprimer" dans Settings est désactivé avec tooltip explicatif si `count(teams where categoryId == this) > 0`. Sinon `deleteDoc` autorisé. En pratique, on encourage l'archive plutôt que la suppression.
+
+### Cas d'erreur
+
+- Catégorie référencée par une équipe mais introuvable (`/categories/{id}` absent) → la team apparaît avec libellé fallback `"Catégorie inconnue"` et `ageRange: null`. Cas pathologique (suppression directe en console Firestore). Pas de log particulier.
+- Pas de catégories actives au moment de créer une équipe → le dialog "Nouvelle équipe" affiche un état vide avec CTA "Créer une catégorie" → ouvre Settings → Catégories.
+
+### Migration depuis la heuristique locale
+
+Avant le référentiel, `apps/web/src/repositories/teams.repo.ts` portait `CATEGORY_AGE_RANGES` (U11..U20 + Seniors) en dur. Pour les projets existants :
+- One-shot script (à écrire) qui scanne `/teams`, dédup les `category` (string) rencontrées, crée un `/categories/{id}` pour chacune (avec age range pris dans la table dure si match, sinon `null,null`), puis migre `team.category: string` → `team.categoryId: string`.
+- Tant que le script n'est pas exécuté, le code peut tolérer les deux formes (`category` legacy ET `categoryId` nouveau) pendant la transition.
 
 ## Règles métier — synthèse
 

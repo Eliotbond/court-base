@@ -184,6 +184,70 @@ Distinct de l'editor global root. **Dans** le projet client, user Auth normal + 
 - UI : même que admin + badge "Root".
 - Limite : viser 1/projet, max 2.
 
+## Cloud Functions deploy — gotchas (lessons learned)
+
+Trois pièges rencontrés lors du premier déploiement de Functions sur un projet client (`court-base-44878`). À refaire à l'identique pour chaque nouveau projet client.
+
+### 1. Plan Blaze obligatoire
+
+Les Cloud Functions Gen 2 nécessitent l'API `artifactregistry.googleapis.com`, qui ne s'active **que sur Blaze**. Tentative de deploy sur Spark échoue avec :
+
+```
+Error: Your project <id> must be on the Blaze (pay-as-you-go) plan to complete this command.
+```
+
+Upgrade : `https://console.firebase.google.com/project/<id>/usage/details`. Free tier généreux (2M invocations/mois).
+
+### 2. IAM grant manuel pour Cloud Build SA
+
+Après l'upgrade Blaze, le SA `<projectNumber>@cloudbuild.gserviceaccount.com` n'a parfois pas le rôle requis pour builder les images. Symptôme :
+
+```
+Build failed with status: FAILURE. Could not build the function due to a missing
+permission on the build service account.
+```
+
+Fix :
+```bash
+gcloud projects add-iam-policy-binding <projectId> \
+  --member="serviceAccount:<projectNumber>@cloudbuild.gserviceaccount.com" \
+  --role="roles/cloudbuild.builds.builder"
+```
+
+À automatiser dans le script de provisioning.
+
+### 3. Workspace deps : packer shared-types en tarball
+
+Le buildpack Cloud Functions Gen 2 lance `npm install` (incluant devDependencies si un script `build` existe) dans le contexte isolé de `functions/`. Le workspace symlink vers `@club-app/shared-types` est perdu — npm tente de fetch sur le registry et échoue avec un 404.
+
+**Fix obligatoire avant chaque `firebase deploy --only functions:*`** :
+
+```bash
+# Repacker shared-types si la source a changé (sinon le tarball cached suffit)
+cd packages/shared-types && npm pack --pack-destination ../../functions/
+```
+
+`functions/package.json` référence le tarball via :
+```json
+"@club-app/shared-types": "file:./club-app-shared-types-0.1.0.tgz"
+```
+
+Si la version du package change (`packages/shared-types/package.json`), ajuster le nom du tarball dans `functions/package.json`. **TODO** : automatiser via predeploy hook dans `firebase.json`.
+
+### 4. (Optionnel) Cleanup policy artefacts
+
+Au premier deploy, Firebase warn :
+```
+No cleanup policy detected for repositories in europe-west6.
+```
+
+Sans policy, les anciennes images Docker s'accumulent dans Artifact Registry. Coût négligeable mais propre :
+```bash
+firebase functions:artifacts:setpolicy
+```
+
+ou passer `--force` au prochain deploy.
+
 ## Open questions
 
 - **Backups** : export Firestore schedule ? GCS bucket éditeur, client, both ? Rétention ?

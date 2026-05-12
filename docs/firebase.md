@@ -37,8 +37,10 @@
 ```ts
 {
   name: string
+  shortCode: string                                  // slug court : "bcls" (URLs, share codes, deep-links mobile)
   logo: string | null
   address: { street, city, zip, country } | null
+  contact: { email: string, phone: string }          // contact principal du club (affiché dans l'app)
   officialsConfig: { licenseFee: number, thresholdGreen: number, thresholdOrange: number }
   duesConfig: { gracePeriodDays: number, paymentDueDays: number }
   createdAt: Timestamp
@@ -46,6 +48,8 @@
 }
 ```
 Le projet *est* le club. Ce doc ne porte que la config.
+
+`shortCode` et `contact` vivent dans `/config/club` (et pas dans un doc séparé) parce qu'ils partagent **la même cadence de mise à jour** (un admin les ajuste ensemble depuis l'écran Settings → General), **la même frontière de sécurité** (write réservé à `admin` + `rootAdmin`, cf. rules ci-dessous), et ne justifient pas un doc dédié.
 
 ### `/users/{uid}`
 ```ts
@@ -93,6 +97,18 @@ Les `official`-only (pas admin, pas coach) **ne voient pas** ce doc.
 { name: string, type: "system" | "custom", color: string, createdAt: Timestamp }
 ```
 System : `player`, `official`, `coach`, `referee`.
+
+### `/invitations/{inviteId}`
+```ts
+{
+  email: string                // lowercased — clé de lookup
+  role: string                 // 'admin' pour le MVP
+  invitedBy: string            // uid de l'admin qui a invité
+  invitedByName: string        // dénormalisé pour UI
+  createdAt: Timestamp
+}
+```
+MVP : pas d'email envoyé, l'admin partage manuellement avec l'invité. À sa première sign-in OAuth, le flow auth client appelle `acceptInvitation` (callable) qui crée `/users/{uid}` à partir de l'invitation puis supprime ce doc. Pas de `expiresAt` pour le MVP.
 
 ### `/venues/{venueId}`
 ```ts
@@ -149,7 +165,7 @@ System : `player`, `official`, `coach`, `referee`.
 ```ts
 {
   name: string                    // "U20F"
-  category: string
+  categoryId: string              // ref → /categories/{categoryId}
   gender: "M" | "F" | "mixed"
   coachIds: string[]              // memberIds
   playerIds: string[]             // memberIds
@@ -167,6 +183,26 @@ System : `player`, `official`, `coach`, `referee`.
   createdAt: Timestamp
 }
 ```
+`categoryId` est une référence (pas un libellé dénormalisé) — le nom d'affichage et la tranche d'âge sont résolus à la lecture via `/categories/{id}`. Pour la liste des équipes, le repo bat un seul `getDocs('/categories')` puis enrichit chaque team (pas de N+1).
+
+### `/categories/{categoryId}`
+```ts
+{
+  name: string                    // "U14", "Seniors A", "Loisirs"
+  minAge: number | null           // null = catégorie ouverte par le bas (Seniors, Veterans)
+  maxAge: number | null           // null = catégorie ouverte par le haut (Seniors+)
+  displayOrder: number            // tri stable dans les UIs (chip order, picker)
+  active: boolean                 // false = archivée (ne propose plus dans le picker, teams existantes inchangées)
+  createdAt: Timestamp
+}
+```
+Référentiel éditable par l'admin (Settings → Catégories). Remplace la heuristique locale `CATEGORY_AGE_RANGES` qui vivait dans `apps/web/src/repositories/teams.repo.ts`. Le nom et la tranche d'âge ne sont **pas** dénormalisés sur `/teams` : une catégorie renommée se reflète automatiquement sur toutes ses équipes (cf. lifecycle dans `docs/main.md`).
+
+Décisions clés :
+- **`active: false` vs delete** : on archive plutôt que supprimer pour éviter les FK orphelines sur `/teams.categoryId`. Une catégorie archivée disparaît du picker de création/édition d'équipe mais reste résolvable en lecture.
+- **`displayOrder`** : entier, l'admin peut le maintenir manuellement (drag-to-reorder UI). Tie-break secondaire par `minAge` croissant puis `name`.
+- **`minAge` / `maxAge` nullable** : pour les catégories ouvertes (Seniors, Loisirs, Veterans 35+). Le label UI dérive : `null,null` → "Ouvert" ; `min,null` → "min ans+" ; `min,min` → "min ans" ; `min,max` → "min-max ans".
+- **Pas de `gender` sur catégorie** : le genre reste sur `/teams.gender` — une catégorie "U14" peut produire une équipe M, F ou mixed.
 
 ### `/matchTypes/{matchTypeId}`
 ```ts
@@ -191,7 +227,7 @@ System : `player`, `official`, `coach`, `referee`.
   date: Timestamp
   startTime, endTime: string
   status: "scheduled" | "cancelled" | "freed"
-  cancelReason: string | null       // "closure" | "holiday" | "manual" | "match_away" | "coach_cancel"
+  cancelReason: string | null       // "closure" | "holiday" | "manual" | "match_home" | "match_away" | "coach_cancel"
   linkedBookingIds: string[]        // courts combinés
   isCombinedCourtEvent: boolean
   actionLog: [{ at: Timestamp, by: string, action: string, note: string | null }]
@@ -258,7 +294,7 @@ System : `player`, `official`, `coach`, `referee`.
   memberId, teamId, seasonId: string
   amount: number                     // copié de team.duesAmount à la création
   activatedAt: Timestamp             // J0
-  issuedAt: Timestamp | null         // J+gracePeriodDays
+  issuedAt: Timestamp | null         // activatedAt + gracePeriodDays, posé à la création (pas null pendant pending_grace) ; nullable seulement pour tolérer lignes legacy
   dueAt: Timestamp | null            // issuedAt + paymentDueDays
   status: "pending_grace" | "issued" | "paid" | "overdue" | "excepted" | "cancelled"
   paidAt: Timestamp | null
@@ -303,6 +339,22 @@ Tant que `pending` → `member.duesStatus = "excepted"`, exclusion suspendue.
 ```
 Approval → `member.licensed = true`. Procédure fédérale hors-bande.
 
+### Activity feed — feed dashboard (TBD)
+
+Le Dashboard expose un feed "Activité récente" (cf. `apps/web/src/views/Dashboard.vue`).
+Pas de collection dédiée pour l'instant ; les entrées sont **dérivées** côté
+client ou via une callable agrégeant :
+- `bookings/*.actionLog[]` (actions coach append-only)
+- `dues/*` updates (`paidAt`, `status` transitions)
+- `licenseRequests/*` updates (`status` transitions)
+- `paymentExceptionRequests/*` updates (`status` transitions)
+- `officialAssignments/*` updates (`status` transitions par les officiels)
+
+**Décision pending** : créer une collection `/activityLog/{entryId}` alimentée
+par Functions (push event-sourced) si le feed devient lent ou si on veut
+support multi-tenant analytics. Tant que le besoin est purement UI dashboard,
+on reste sur dérivation à la lecture.
+
 ### `/_meta/schema` (singleton)
 ```ts
 {
@@ -320,7 +372,7 @@ Un projet = un club, donc pas de filtrage `clubId`.
 - **`admin`** : read/write tout sauf `_meta/schema` (réservé migration runner).
 - **`coach`** : read members, venues, courts, timeSlots, bookings. Write bookings de **ses** slots (reserve/cancel). Create/read `matchRequests`. Write `attendance` sur bookings de son équipe.
 - **`official`** :
-  - Read members limités (identification sur match, pas de contact info des non-liés).
+  - Read `/members/*` parent docs (nom, roles, licensed, duesStatus, officialLevel) — pas de contact info (gated dans `/members/{id}/private/contact`, official-only n'y accède pas).
   - Read `bookings` `match_home` (upcoming + passés pour export).
   - Read tous les `officialAssignments` sur ces bookings.
   - Create propre `officialAssignment` (self-register, `pending`).
@@ -354,6 +406,8 @@ Déployées sur **chaque projet client** via CI cross-projet (voir `deployment.m
 | `applyLicenseRequest` | `licenseRequests/*` update | Approve → `member.licensed = true`. |
 | `runMigrations` | Callable (admin-only) | Applique migrations en attente jusqu'à version cible. Idempotent. |
 | `setRootAdminClaim` | Callable (rootAdmin-only) | Toggle le claim `rootAdmin` sur un user (par email). Préserve les autres claims. Le caller ne peut pas se révoquer lui-même. Bootstrap du tout premier rootAdmin : via script Admin SDK hors-app. |
+| `listRootAdminUids` | Callable (admin-only) | Retourne `{ uids: string[] }` — les uids portant le claim `rootAdmin: true`. Le claim vit côté Auth (pas Firestore) ; cette callable résout le badge rootAdmin sur l'écran Settings → Admin team. Pagination via `admin.auth().listUsers()`. |
+| `acceptInvitation` | Callable (signed-in) | Cherche `/invitations` par email du caller, crée `/users/{uid}` à partir de l'invitation et supprime le doc. Appelée par le flow auth client quand un sign-in OAuth orphelin a une invitation pending. Codes : `not-found` (pas d'invitation), `already-exists` (/users/{uid} existe déjà). |
 
 ## Auth
 
