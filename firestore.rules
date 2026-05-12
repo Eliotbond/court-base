@@ -106,9 +106,16 @@ service cloud.firestore {
     }
 
     // ========================================================================
-    // /teams
+    // /teams, /categories
     // ========================================================================
     match /teams/{teamId} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+    // Référentiel catégorie (U14, Seniors, Loisirs…). Read par tout user signé
+    // (résolution `team.categoryId` côté client). Write admin only — édité depuis
+    // Settings → Catégories.
+    match /categories/{categoryId} {
       allow read: if isSignedIn();
       allow write: if isRootAdmin() || isAdmin();
     }
@@ -146,8 +153,10 @@ service cloud.firestore {
       match /officialAssignments/{assignmentId} {
         allow read: if isSignedIn();
         allow create: if isRootAdmin() || isAdmin() ||
-          // Self-register : l'official crée son propre assignment
-          (isSignedIn() && request.resource.data.status == 'pending');
+          // Self-register : l'official crée son propre assignment, pour lui-même.
+          (isSignedIn() &&
+           request.resource.data.status == 'pending' &&
+           request.resource.data.memberId == userDoc().memberId);
         allow update: if isRootAdmin() || isAdmin() ||
           // L'official peut update status + respondedAt sur SA propre assignation
           (resource.data.memberId == userDoc().memberId &&
@@ -178,17 +187,26 @@ service cloud.firestore {
     match /notifications/{id} {
       allow read: if isSignedIn();
       allow create: if isRootAdmin() || isAdmin();
-      // tout user peut s'ajouter à readBy[]
+      // Tout user peut s'ajouter à readBy[] — uniquement son propre uid, pas de retrait.
       allow update: if isSignedIn() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']);
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']) &&
+        request.resource.data.readBy.toSet()
+          .difference(resource.data.readBy.toSet())
+          .hasOnly([request.auth.uid]) &&
+        resource.data.readBy.toSet()
+          .difference(request.resource.data.readBy.toSet())
+          .hasOnly([]);
       allow delete: if isRootAdmin() || isAdmin();
     }
 
     // ========================================================================
     // /dues
     // ========================================================================
+    // Coach voit uniquement les dues de ses teams. Pour LIST, le client DOIT
+    // filtrer par `teamId` (== ou `in`) pour passer les rules.
     match /dues/{id} {
-      allow read: if isRootAdmin() || isAdmin() || isCoach();
+      allow read: if isRootAdmin() || isAdmin() ||
+        (isCoach() && resource.data.teamId in userDoc().teamIds);
       // Pas d'écriture directe par les coachs. Admin pour paiement manuel, Functions pour transitions.
       allow write: if isRootAdmin() || isAdmin();
     }
@@ -197,8 +215,10 @@ service cloud.firestore {
     // /paymentExceptionRequests
     // ========================================================================
     match /paymentExceptionRequests/{id} {
-      allow read: if isRootAdmin() || isAdmin() || isCoach();
-      allow create: if isRootAdmin() || isAdmin() || isCoach();
+      allow read: if isRootAdmin() || isAdmin() ||
+        (isCoach() && resource.data.teamId in userDoc().teamIds);
+      allow create: if isRootAdmin() || isAdmin() ||
+        (isCoach() && request.resource.data.teamId in userDoc().teamIds);
       allow update, delete: if isRootAdmin() || isAdmin();
     }
 
@@ -206,8 +226,10 @@ service cloud.firestore {
     // /licenseRequests
     // ========================================================================
     match /licenseRequests/{id} {
-      allow read: if isRootAdmin() || isAdmin() || isCoach();
-      allow create: if isRootAdmin() || isAdmin() || isCoach();
+      allow read: if isRootAdmin() || isAdmin() ||
+        (isCoach() && resource.data.teamId in userDoc().teamIds);
+      allow create: if isRootAdmin() || isAdmin() ||
+        (isCoach() && request.resource.data.teamId in userDoc().teamIds);
       allow update, delete: if isRootAdmin() || isAdmin();
     }
 
