@@ -40,3 +40,4 @@ functions/club-app-shared-types-*.tgz
 # OS / editor
 .DS_Store
 *.log
+apps/web/.env copy.local
