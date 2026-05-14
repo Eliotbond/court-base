@@ -48,7 +48,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'members/:id',
         name: 'member-detail',
-        component: placeholder,
+        component: () => import('@/views/MemberDetail.vue'),
         meta: { title: 'Member detail', allowedRoles: ADMIN_COACH },
       },
       {

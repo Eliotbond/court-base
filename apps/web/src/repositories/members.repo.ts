@@ -6,11 +6,19 @@ import {
   getDocs,
   orderBy,
   query,
+  setDoc,
+  updateDoc,
   type DocumentSnapshot,
   type QueryDocumentSnapshot,
+  type UpdateData,
 } from 'firebase/firestore'
 import { db } from '@/services/firebase'
-import type { Member, MemberContactData, MemberData } from '@club-app/shared-types'
+import type {
+  Member,
+  MemberContactData,
+  MemberData,
+  User,
+} from '@club-app/shared-types'
 
 /**
  * Repository Members — Firestore-backed.
@@ -35,6 +43,7 @@ import type { Member, MemberContactData, MemberData } from '@club-app/shared-typ
 
 const MEMBERS = 'members'
 const TEAMS = 'teams'
+const USERS = 'users'
 const CONTACT_DOC = 'contact'
 const PRIVATE_SUBCOLL = 'private'
 
@@ -59,6 +68,28 @@ export interface MemberRow extends Member {
   teamLabels: string[]
   // TODO(server): lit via Admin SDK lastSignInTime.
   lastLoginAt: Date | null
+}
+
+/**
+ * Référence à une équipe avec rôle joué dans cette équipe (coach / player).
+ * Utilisé par la page Member detail pour afficher les liens cliquables.
+ */
+export interface MemberTeamRef {
+  id: string
+  name: string
+  role: 'coach' | 'player'
+}
+
+/**
+ * Ligne enrichie pour la page Member detail. Étend `MemberRow` avec un
+ * sur-ensemble de jointures résolues côté repo :
+ *  - `teams` : équipes où le membre est coach ou joueur, avec rôle.
+ *  - `linkedUser` : `/users/{linkedUserId}` (rôles auth, teamIds, photoURL).
+ *    `null` si pas de compte lié OU si la lecture est refusée (rules).
+ */
+export interface MemberDetailRow extends MemberRow {
+  teams: MemberTeamRef[]
+  linkedUser: User | null
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +215,7 @@ export async function listMembers(): Promise<MemberRow[]> {
   )
 }
 
-/** Récupère un membre par son id (pour la future page détail). */
+/** Récupère un membre par son id (vue Members — sans linkedUser ni rôles team). */
 export async function getMemberById(id: string): Promise<MemberRow | null> {
   const snap = await getDoc(doc(db, MEMBERS, id))
   if (!snap.exists()) return null
@@ -195,6 +226,160 @@ export async function getMemberById(id: string): Promise<MemberRow | null> {
   return snapToRow(snap, contact, teamLabelsMap.get(id) ?? [])
 }
 
-// Writes (createMember / updateMember) volontairement absents : la vue
-// Members ne consomme que des reads pour l'instant. Les ajouter ici quand
-// le besoin se présente, en miroir de `teams.repo.ts`.
+// ---------------------------------------------------------------------------
+// Member detail — getMemberDetail (page /members/:id)
+//
+// Charge en parallèle :
+//   - le doc parent /members/{id}
+//   - le contact privé /members/{id}/private/contact (dégradation gracieuse)
+//   - l'ensemble /teams (build une map memberId → MemberTeamRef[] avec rôle)
+//   - le user lié /users/{linkedUserId} si présent (dégradation gracieuse)
+// ---------------------------------------------------------------------------
+
+async function buildTeamRefsMap(): Promise<Map<string, MemberTeamRef[]>> {
+  const snap = await getDocs(collection(db, TEAMS))
+  const map = new Map<string, MemberTeamRef[]>()
+  for (const d of snap.docs) {
+    const data = d.data() as {
+      name?: string
+      coachIds?: string[]
+      playerIds?: string[]
+    }
+    const name = data.name ?? d.id
+    for (const coachId of data.coachIds ?? []) {
+      const existing = map.get(coachId)
+      const ref: MemberTeamRef = { id: d.id, name, role: 'coach' }
+      if (existing) existing.push(ref)
+      else map.set(coachId, [ref])
+    }
+    for (const playerId of data.playerIds ?? []) {
+      const existing = map.get(playerId)
+      const ref: MemberTeamRef = { id: d.id, name, role: 'player' }
+      if (existing) existing.push(ref)
+      else map.set(playerId, [ref])
+    }
+  }
+  return map
+}
+
+async function readLinkedUser(linkedUserId: string | null): Promise<User | null> {
+  if (!linkedUserId) return null
+  try {
+    const snap = await getDoc(doc(db, USERS, linkedUserId))
+    if (!snap.exists()) return null
+    return { id: snap.id, ...(snap.data() as Omit<User, 'id'>) }
+  } catch (err: unknown) {
+    if (err instanceof FirebaseError && err.code === 'permission-denied') {
+      return null
+    }
+    throw err
+  }
+}
+
+/**
+ * Récupère un membre enrichi pour la page détail.
+ *
+ * Retourne `null` si le doc parent n'existe pas. Les jointures sont
+ * dégradées en silence (contact / linkedUser → `null`, teams → `[]`) sur
+ * `permission-denied` pour préserver l'affichage partiel selon le rôle
+ * du caller.
+ */
+export async function getMemberDetail(id: string): Promise<MemberDetailRow | null> {
+  const snap = await getDoc(doc(db, MEMBERS, id))
+  if (!snap.exists()) return null
+  const data = snap.data() as MemberData
+
+  const [contact, teamRefsMap, linkedUser] = await Promise.all([
+    readContact(id),
+    buildTeamRefsMap(),
+    readLinkedUser(data.linkedUserId),
+  ])
+
+  const teams = teamRefsMap.get(id) ?? []
+  const teamLabels = teams.map((t) => t.name)
+
+  return {
+    id: snap.id,
+    ...data,
+    email: contact.email,
+    phone: contact.phone,
+    teamLabels,
+    teams,
+    linkedUser,
+    lastLoginAt: null,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Writes — admin only (rules : isRootAdmin || isAdmin).
+//
+// `updateMember` ne touche QUE le doc parent /members/{id}.
+// `updateMemberContact` écrit dans la sub-collection privée
+// /members/{id}/private/contact (rules : admin ou self).
+// ---------------------------------------------------------------------------
+
+/**
+ * Champs autorisés pour `updateMember`. Pas de `duesStatus` /
+ * `duesStatusUpdatedAt` ici : ces champs sont gérés par la Function
+ * `syncMemberDuesStatus` à partir des `/dues`. Pas de `linkedUserId` non
+ * plus pour le MVP (relink → flow dédié plus tard).
+ */
+export interface MemberPatch {
+  firstName?: string
+  lastName?: string
+  roles?: string[]
+  licenseNumber?: string
+  officialLevel?: number | null
+  licensed?: boolean
+  active?: boolean
+}
+
+export async function updateMember(id: string, patch: MemberPatch): Promise<void> {
+  // UpdateData préserve les types Firestore (FieldValue, Timestamp) que
+  // l'on n'utilise pas ici mais qui restent valides pour l'SDK.
+  const update: UpdateData<MemberData> = { ...patch }
+  await updateDoc(doc(db, MEMBERS, id), update)
+}
+
+export interface MemberContactPatch {
+  email?: string
+  phone?: string
+}
+
+/**
+ * Écrit /members/{id}/private/contact. `setDoc` avec `merge: true` car le
+ * sub-doc peut ne pas exister (premier renseignement). Quand absent, on
+ * initialise les deux champs avec `""` côté complement pour respecter le
+ * schéma `MemberContactData` (champs requis dans le type).
+ */
+export async function updateMemberContact(
+  id: string,
+  patch: MemberContactPatch,
+): Promise<void> {
+  const update: Partial<MemberContactData> = {}
+  if (patch.email !== undefined) update.email = patch.email
+  if (patch.phone !== undefined) update.phone = patch.phone
+  await setDoc(
+    doc(db, MEMBERS, id, PRIVATE_SUBCOLL, CONTACT_DOC),
+    update,
+    { merge: true },
+  )
+}
+
+/**
+ * Marqueur d'archivage soft. Conserve l'historique (dues / attendance) et
+ * désactive simplement l'affichage actif. Pas de cascade — ce sera traité
+ * dans un chantier dédié (close dues, retire des teams, etc.).
+ *
+ * `serverTimestamp` n'est pas posé ici (le doc ne porte pas `archivedAt`).
+ */
+export async function archiveMember(id: string): Promise<void> {
+  await updateDoc(doc(db, MEMBERS, id), { active: false })
+}
+
+/**
+ * Symétrique d'`archiveMember`. Réactive un membre archivé.
+ */
+export async function reactivateMember(id: string): Promise<void> {
+  await updateDoc(doc(db, MEMBERS, id), { active: true })
+}
