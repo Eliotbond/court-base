@@ -668,7 +668,7 @@ const selectedVenueLabels = computed<string[]>(() =>
               {{ team.name }}
             </div>
             <div class="text-[11px] text-surface-500">
-              {{ team.category }} · {{ team.gender }}
+              {{ team.category?.name ?? '—' }} · {{ team.gender }}
               <template v-if="team.coachLabels.length > 0">
                 · coach
                 <span class="text-surface-700">

@@ -18,10 +18,11 @@ import type { TeamGender } from '@club-app/shared-types'
  * Filtres rapides (chips) — aligné sur le design Mockups (screen 4).
  *
  * Axes filtrables côté UI :
- *  - `category`  : `'all'` ou la catégorie texte ("U14", "U16", "Seniors"…).
- *                  Les catégories sont des chaînes libres définies par le
- *                  club ; les chips sont dérivés des catégories présentes
- *                  dans `teams`.
+ *  - `category`  : `'all'` ou un `categoryId` (référence vers
+ *                  /categories/{id}). Le label affiché par le chip est résolu
+ *                  côté vue via le store `useCategoriesStore` ; les chips
+ *                  reflètent les catégories effectivement présentes dans
+ *                  `teams`.
  *  - `gender`    : `all` | `M` | `F` | `mixed`
  *
  * `status` est binaire (active vs archived). `coachState` permet d'isoler
@@ -249,15 +250,19 @@ export const useTeamsStore = defineStore('teams', () => {
    * Comptes par catégorie (dynamiques), par genre, par statut, et "needs
    * coach". `all` = total scopé au filtre `status` courant.
    *
-   * `byCategory` est une `Map` pour préserver l'ordre d'insertion (la vue
-   * trie ensuite par `ageRange.min`, voir `categoryChips`).
+   * `byCategory` est une `Map<categoryId, count>` — la clé est l'id du doc
+   * `/categories/{id}` (string). La résolution `id → libellé` se fait côté
+   * vue via `useCategoriesStore.byId` (cf. `categoryChips`).
    */
   const counts = computed(() => {
     const all = teams.value
     const scoped = all.filter((t) => matchesStatusFilter(t, statusFilter.value))
     const byCategory = new Map<string, number>()
     for (const t of scoped) {
-      byCategory.set(t.category, (byCategory.get(t.category) ?? 0) + 1)
+      // Défensif : un team sans categoryId ne devrait pas exister, mais on
+      // saute pour ne pas polluer la Map avec une clé vide.
+      if (!t.categoryId) continue
+      byCategory.set(t.categoryId, (byCategory.get(t.categoryId) ?? 0) + 1)
     }
     return {
       all: scoped.length,
@@ -281,7 +286,7 @@ export const useTeamsStore = defineStore('teams', () => {
 
   function matchesCategoryFilter(t: TeamRow, f: TeamCategoryFilter): boolean {
     if (f === 'all') return true
-    return t.category === f
+    return t.categoryId === f
   }
 
   function matchesGenderFilter(t: TeamRow, f: TeamGenderFilter): boolean {
@@ -307,7 +312,7 @@ export const useTeamsStore = defineStore('teams', () => {
     if (!q) return true
     const needle = q.trim().toLowerCase()
     if (!needle) return true
-    const haystack = [t.name, t.category, ...t.coachLabels]
+    const haystack = [t.name, t.category?.name ?? '', ...t.coachLabels]
       .join(' ')
       .toLowerCase()
     return haystack.includes(needle)

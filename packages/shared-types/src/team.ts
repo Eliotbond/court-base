@@ -8,8 +8,12 @@ import type { Timestamp } from './index'
  * cotisations est par-équipe (`duesAmount`, CHF/joueur/an).
  *
  * Note: pour l'instant seuls les champs nécessaires au Dashboard sont
- * exposés strictement (`id`, `name`, `category`). Les autres seront ajoutés
+ * exposés strictement (`id`, `name`, `categoryId`). Les autres seront ajoutés
  * au fil du dev des écrans Teams / Season planning assistant.
+ *
+ * `categoryId` est une référence vers `/categories/{categoryId}` (référentiel
+ * éditable par l'admin). Le libellé et la tranche d'âge sont résolus à la
+ * lecture côté repo — pas de dénormalisation.
  */
 export type TeamGender = 'M' | 'F' | 'mixed'
 
@@ -37,7 +41,8 @@ export interface TeamSchedulingConstraints {
 export interface TeamData {
   /** Ex. "U20F" */
   name: string
-  category: string
+  /** Référence vers `/categories/{categoryId}`. */
+  categoryId: string
   gender: TeamGender
   /** memberIds des coachs (cumulable avec /users.teamIds côté coach scope). */
   coachIds: string[]

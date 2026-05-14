@@ -16,7 +16,8 @@ import {
   type UpdateData,
 } from 'firebase/firestore'
 import { db } from '@/services/firebase'
-import type { Team, TeamData, TeamGender } from '@club-app/shared-types'
+import type { Category, Team, TeamData, TeamGender } from '@club-app/shared-types'
+import { snapToCategory } from './categories.repo'
 
 /**
  * Repository Teams — Firestore-backed.
@@ -32,12 +33,15 @@ import type { Team, TeamData, TeamGender } from '@club-app/shared-types'
  *  - `preferredSlotLabels` / `rosterPlayerNames` / `duesPaidToDate` /
  *    `upcomingMatchesCount` : valeurs neutres pour l'instant — sortiront
  *    de `/venues/.../timeSlots`, `/dues`, `/bookings` au fil du dev.
- *  - `ageRange` : dérivé de `category` via une table heuristique locale.
- *    Sera remplacé par un référentiel `/categories` éditable côté admin.
+ *  - `category` / `ageRange` : résolus via lookup batché sur `/categories`
+ *    (cf. categories.repo). Si `team.categoryId` ne référence aucun doc
+ *    existant → `category: null` et `ageRange: null` (cas pathologique
+ *    documenté dans docs/main.md).
  */
 
 const TEAMS = 'teams'
 const MEMBERS = 'members'
+const CATEGORIES = 'categories'
 
 // ---------------------------------------------------------------------------
 // Types exposés pour la vue Teams
@@ -56,13 +60,22 @@ export interface TeamCoachAvatar {
 /**
  * Tranche d'âge associée à une catégorie. `null` quand la catégorie est
  * ouverte (Seniors / Loisirs / Veterans).
- *
- * TODO(firestore): remplacer par lookup `/categories` une fois le référentiel
- *   admin-éditable provisionné.
  */
 export interface TeamAgeRange {
   min: number
   max: number | null
+}
+
+/**
+ * Catégorie résolue pour affichage. Snapshot léger (id + champs UI) :
+ * la source de vérité reste `/categories/{id}`. `null` quand
+ * `team.categoryId` ne pointe vers aucun doc existant.
+ */
+export interface TeamCategoryRef {
+  id: string
+  name: string
+  minAge: number | null
+  maxAge: number | null
 }
 
 /**
@@ -74,41 +87,11 @@ export interface TeamRow extends Team {
   coachAvatars: TeamCoachAvatar[]
   playerCount: number
   preferredSlotLabels: string[]
+  category: TeamCategoryRef | null
   ageRange: TeamAgeRange | null
   rosterPlayerNames: string[]
   duesPaidToDate: number
   upcomingMatchesCount: number
-}
-
-// ---------------------------------------------------------------------------
-// Helpers locaux (UI-only)
-// ---------------------------------------------------------------------------
-
-/**
- * Heuristique UI catégorie → âge (transition seulement).
- *
- * TODO(categories): remplacer par lookup sur `/categories/{id}` (référentiel
- *   admin-éditable). Schéma + lifecycle documentés dans `docs/firebase.md`
- *   (section `/categories/{categoryId}`) et `docs/main.md` (section
- *   "Catégories d'équipes"). Une fois le référentiel branché : retirer cette
- *   table + `ageRangeFor` + le champ dérivé `TeamRow.ageRange`, et résoudre
- *   directement depuis le doc `/categories/{team.categoryId}`.
- */
-const CATEGORY_AGE_RANGES: Record<string, TeamAgeRange | null> = {
-  U11: { min: 9, max: 10 },
-  U13: { min: 11, max: 12 },
-  U14: { min: 12, max: 13 },
-  U16: { min: 14, max: 15 },
-  U17: { min: 16, max: 16 },
-  U18: { min: 16, max: 17 },
-  U20: { min: 18, max: 19 },
-  Seniors: null,
-}
-
-function ageRangeFor(category: string): TeamAgeRange | null {
-  const key = category.trim()
-  if (key in CATEGORY_AGE_RANGES) return CATEGORY_AGE_RANGES[key]
-  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -162,15 +145,39 @@ async function readCoachAvatars(
   return map
 }
 
+// ---------------------------------------------------------------------------
+// Category resolution — join `team.categoryId` → `/categories/{id}`.
+//
+// Référentiel petit (~dizaines d'entrées max), donc on lit la collection
+// entière en un seul `getDocs` puis on map en mémoire. Pas de N+1.
+// ---------------------------------------------------------------------------
+
+async function readCategoryMap(): Promise<Map<string, Category>> {
+  const snap = await getDocs(
+    query(collection(db, CATEGORIES), orderBy('displayOrder')),
+  )
+  const map = new Map<string, Category>()
+  for (const d of snap.docs) map.set(d.id, snapToCategory(d))
+  return map
+}
+
 function snapToRow(
   snap: QueryDocumentSnapshot | DocumentSnapshot,
   avatarMap: Map<string, TeamCoachAvatar>,
+  categoryMap: Map<string, Category>,
 ): TeamRow {
   const data = snap.data() as TeamData
   const coachIds = data.coachIds ?? []
   const coachAvatars = coachIds
     .map((id) => avatarMap.get(id))
     .filter((c): c is TeamCoachAvatar => c !== undefined)
+  const cat = data.categoryId ? categoryMap.get(data.categoryId) ?? null : null
+  const category: TeamCategoryRef | null = cat
+    ? { id: cat.id, name: cat.name, minAge: cat.minAge, maxAge: cat.maxAge }
+    : null
+  const ageRange: TeamAgeRange | null = cat && cat.minAge !== null
+    ? { min: cat.minAge, max: cat.maxAge }
+    : null
   return {
     id: snap.id,
     ...data,
@@ -179,7 +186,8 @@ function snapToRow(
     playerCount: data.playerIds?.length ?? 0,
     // TODO(firestore): dériver des `timeSlots` rattachés. Vide tant que /venues n'est pas branché.
     preferredSlotLabels: [],
-    ageRange: ageRangeFor(data.category),
+    category,
+    ageRange,
     // TODO(firestore): join `playerIds[]` → /members.firstName/lastName.
     rosterPlayerNames: [],
     // TODO(firestore): agréger /dues (status=paid) pour la saison active.
@@ -202,8 +210,11 @@ export async function listTeams(): Promise<TeamRow[]> {
     const data = d.data() as TeamData
     if (data.coachIds) allCoachIds.push(...data.coachIds)
   }
-  const avatarMap = await readCoachAvatars(allCoachIds)
-  return snap.docs.map((d) => snapToRow(d, avatarMap))
+  const [avatarMap, categoryMap] = await Promise.all([
+    readCoachAvatars(allCoachIds),
+    readCategoryMap(),
+  ])
+  return snap.docs.map((d) => snapToRow(d, avatarMap, categoryMap))
 }
 
 /** Récupère une équipe par son id. */
@@ -211,8 +222,11 @@ export async function getTeamById(id: string): Promise<TeamRow | null> {
   const snap = await getDoc(doc(db, TEAMS, id))
   if (!snap.exists()) return null
   const data = snap.data() as TeamData
-  const avatarMap = await readCoachAvatars(data.coachIds ?? [])
-  return snapToRow(snap, avatarMap)
+  const [avatarMap, categoryMap] = await Promise.all([
+    readCoachAvatars(data.coachIds ?? []),
+    readCategoryMap(),
+  ])
+  return snapToRow(snap, avatarMap, categoryMap)
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +235,7 @@ export async function getTeamById(id: string): Promise<TeamRow | null> {
 
 export interface CreateTeamInput {
   name: string
-  category: string
+  categoryId: string
   gender: TeamGender
   duesAmount: number
   trainingsPerWeek: number
@@ -235,7 +249,7 @@ export interface CreateTeamInput {
 export async function createTeam(input: CreateTeamInput): Promise<TeamRow> {
   const ref = await addDoc(collection(db, TEAMS), {
     name: input.name,
-    category: input.category,
+    categoryId: input.categoryId,
     gender: input.gender,
     coachIds: [],
     playerIds: [],
@@ -261,7 +275,7 @@ export async function createTeam(input: CreateTeamInput): Promise<TeamRow> {
 
 export interface UpdateTeamInput {
   name?: string
-  category?: string
+  categoryId?: string
   gender?: TeamGender
   duesAmount?: number
   trainingsPerWeek?: number
@@ -278,7 +292,7 @@ export async function updateTeam(
 ): Promise<TeamRow | null> {
   const update: UpdateData<DocumentData> = {}
   if (patch.name !== undefined) update.name = patch.name
-  if (patch.category !== undefined) update.category = patch.category
+  if (patch.categoryId !== undefined) update.categoryId = patch.categoryId
   if (patch.gender !== undefined) update.gender = patch.gender
   if (patch.duesAmount !== undefined) update.duesAmount = patch.duesAmount
   if (patch.trainingsPerWeek !== undefined) {
@@ -334,7 +348,7 @@ export async function duplicateTeam(id: string): Promise<TeamRow | null> {
   const data = source.data() as TeamData
   const ref = await addDoc(collection(db, TEAMS), {
     name: `${data.name} (copie)`,
-    category: data.category,
+    categoryId: data.categoryId,
     gender: data.gender,
     coachIds: [],
     playerIds: [],

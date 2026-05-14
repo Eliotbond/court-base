@@ -248,6 +248,47 @@ firebase functions:artifacts:setpolicy
 
 ou passer `--force` au prochain deploy.
 
+## Firestore rules / indexes deploy — gotchas
+
+`firestore.rules` et `firestore.indexes.json` sont des artefacts **déployés** séparément du code applicatif. Modifier le fichier local **ne change rien en prod** tant qu'on n'a pas pushé sur Firebase.
+
+### 1. Toujours déployer après modification
+
+```bash
+firebase deploy --only firestore:rules,firestore:indexes --project court-base-44878
+```
+
+Sans cette étape, ajouter une nouvelle collection (ex. `/categories` introduit le 2026-05-13) crée un mismatch silencieux : le code lit la collection, mais la version déployée n'a pas de bloc `match` correspondant → Firestore applique le `deny` par défaut → `Missing or insufficient permissions` côté client.
+
+**Symptôme typique** : un écran qui charge bien (route guard passe, autres collections OK) mais affiche une bannière d'erreur permissions sans raison apparente — parce que la rule manquante concerne une collection *secondaire* lue en `Promise.all` avec la principale (ex. join `/teams` → `/categories` via `readCategoryMap()`).
+
+### 2. Vérifier ce qui tourne en prod
+
+L'API `firebaserules.googleapis.com` permet de récupérer le ruleset actif sans passer par la console :
+
+```bash
+# Quel ruleset est release (= actif) ?
+curl -s "https://firebaserules.googleapis.com/v1/projects/court-base-44878/releases/cloud.firestore" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "X-Goog-User-Project: court-base-44878"
+
+# Contenu du ruleset (remplace <id> par celui retourné ci-dessus) :
+curl -s "https://firebaserules.googleapis.com/v1/projects/court-base-44878/rulesets/<id>" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "X-Goog-User-Project: court-base-44878" | jq -r '.source.files[0].content'
+```
+
+Compare le contenu retourné à `firestore.rules` : si les deux divergent, redeploy.
+
+### 3. Reflexe quand un écran retourne `permission-denied`
+
+1. Identifier *quelle* collection retourne l'erreur (devtools network → la requête `firestore.googleapis.com:Listen/Query` qui 403).
+2. Vérifier le bloc `match /<collection>/...` dans `firestore.rules` local.
+3. Vérifier que le ruleset déployé contient ce même bloc (commande ci-dessus).
+4. Si divergence → `firebase deploy --only firestore:rules`.
+
+**Inversement**, si le bloc est bien déployé : c'est un bug logique de rule (ex. helper `userDoc()` qui plante car `/users/{uid}` absent, `teamId in userDoc().teamIds` quand `teamIds` n'existe pas comme champ, etc.). Tester dans le Rules Playground avec un payload réaliste.
+
 ## Open questions
 
 - **Backups** : export Firestore schedule ? GCS bucket éditeur, client, both ? Rétention ?

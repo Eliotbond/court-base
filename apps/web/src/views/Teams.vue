@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   Archive,
   ArchiveRestore,
@@ -32,6 +33,7 @@ import {
   type TeamGenderFilter,
   type TeamStatusFilter,
 } from '@/stores/teams'
+import { useCategoriesStore } from '@/stores/categories'
 import { useMembersStore } from '@/stores/members'
 import type { TeamRow, TeamCoachAvatar } from '@/repositories/teams.repo'
 import type { MemberRow } from '@/repositories/members.repo'
@@ -40,10 +42,15 @@ import Avatar from '@/components/ui/Avatar.vue'
 import Chip from '@/components/ui/Chip.vue'
 import Pill from '@/components/ui/Pill.vue'
 
+const router = useRouter()
 const store = useTeamsStore()
+const categoriesStore = useCategoriesStore()
 
 onMounted(() => {
+  // Loads indépendants — la résolution `categoryId → name` se fait à l'affichage
+  // côté store catégories, pas de dépendance d'ordre.
   void store.load()
+  void categoriesStore.loadActive()
 })
 
 const rows = computed<TeamRow[]>(() => store.filtered)
@@ -72,10 +79,11 @@ const headingSubline = computed(() => {
 // Category chips — DYNAMIQUES.
 //
 // Décision C1 (Eliot): les catégories sont définies par le club (référentiel
-// éditable). Les chips reflètent donc les catégories effectivement présentes
-// dans `teams`, avec le compte live, et triées par `ageRange.min` croissant
-// (U11 → Seniors). Les catégories sans range (Seniors / Loisirs) finissent
-// en queue, triées alphabétiquement.
+// éditable `/categories`). Les chips reflètent donc les catégories
+// effectivement présentes dans `teams` (compte live), avec leur libellé
+// résolu via `useCategoriesStore.byId`. Le tri est piloté par
+// `displayOrder` (admin contrôle l'ordre dans Settings) avec tie-break
+// `minAge` puis nom — cohérent avec `compareCategories` du repo/store.
 // ---------------------------------------------------------------------------
 
 interface CategoryChip {
@@ -84,29 +92,28 @@ interface CategoryChip {
   count: number
   /** Pour tri uniquement, jamais affiché. `null` → bucket "ouvert" (Seniors). */
   minAge: number | null
+  /** Pour tri uniquement — `displayOrder` du référentiel. */
+  displayOrder: number
 }
 
 const categoryChips = computed<CategoryChip[]>(() => {
   const byCat = counts.value.byCategory
-  // Récupère le min-age depuis la 1ʳᵉ team de la catégorie (toutes les teams
-  // d'une même catégorie partagent la même range — vient du référentiel).
-  const minAgeByCat = new Map<string, number | null>()
-  for (const t of store.teams) {
-    if (!minAgeByCat.has(t.category)) {
-      minAgeByCat.set(t.category, t.ageRange?.min ?? null)
-    }
-  }
+  const catMap = categoriesStore.byId
 
   const entries: CategoryChip[] = []
-  for (const [cat, count] of byCat.entries()) {
+  for (const [catId, count] of byCat.entries()) {
+    const cat = catMap.get(catId)
     entries.push({
-      id: cat,
-      label: cat,
+      id: catId,
+      label: cat?.name ?? 'Inconnue',
       count,
-      minAge: minAgeByCat.get(cat) ?? null,
+      minAge: cat?.minAge ?? null,
+      // Catégorie introuvable → fond de liste.
+      displayOrder: cat?.displayOrder ?? Number.MAX_SAFE_INTEGER,
     })
   }
   entries.sort((a, b) => {
+    if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder
     if (a.minAge !== null && b.minAge !== null) return a.minAge - b.minAge
     if (a.minAge !== null) return -1
     if (b.minAge !== null) return 1
@@ -118,6 +125,7 @@ const categoryChips = computed<CategoryChip[]>(() => {
     label: 'Toutes',
     count: counts.value.all,
     minAge: null,
+    displayOrder: -1,
   }
   return [allChip, ...entries]
 })
@@ -350,7 +358,7 @@ function archiveSelected(): void {
 
 interface EditTeamForm {
   name: string
-  category: string
+  categoryId: string
   gender: TeamGender
   duesAmount: number
   trainingsPerWeek: number
@@ -359,7 +367,7 @@ interface EditTeamForm {
 
 interface EditTeamErrors {
   name: string | null
-  category: string | null
+  categoryId: string | null
   duesAmount: string | null
 }
 
@@ -367,7 +375,7 @@ const isEditing = ref(false)
 const editSubmitting = ref(false)
 const editForm = reactive<EditTeamForm>({
   name: '',
-  category: '',
+  categoryId: '',
   gender: 'M',
   duesAmount: 0,
   trainingsPerWeek: 0,
@@ -375,19 +383,22 @@ const editForm = reactive<EditTeamForm>({
 })
 const editErrors = reactive<EditTeamErrors>({
   name: null,
-  category: null,
+  categoryId: null,
   duesAmount: null,
 })
 
 function resetEditErrors(): void {
   editErrors.name = null
-  editErrors.category = null
+  editErrors.categoryId = null
   editErrors.duesAmount = null
 }
 
 function hydrateEditForm(team: TeamRow): void {
   editForm.name = team.name
-  editForm.category = team.category
+  // On lit le doc (`categoryId`), pas la résolution UI (`team.category`) —
+  // ainsi le picker reste valide même si la catégorie a été archivée et
+  // n'apparaît plus dans `activeCategories`.
+  editForm.categoryId = team.categoryId
   editForm.gender = team.gender
   editForm.duesAmount = team.duesAmount
   editForm.trainingsPerWeek = team.schedulingConstraints.trainingsPerWeek
@@ -409,10 +420,10 @@ function cancelEdit(): void {
 
 function validateEditForm(): boolean {
   editErrors.name = editForm.name.trim() ? null : 'Nom requis'
-  editErrors.category = editForm.category.trim() ? null : 'Catégorie requise'
+  editErrors.categoryId = editForm.categoryId.trim() ? null : 'Catégorie requise'
   editErrors.duesAmount =
     editForm.duesAmount >= 0 ? null : 'Cotisation invalide'
-  return !editErrors.name && !editErrors.category && !editErrors.duesAmount
+  return !editErrors.name && !editErrors.categoryId && !editErrors.duesAmount
 }
 
 async function submitEdit(): Promise<void> {
@@ -423,7 +434,7 @@ async function submitEdit(): Promise<void> {
   try {
     const ok = await store.update(t.id, {
       name: editForm.name.trim(),
-      category: editForm.category.trim(),
+      categoryId: editForm.categoryId.trim(),
       gender: editForm.gender,
       duesAmount: editForm.duesAmount,
       trainingsPerWeek: editForm.trainingsPerWeek,
@@ -445,7 +456,7 @@ async function submitEdit(): Promise<void> {
 
 interface CreateTeamForm {
   name: string
-  category: string
+  categoryId: string
   gender: TeamGender
   duesAmount: number
   trainingsPerWeek: number
@@ -454,14 +465,14 @@ interface CreateTeamForm {
 
 interface CreateTeamErrors {
   name: string | null
-  category: string | null
+  categoryId: string | null
   duesAmount: string | null
 }
 
 function makeEmptyForm(): CreateTeamForm {
   return {
     name: '',
-    category: '',
+    categoryId: '',
     gender: 'M',
     duesAmount: 350,
     trainingsPerWeek: 1,
@@ -473,7 +484,7 @@ const isCreateDialogOpen = ref(false)
 const createForm = reactive<CreateTeamForm>(makeEmptyForm())
 const createErrors = reactive<CreateTeamErrors>({
   name: null,
-  category: null,
+  categoryId: null,
   duesAmount: null,
 })
 const submitting = ref(false)
@@ -484,17 +495,31 @@ const GENDER_OPTIONS: ReadonlyArray<{ value: TeamGender; label: string }> = [
   { value: 'mixed', label: 'Mixte' },
 ] as const
 
-/** Suggestions de catégorie tirées des équipes existantes (datalist). */
-const categorySuggestions = computed<string[]>(() => {
-  const set = new Set<string>()
-  for (const t of store.teams) set.add(t.category)
-  return [...set].sort((a, b) => a.localeCompare(b, 'fr'))
-})
+/**
+ * Libellé d'âge affiché dans le slot `#option` du Select catégorie.
+ * Aligne le rendu sur l'écran Settings → Catégories pour cohérence visuelle.
+ */
+function ageLabelFor(c: { minAge: number | null; maxAge: number | null }): string {
+  if (c.minAge === null && c.maxAge === null) return 'Ouvert'
+  if (c.minAge !== null && c.maxAge === null) return `${c.minAge} ans+`
+  if (c.minAge === null && c.maxAge !== null) return `≤ ${c.maxAge} ans`
+  if (c.minAge === c.maxAge) return `${c.minAge} ans`
+  return `${c.minAge}-${c.maxAge} ans`
+}
+
+/**
+ * Renvoie l'admin sur Settings → section Catégories. Le param `section`
+ * n'est pas encore implémenté côté Settings.vue mais sert de pointer
+ * naturel — au pire on tombe sur la section General.
+ */
+function goToCategoriesSettings(): void {
+  void router.push({ path: '/settings', query: { section: 'categories' } })
+}
 
 function openCreateDialog(): void {
   Object.assign(createForm, makeEmptyForm())
   createErrors.name = null
-  createErrors.category = null
+  createErrors.categoryId = null
   createErrors.duesAmount = null
   isCreateDialogOpen.value = true
 }
@@ -505,11 +530,11 @@ function closeCreateDialog(): void {
 
 function validateCreateForm(): boolean {
   createErrors.name = createForm.name.trim() ? null : 'Nom requis'
-  createErrors.category = createForm.category.trim() ? null : 'Catégorie requise'
+  createErrors.categoryId = createForm.categoryId.trim() ? null : 'Catégorie requise'
   createErrors.duesAmount =
     createForm.duesAmount >= 0 ? null : 'Cotisation invalide'
   return (
-    !createErrors.name && !createErrors.category && !createErrors.duesAmount
+    !createErrors.name && !createErrors.categoryId && !createErrors.duesAmount
   )
 }
 
@@ -519,7 +544,7 @@ async function submitCreate(): Promise<void> {
   try {
     const newId = await store.create({
       name: createForm.name.trim(),
-      category: createForm.category.trim(),
+      categoryId: createForm.categoryId.trim(),
       gender: createForm.gender,
       duesAmount: createForm.duesAmount,
       trainingsPerWeek: createForm.trainingsPerWeek,
@@ -807,9 +832,9 @@ async function removeCoach(memberId: string): Promise<void> {
               </h3>
               <Pill
                 variant="slate"
-                :title="ageRangeLabel(team) ? `${team.category} · ${ageRangeLabel(team)}` : team.category"
+                :title="ageRangeLabel(team) ? `${team.category?.name ?? 'Catégorie inconnue'} · ${ageRangeLabel(team)}` : (team.category?.name ?? 'Catégorie inconnue')"
               >
-                {{ team.category }}
+                {{ team.category?.name ?? 'Catégorie inconnue' }}
               </Pill>
               <Pill variant="slate">
                 {{ genderLabel(team.gender) }}
@@ -983,7 +1008,7 @@ async function removeCoach(memberId: string): Promise<void> {
                   {{ selectedTeam.name }}
                 </div>
                 <div class="text-[12px] text-surface-500">
-                  {{ selectedTeam.category }}
+                  {{ selectedTeam.category?.name ?? 'Catégorie inconnue' }}
                   <template v-if="ageRangeLabel(selectedTeam)">
                     · {{ ageRangeLabel(selectedTeam) }}
                   </template>
@@ -1028,25 +1053,28 @@ async function removeCoach(memberId: string): Promise<void> {
                 <div class="grid grid-cols-2 gap-3">
                   <label class="block">
                     <span class="text-[12px] text-surface-600">Catégorie</span>
-                    <InputText
-                      v-model="editForm.category"
+                    <Select
+                      v-model="editForm.categoryId"
+                      :options="categoriesStore.activeCategories"
+                      option-label="name"
+                      option-value="id"
+                      placeholder="Sélectionner…"
                       class="mt-1 w-full"
-                      placeholder="U14, Seniors…"
-                      list="team-edit-category-suggestions"
-                      :invalid="!!editErrors.category"
-                    />
-                    <datalist id="team-edit-category-suggestions">
-                      <option
-                        v-for="cat in categorySuggestions"
-                        :key="cat"
-                        :value="cat"
-                      />
-                    </datalist>
+                      :invalid="!!editErrors.categoryId"
+                      :empty-message="categoriesStore.loading ? 'Chargement…' : 'Aucune catégorie active'"
+                    >
+                      <template #option="{ option }">
+                        <div class="flex items-center justify-between gap-2 w-full">
+                          <span>{{ option.name }}</span>
+                          <span class="text-[11px] text-surface-500">{{ ageLabelFor(option) }}</span>
+                        </div>
+                      </template>
+                    </Select>
                     <span
-                      v-if="editErrors.category"
+                      v-if="editErrors.categoryId"
                       class="text-[11px] text-rose-600 mt-1 block"
                     >
-                      {{ editErrors.category }}
+                      {{ editErrors.categoryId }}
                     </span>
                   </label>
 
@@ -1116,7 +1144,7 @@ async function removeCoach(memberId: string): Promise<void> {
                 </h4>
                 <div class="flex items-center gap-2 flex-wrap">
                   <Pill variant="slate">
-                    {{ selectedTeam.category }}
+                    {{ selectedTeam.category?.name ?? 'Catégorie inconnue' }}
                   </Pill>
                   <Pill variant="slate">
                     {{ genderLabel(selectedTeam.gender) }}
@@ -1412,25 +1440,42 @@ async function removeCoach(memberId: string): Promise<void> {
         <div class="grid grid-cols-2 gap-3">
           <label class="block">
             <span class="text-[12px] text-surface-600">Catégorie</span>
-            <InputText
-              v-model="createForm.category"
+            <Select
+              v-model="createForm.categoryId"
+              :options="categoriesStore.activeCategories"
+              option-label="name"
+              option-value="id"
+              placeholder="Sélectionner…"
               class="mt-1 w-full"
-              placeholder="U14, Seniors…"
-              list="team-category-suggestions"
-              :invalid="!!createErrors.category"
-            />
-            <datalist id="team-category-suggestions">
-              <option
-                v-for="cat in categorySuggestions"
-                :key="cat"
-                :value="cat"
-              />
-            </datalist>
+              :invalid="!!createErrors.categoryId"
+              :empty-message="categoriesStore.loading ? 'Chargement…' : 'Aucune catégorie active'"
+            >
+              <template #option="{ option }">
+                <div class="flex items-center justify-between gap-2 w-full">
+                  <span>{{ option.name }}</span>
+                  <span class="text-[11px] text-surface-500">{{ ageLabelFor(option) }}</span>
+                </div>
+              </template>
+            </Select>
             <span
-              v-if="createErrors.category"
+              v-if="createErrors.categoryId"
               class="text-[11px] text-rose-600 mt-1 block"
             >
-              {{ createErrors.category }}
+              {{ createErrors.categoryId }}
+            </span>
+            <span
+              v-if="!categoriesStore.loading && categoriesStore.activeCategories.length === 0"
+              class="text-[11px] text-surface-500 mt-1 block"
+            >
+              Aucune catégorie active.
+              <button
+                type="button"
+                class="text-emerald-700 hover:underline font-medium"
+                @click="goToCategoriesSettings"
+              >
+                Créer une catégorie
+              </button>
+              dans Settings → Catégories.
             </span>
           </label>
 
