@@ -34,23 +34,27 @@ import {
   type TeamStatusFilter,
 } from '@/stores/teams'
 import { useCategoriesStore } from '@/stores/categories'
+import { useTagsStore } from '@/stores/tags'
 import { useMembersStore } from '@/stores/members'
 import type { TeamRow, TeamCoachAvatar } from '@/repositories/teams.repo'
 import type { MemberRow } from '@/repositories/members.repo'
-import type { TeamGender } from '@club-app/shared-types'
+import type { TeamGender, TeamTagRef } from '@club-app/shared-types'
 import Avatar from '@/components/ui/Avatar.vue'
 import Chip from '@/components/ui/Chip.vue'
 import Pill from '@/components/ui/Pill.vue'
+import Checkbox from 'primevue/checkbox'
 
 const router = useRouter()
 const store = useTeamsStore()
 const categoriesStore = useCategoriesStore()
+const tagsStore = useTagsStore()
 
 onMounted(() => {
-  // Loads indépendants — la résolution `categoryId → name` se fait à l'affichage
-  // côté store catégories, pas de dépendance d'ordre.
+  // Loads indépendants — la résolution `categoryId → name` (resp. `tagId → name+color`)
+  // se fait à l'affichage côté stores catégories/tags, pas de dépendance d'ordre.
   void store.load()
   void categoriesStore.loadActive()
+  void tagsStore.loadActive()
 })
 
 const rows = computed<TeamRow[]>(() => store.filtered)
@@ -363,6 +367,11 @@ interface EditTeamForm {
   duesAmount: number
   trainingsPerWeek: number
   anticipatedMatches: number
+  /**
+   * Tags attachés à l'équipe (référence + flag display par-équipe).
+   * Voir docs/main.md → "Tags d'équipes" pour le lifecycle.
+   */
+  tags: TeamTagRef[]
 }
 
 interface EditTeamErrors {
@@ -380,6 +389,7 @@ const editForm = reactive<EditTeamForm>({
   duesAmount: 0,
   trainingsPerWeek: 0,
   anticipatedMatches: 0,
+  tags: [],
 })
 const editErrors = reactive<EditTeamErrors>({
   name: null,
@@ -403,6 +413,8 @@ function hydrateEditForm(team: TeamRow): void {
   editForm.duesAmount = team.duesAmount
   editForm.trainingsPerWeek = team.schedulingConstraints.trainingsPerWeek
   editForm.anticipatedMatches = team.schedulingConstraints.anticipatedMatches
+  // Clone défensif : éviter la mutation directe du doc Pinia.
+  editForm.tags = team.tags.map((r) => ({ ...r }))
   resetEditErrors()
 }
 
@@ -439,6 +451,7 @@ async function submitEdit(): Promise<void> {
       duesAmount: editForm.duesAmount,
       trainingsPerWeek: editForm.trainingsPerWeek,
       anticipatedMatches: editForm.anticipatedMatches,
+      tags: editForm.tags,
     })
     if (ok) {
       isEditing.value = false
@@ -461,6 +474,7 @@ interface CreateTeamForm {
   duesAmount: number
   trainingsPerWeek: number
   anticipatedMatches: number
+  tags: TeamTagRef[]
 }
 
 interface CreateTeamErrors {
@@ -477,6 +491,7 @@ function makeEmptyForm(): CreateTeamForm {
     duesAmount: 350,
     trainingsPerWeek: 1,
     anticipatedMatches: 0,
+    tags: [],
   }
 }
 
@@ -516,6 +531,54 @@ function goToCategoriesSettings(): void {
   void router.push({ path: '/settings', query: { section: 'categories' } })
 }
 
+/** Pointer vers Settings → Tags (même limitation que goToCategoriesSettings). */
+function goToTagsSettings(): void {
+  void router.push({ path: '/settings', query: { section: 'tags' } })
+}
+
+// ---------------------------------------------------------------------------
+// Tags helpers — manipulent un tableau `TeamTagRef[]` (forme partagée
+// create + edit). On garde la logique en dehors du template pour rester
+// lisible.
+// ---------------------------------------------------------------------------
+
+function findTagIndex(tags: TeamTagRef[], tagId: string): number {
+  return tags.findIndex((r) => r.tagId === tagId)
+}
+
+function isTagAttached(tags: TeamTagRef[], tagId: string): boolean {
+  return findTagIndex(tags, tagId) !== -1
+}
+
+function isTagDisplayed(tags: TeamTagRef[], tagId: string): boolean {
+  const ref = tags.find((r) => r.tagId === tagId)
+  return ref ? ref.display : false
+}
+
+/**
+ * Attache / détache le tag. Par défaut un tag fraîchement coché est
+ * `display: true` (cas dominant) ; l'admin peut le passer à `display: false`
+ * via la checkbox secondaire.
+ */
+function toggleTagOnForm(tags: TeamTagRef[], tagId: string): void {
+  const idx = findTagIndex(tags, tagId)
+  if (idx === -1) {
+    tags.push({ tagId, display: true })
+  } else {
+    tags.splice(idx, 1)
+  }
+}
+
+function setTagDisplayOnForm(
+  tags: TeamTagRef[],
+  tagId: string,
+  display: boolean,
+): void {
+  const idx = findTagIndex(tags, tagId)
+  if (idx === -1) return
+  tags[idx] = { tagId, display }
+}
+
 function openCreateDialog(): void {
   Object.assign(createForm, makeEmptyForm())
   createErrors.name = null
@@ -549,6 +612,7 @@ async function submitCreate(): Promise<void> {
       duesAmount: createForm.duesAmount,
       trainingsPerWeek: createForm.trainingsPerWeek,
       anticipatedMatches: createForm.anticipatedMatches,
+      tags: createForm.tags,
     })
     if (newId) {
       closeCreateDialog()
@@ -851,6 +915,13 @@ async function removeCoach(memberId: string): Promise<void> {
               >
                 Coach à assigner
               </Pill>
+              <Pill
+                v-for="tagRef in team.tagRefs.filter((t) => t.display)"
+                :key="tagRef.id"
+                :variant="tagRef.color"
+              >
+                {{ tagRef.name }}
+              </Pill>
             </div>
             <div class="text-[12px] text-surface-500 mt-1">
               <template v-if="coachSummary(team)">
@@ -1132,6 +1203,63 @@ async function removeCoach(memberId: string): Promise<void> {
                     />
                   </label>
                 </div>
+
+                <!-- Tags picker (multi-select + flag display par-équipe) -->
+                <div class="block">
+                  <span class="text-[12px] text-surface-600">
+                    Tags
+                  </span>
+                  <div
+                    v-if="!tagsStore.loading && tagsStore.activeTags.length === 0"
+                    class="mt-1 text-[12px] text-surface-500"
+                  >
+                    Aucun tag actif.
+                    <button
+                      type="button"
+                      class="text-emerald-700 hover:underline font-medium"
+                      @click="goToTagsSettings"
+                    >
+                      Créer un tag
+                    </button>
+                    dans Settings → Tags.
+                  </div>
+                  <div
+                    v-else
+                    class="mt-1 space-y-1.5"
+                  >
+                    <div
+                      v-for="tag in tagsStore.activeTags"
+                      :key="tag.id"
+                      class="flex items-center gap-2"
+                    >
+                      <Checkbox
+                        :input-id="`edit-tag-${tag.id}`"
+                        :model-value="isTagAttached(editForm.tags, tag.id)"
+                        binary
+                        @update:model-value="toggleTagOnForm(editForm.tags, tag.id)"
+                      />
+                      <label
+                        :for="`edit-tag-${tag.id}`"
+                        class="cursor-pointer select-none"
+                      >
+                        <Pill :variant="tag.color">
+                          {{ tag.name }}
+                        </Pill>
+                      </label>
+                      <label
+                        v-if="isTagAttached(editForm.tags, tag.id)"
+                        class="ml-auto flex items-center gap-1.5 text-[11px] text-surface-600 cursor-pointer"
+                      >
+                        <Checkbox
+                          :model-value="isTagDisplayed(editForm.tags, tag.id)"
+                          binary
+                          @update:model-value="(v) => setTagDisplayOnForm(editForm.tags, tag.id, v === true)"
+                        />
+                        afficher
+                      </label>
+                    </div>
+                  </div>
+                </div>
               </section>
             </template>
 
@@ -1172,6 +1300,30 @@ async function removeCoach(memberId: string): Promise<void> {
                     variant="slate"
                   >
                     {{ ageRangeLabel(selectedTeam) }}
+                  </Pill>
+                  <Pill
+                    v-for="tagRef in selectedTeam.tagRefs.filter((t) => t.display)"
+                    :key="tagRef.id"
+                    :variant="tagRef.color"
+                  >
+                    {{ tagRef.name }}
+                  </Pill>
+                </div>
+                <!-- Tags non-display : visibles uniquement côté admin (ligne discrète) -->
+                <div
+                  v-if="selectedTeam.tagRefs.some((t) => !t.display)"
+                  class="flex items-center gap-1.5 flex-wrap pt-0.5"
+                >
+                  <span class="text-[11px] text-surface-400">
+                    Tags admin (non affichés) :
+                  </span>
+                  <Pill
+                    v-for="tagRef in selectedTeam.tagRefs.filter((t) => !t.display)"
+                    :key="tagRef.id"
+                    :variant="tagRef.color"
+                    class="opacity-60"
+                  >
+                    {{ tagRef.name }}
                   </Pill>
                 </div>
               </section>
@@ -1532,6 +1684,63 @@ async function removeCoach(memberId: string): Promise<void> {
               class="mt-1 w-full"
             />
           </label>
+        </div>
+
+        <!-- Tags picker (multi-select + flag display par-équipe) -->
+        <div class="block">
+          <span class="text-[12px] text-surface-600">
+            Tags <span class="text-surface-400">(optionnel)</span>
+          </span>
+          <div
+            v-if="!tagsStore.loading && tagsStore.activeTags.length === 0"
+            class="mt-1 text-[12px] text-surface-500"
+          >
+            Aucun tag actif.
+            <button
+              type="button"
+              class="text-emerald-700 hover:underline font-medium"
+              @click="goToTagsSettings"
+            >
+              Créer un tag
+            </button>
+            dans Settings → Tags.
+          </div>
+          <div
+            v-else
+            class="mt-1 space-y-1.5"
+          >
+            <div
+              v-for="tag in tagsStore.activeTags"
+              :key="tag.id"
+              class="flex items-center gap-2"
+            >
+              <Checkbox
+                :input-id="`create-tag-${tag.id}`"
+                :model-value="isTagAttached(createForm.tags, tag.id)"
+                binary
+                @update:model-value="toggleTagOnForm(createForm.tags, tag.id)"
+              />
+              <label
+                :for="`create-tag-${tag.id}`"
+                class="cursor-pointer select-none"
+              >
+                <Pill :variant="tag.color">
+                  {{ tag.name }}
+                </Pill>
+              </label>
+              <label
+                v-if="isTagAttached(createForm.tags, tag.id)"
+                class="ml-auto flex items-center gap-1.5 text-[11px] text-surface-600 cursor-pointer"
+              >
+                <Checkbox
+                  :model-value="isTagDisplayed(createForm.tags, tag.id)"
+                  binary
+                  @update:model-value="(v) => setTagDisplayOnForm(createForm.tags, tag.id, v === true)"
+                />
+                afficher
+              </label>
+            </div>
+          </div>
         </div>
       </div>
 

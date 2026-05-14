@@ -105,6 +105,14 @@ service cloud.firestore {
       }
     }
 
+    // Rule collectionGroup `courts` — indispensable pour `collectionGroup('courts')`
+    // utilisé par Venues (load) et Bookings (count par court). Les rules de
+    // sous-collection ci-dessus ne s'appliquent PAS aux collectionGroup queries
+    // (limitation Firestore : il faut une règle séparée avec wildcard `{path=**}`).
+    match /{path=**}/courts/{courtId} {
+      allow read: if isSignedIn();
+    }
+
     // ========================================================================
     // /teams, /categories
     // ========================================================================
@@ -116,6 +124,13 @@ service cloud.firestore {
     // (résolution `team.categoryId` côté client). Write admin only — édité depuis
     // Settings → Catégories.
     match /categories/{categoryId} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+    // Référentiel tag (Élite, Loisir, Compet, U14 A…). Référencé par
+    // /teams.tags[].tagId avec un flag display par-équipe. Read signed, write
+    // admin only — édité depuis Settings → Tags.
+    match /tags/{tagId} {
       allow read: if isSignedIn();
       allow write: if isRootAdmin() || isAdmin();
     }

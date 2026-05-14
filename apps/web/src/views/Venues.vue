@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   Building2,
   Calendar,
@@ -97,6 +97,29 @@ function resolvedCombinedNames(courtIds: string[]): string[] {
     return found ? found.name : id
   })
 }
+
+/**
+ * Index inverse : pour chaque court physique, liste les courts combinés
+ * qui l'incluent dans `combinedCourtIds`. Permet d'afficher "Inclus dans X"
+ * sur le card d'un court physique — l'admin voit en un coup d'œil que
+ * réserver le combiné bloque ce court (et inversement).
+ *
+ * En pratique un court physique n'est inclus que dans un seul combiné
+ * (sinon les bookings se chevauchent), mais on supporte plusieurs pour
+ * robustesse — l'erreur de config doit rester visible, pas masquée.
+ */
+const consumedByMap = computed<Map<string, Court[]>>(() => {
+  const map = new Map<string, Court[]>()
+  for (const candidate of selectedCourts.value) {
+    if (!candidate.isCombined) continue
+    for (const physicalId of candidate.combinedCourtIds) {
+      const arr = map.get(physicalId) ?? []
+      arr.push(candidate)
+      map.set(physicalId, arr)
+    }
+  }
+  return map
+})
 
 // ---------------------------------------------------------------------------
 // Sélection venue — colonne gauche
@@ -366,6 +389,7 @@ interface CourtForm {
 
 interface CourtErrors {
   name: string | null
+  combinedCourtIds: string | null
 }
 
 function makeEmptyCourtForm(): CourtForm {
@@ -381,16 +405,41 @@ function makeEmptyCourtForm(): CourtForm {
 
 const isCreateCourtOpen = ref(false)
 const courtForm = reactive<CourtForm>(makeEmptyCourtForm())
-const courtErrors = reactive<CourtErrors>({ name: null })
+const courtErrors = reactive<CourtErrors>({ name: null, combinedCourtIds: null })
 const submittingCourt = ref(false)
 
-/** Courts disponibles comme "sous-courts" (exclut le court lui-même en mode édition). */
+// Auto-clear combinedCourtIds + erreur associée quand l'admin désactive la
+// combinaison. Évite de garder un état stale qui réapparaîtrait si l'admin
+// re-toggle dans la foulée.
+watch(
+  () => courtForm.isCombined,
+  (next) => {
+    if (!next) {
+      courtForm.combinedCourtIds = []
+      courtErrors.combinedCourtIds = null
+    }
+  },
+)
+
+/**
+ * Courts disponibles comme "sous-courts" pour un court combiné.
+ *
+ * Filtre :
+ *  - **Exclut les courts déjà `isCombined`** : un court combiné ne peut
+ *    pas inclure un autre court combiné (sinon récursion ambiguë A→B→C
+ *    et booking generation incohérente).
+ *  - Exclut le court en cours d'édition (un court ne se combine pas avec
+ *    lui-même).
+ *
+ * Les courts inactifs restent dans la liste : on peut combiner un court
+ * inactif (l'admin gère le timing d'activation).
+ */
 const combinedCourtOptions = computed<Court[]>(() => {
-  const courts = selectedCourts.value
-  if (!isEditCourtOpen.value) return courts
+  const physicalCourts = selectedCourts.value.filter((c) => !c.isCombined)
+  if (!isEditCourtOpen.value) return physicalCourts
   const target = editingCourt.value
-  if (!target) return courts
-  return courts.filter((c) => c.id !== target.id)
+  if (!target) return physicalCourts
+  return physicalCourts.filter((c) => c.id !== target.id)
 })
 
 function openCreateCourtDialog(): void {
@@ -405,7 +454,14 @@ function closeCreateCourtDialog(): void {
 
 function validateCourtForm(): boolean {
   courtErrors.name = courtForm.name.trim() ? null : 'Nom requis'
-  return !courtErrors.name
+  // Si le court est marqué combiné, il doit consommer au moins un autre court ;
+  // sinon il n'y a rien à bloquer à la réservation et le booking generator
+  // ne saurait pas quoi faire (cf. linkedBookingIds dans /bookings).
+  courtErrors.combinedCourtIds =
+    courtForm.isCombined && courtForm.combinedCourtIds.length === 0
+      ? 'Sélectionnez au moins un court à combiner'
+      : null
+  return !courtErrors.name && !courtErrors.combinedCourtIds
 }
 
 async function submitCreateCourt(): Promise<void> {
@@ -910,6 +966,32 @@ async function removeClosure(index: number): Promise<void> {
                   {{ resolvedCombinedNames(court.combinedCourtIds).join(', ') }}
                 </div>
 
+                <!-- Warning : combiné déclaré mais aucun sous-court (config invalide) -->
+                <div
+                  v-else-if="court.isCombined"
+                  class="text-[11px] text-rose-600 flex items-center gap-1"
+                >
+                  <TriangleAlert
+                    :size="11"
+                    :stroke-width="2"
+                  />
+                  Court combiné sans sous-court — à corriger.
+                </div>
+
+                <!-- Inverse : ce court physique est consommé par un / des combinés -->
+                <div
+                  v-if="!court.isCombined && (consumedByMap.get(court.id)?.length ?? 0) > 0"
+                  class="text-[11px] text-surface-500 flex items-center gap-1 flex-wrap"
+                >
+                  <Link2
+                    :size="11"
+                    :stroke-width="2"
+                    class="text-sky-500 flex-shrink-0"
+                  />
+                  <span class="font-medium">Inclus dans :</span>
+                  <span>{{ (consumedByMap.get(court.id) ?? []).map((c) => c.name).join(', ') }}</span>
+                </div>
+
                 <!-- Switch actif -->
                 <div class="flex items-center justify-between pt-1 border-t border-surface-100">
                   <span class="text-[12px] text-surface-600">
@@ -1393,12 +1475,14 @@ async function removeClosure(index: number): Promise<void> {
         </div>
 
         <div class="flex items-center justify-between py-2 border border-surface-100 rounded-lg px-3">
-          <div>
+          <div class="min-w-0 pr-3">
             <div class="text-[13px] font-medium">
               Court combiné
             </div>
             <div class="text-[11px] text-surface-500 mt-0.5">
-              Ce court regroupe plusieurs petits courts
+              Ce court occupe physiquement d'autres courts (terrain agrandi).
+              Les courts inclus seront bloqués automatiquement lors d'une
+              réservation.
             </div>
           </div>
           <InputSwitch v-model="courtForm.isCombined" />
@@ -1408,7 +1492,7 @@ async function removeClosure(index: number): Promise<void> {
           v-if="courtForm.isCombined"
           class="block"
         >
-          <span class="text-[12px] text-surface-600">Courts inclus</span>
+          <span class="text-[12px] text-surface-600">Courts inclus <span class="text-rose-500">*</span></span>
           <MultiSelect
             v-model="courtForm.combinedCourtIds"
             :options="combinedCourtOptions"
@@ -1416,8 +1500,21 @@ async function removeClosure(index: number): Promise<void> {
             option-value="id"
             placeholder="Sélectionner les courts…"
             class="mt-1 w-full"
-            :empty-message="'Aucun autre court dans cette salle'"
+            :invalid="!!courtErrors.combinedCourtIds"
+            :empty-message="'Aucun court physique disponible dans cette salle'"
           />
+          <span
+            v-if="courtErrors.combinedCourtIds"
+            class="text-[11px] text-rose-600 mt-1 block"
+          >
+            {{ courtErrors.combinedCourtIds }}
+          </span>
+          <span
+            v-else
+            class="text-[11px] text-surface-500 mt-1 block"
+          >
+            Seuls les courts non-combinés peuvent être inclus (pas de chaîne).
+          </span>
         </label>
       </div>
 
@@ -1496,12 +1593,14 @@ async function removeClosure(index: number): Promise<void> {
         </div>
 
         <div class="flex items-center justify-between py-2 border border-surface-100 rounded-lg px-3">
-          <div>
+          <div class="min-w-0 pr-3">
             <div class="text-[13px] font-medium">
               Court combiné
             </div>
             <div class="text-[11px] text-surface-500 mt-0.5">
-              Ce court regroupe plusieurs petits courts
+              Ce court occupe physiquement d'autres courts (terrain agrandi).
+              Les courts inclus seront bloqués automatiquement lors d'une
+              réservation.
             </div>
           </div>
           <InputSwitch v-model="courtForm.isCombined" />
@@ -1511,7 +1610,7 @@ async function removeClosure(index: number): Promise<void> {
           v-if="courtForm.isCombined"
           class="block"
         >
-          <span class="text-[12px] text-surface-600">Courts inclus</span>
+          <span class="text-[12px] text-surface-600">Courts inclus <span class="text-rose-500">*</span></span>
           <MultiSelect
             v-model="courtForm.combinedCourtIds"
             :options="combinedCourtOptions"
@@ -1519,8 +1618,21 @@ async function removeClosure(index: number): Promise<void> {
             option-value="id"
             placeholder="Sélectionner les courts…"
             class="mt-1 w-full"
-            :empty-message="'Aucun autre court dans cette salle'"
+            :invalid="!!courtErrors.combinedCourtIds"
+            :empty-message="'Aucun court physique disponible dans cette salle'"
           />
+          <span
+            v-if="courtErrors.combinedCourtIds"
+            class="text-[11px] text-rose-600 mt-1 block"
+          >
+            {{ courtErrors.combinedCourtIds }}
+          </span>
+          <span
+            v-else
+            class="text-[11px] text-surface-500 mt-1 block"
+          >
+            Seuls les courts non-combinés peuvent être inclus (pas de chaîne).
+          </span>
         </label>
 
         <div class="flex items-center justify-between py-2 border border-surface-100 rounded-lg px-3">

@@ -126,6 +126,12 @@ MVP : pas d'email envoyé, l'admin partage manuellement avec l'invité. À sa pr
   active: boolean
 }
 ```
+**Invariants** (enforced UI Venues.vue, voir `main.md → Venues & courts`) :
+- `combinedCourtIds` ne référence que des courts de la même salle (same-venue only).
+- Un combiné ne peut pas inclure un autre combiné (`isCombined: false` pour tous les courts listés). Pas de chaîne A→B→C.
+- `isCombined: true` exige `combinedCourtIds.length > 0` (sinon erreur de validation côté UI).
+
+Réservation d'un court combiné → le booking generator crée N bookings liés (cf. `linkedBookingIds` + `isCombinedCourtEvent: true` sur `/bookings`). Implémentation booking generator côté Cloud Functions à venir (Phase 2).
 
 ### `/venues/{venueId}/courts/{courtId}/timeSlots/{slotId}`
 ```ts
@@ -179,11 +185,14 @@ MVP : pas d'email envoyé, l'admin partage manuellement avec l'invité. À sa pr
     anticipatedMatches: number
     coachAvailability: [{ coachMemberId, unavailableDays, unavailableSlots }]
   }
+  tags: [{ tagId: string, display: boolean }]  // ref → /tags/{tagId}, display flag par-équipe
   active: boolean
   createdAt: Timestamp
 }
 ```
 `categoryId` est une référence (pas un libellé dénormalisé) — le nom d'affichage et la tranche d'âge sont résolus à la lecture via `/categories/{id}`. Pour la liste des équipes, le repo bat un seul `getDocs('/categories')` puis enrichit chaque team (pas de N+1).
+
+`tags` permet de différencier visuellement des équipes similaires (ex. deux U14M). Chaque entrée référence un `/tags/{id}` et porte un flag `display` propre à l'équipe : un même tag peut être attaché à plusieurs équipes mais n'être affiché que sur certaines (cf. `/tags` ci-dessous et `main.md` → "Tags d'équipes"). Résolu par batch lookup à la lecture (pattern identique aux catégories).
 
 ### `/categories/{categoryId}`
 ```ts
@@ -203,6 +212,25 @@ Décisions clés :
 - **`displayOrder`** : entier, l'admin peut le maintenir manuellement (drag-to-reorder UI). Tie-break secondaire par `minAge` croissant puis `name`.
 - **`minAge` / `maxAge` nullable** : pour les catégories ouvertes (Seniors, Loisirs, Veterans 35+). Le label UI dérive : `null,null` → "Ouvert" ; `min,null` → "min ans+" ; `min,min` → "min ans" ; `min,max` → "min-max ans".
 - **Pas de `gender` sur catégorie** : le genre reste sur `/teams.gender` — une catégorie "U14" peut produire une équipe M, F ou mixed.
+
+### `/tags/{tagId}`
+```ts
+{
+  name: string                    // "Élite", "Loisir", "U14 A", "Compet"
+  color: "emerald" | "sky" | "amber" | "rose" | "violet" | "slate"
+  displayOrder: number            // tri stable dans pickers
+  active: boolean                 // false = archivée (n'apparaît plus dans le picker, teams existantes inchangées)
+  createdAt: Timestamp
+}
+```
+Référentiel éditable par l'admin (Settings → Tags). Permet de **différencier** des équipes similaires (deux U14M, version "compet" vs "loisir", etc.). Référencé par `/teams.tags[].tagId` avec un flag `display` par-équipe (cf. `/teams` plus haut).
+
+`color` est un alias borné sur le design system (variants du composant `Pill` côté web) — pas de hex libre pour rester cohérent avec le reste de l'app. Le nom est résolu à la lecture (pas dénormalisé sur `/teams`).
+
+Décisions clés :
+- **`active: false` vs delete** : on archive plutôt que supprimer pour éviter les FK orphelines sur `/teams.tags[].tagId`. Suppression refusée tant qu'au moins une équipe référence le tag.
+- **`display` par-équipe et pas par-tag** : un tag peut servir à filtrer/comparer côté admin sans être visible publiquement sur certaines équipes. Stocké inline dans `/teams.tags` plutôt que sur `/tags` (cf. `main.md`).
+- **Pas de tag implicite par catégorie** : `categoryId` et `tags` sont orthogonaux — un tag n'hérite jamais d'une catégorie ni l'inverse.
 
 ### `/matchTypes/{matchTypeId}`
 ```ts
@@ -385,6 +413,7 @@ Un projet = un club, donc pas de filtrage `clubId`.
 - **`/paymentExceptionRequests/`** : coach crée pour ses joueurs, lit les siens. Admin lit/écrit tout.
 - **`/licenseRequests/`** : idem. `member.licensed` écrit seulement par admin (ou Function sur approval).
 - **Route guards** : **allowlist** des rôles par route. `rootAdmin` implicitement dans toutes.
+- **collectionGroup queries** : exigent une règle séparée `match /{path=**}/<name>/{id}` — les rules de sous-collection ne couvrent **pas** les `collectionGroup()` queries (limitation Firestore). Présent pour `courts` (utilisé par Venues + Bookings). À ajouter au cas par cas si une nouvelle `collectionGroup()` query apparaît côté client (ex. `attendance`, `officialAssignments` côté web aujourd'hui : leurs lectures sont catch-failed, mais à corriger si on veut les activer).
 
 ## Cloud Functions
 

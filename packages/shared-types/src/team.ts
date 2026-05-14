@@ -1,4 +1,5 @@
 import type { Timestamp } from './index'
+import type { TeamTagRef } from './tag'
 
 /**
  * Document `/teams/{teamId}` — équipe du club.
@@ -52,6 +53,11 @@ export interface TeamData {
   /** Cotisation annuelle CHF/joueur. */
   duesAmount: number
   schedulingConstraints: TeamSchedulingConstraints
+  /**
+   * Tags attachés à l'équipe (référence + flag d'affichage par-équipe).
+   * Cf. /tags référentiel et docs/main.md ("Tags d'équipes").
+   */
+  tags: TeamTagRef[]
   active: boolean
   createdAt: Timestamp
 }

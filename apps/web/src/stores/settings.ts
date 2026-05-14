@@ -44,6 +44,7 @@ export type SettingsSection =
   | 'dues'
   | 'roles'
   | 'categories'
+  | 'tags'
   | 'closurePeriods'
   | 'adminTeam'
 

@@ -16,7 +16,9 @@ import {
 } from 'lucide-vue-next'
 import { useSeasonsStore } from '@/stores/seasons'
 import { useTeamsStore } from '@/stores/teams'
+import { useVenuesStore } from '@/stores/venues'
 import type { TeamRow } from '@/repositories/teams.repo'
+import type { VenueRow } from '@/repositories/venues.repo'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 
 /**
@@ -41,6 +43,7 @@ import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 const router = useRouter()
 const seasonsStore = useSeasonsStore()
 const teamsStore = useTeamsStore()
+const venuesStore = useVenuesStore()
 
 // ---------------------------------------------------------------------------
 // Wizard step state.
@@ -95,44 +98,33 @@ const form = ref({
 })
 
 // ---------------------------------------------------------------------------
-// Venues — pas de repo dédié pour l'instant, on hardcode les 3 venues vues
-// dans le design (Forêt / Vergers / Beaulieu). À terme : `listVenues()`.
+// Venues — chargés depuis Firestore via le store dédié. Pour la sélection on
+// expose uniquement les salles qui ont au moins un court actif (un venue sans
+// court utilisable n'a pas de sens dans une saison).
 // ---------------------------------------------------------------------------
 
-interface WizardVenue {
-  id: string
-  label: string
-  address: string
+const availableVenues = computed<VenueRow[]>(() =>
+  venuesStore.venues.filter((v) => v.activeCourtCount > 0),
+)
+
+/** Sous-titre listé par venue — adresse + compteur courts actifs. */
+function venueSubtitle(v: VenueRow): string {
+  const courts = `${v.activeCourtCount} court${v.activeCourtCount > 1 ? 's' : ''}`
+  return v.address ? `${v.address} · ${courts}` : courts
 }
 
-// TODO(firestore): remplacer par `listVenues()` (collection `/venues`).
-const VENUES: readonly WizardVenue[] = [
-  {
-    id: 'mock-venue-foret',
-    label: 'Forêt',
-    address: 'Av. de la Forêt 12, 1007 Lausanne · 2 courts',
-  },
-  {
-    id: 'mock-venue-vergers',
-    label: 'Vergers',
-    address: 'Ch. des Vergers 8, 1018 Lausanne · 1 court',
-  },
-  {
-    id: 'mock-venue-beaulieu',
-    label: 'Beaulieu',
-    address: 'Av. Bergières 10, 1004 Lausanne · 1 court',
-  },
-] as const
-
 // ---------------------------------------------------------------------------
-// Teams loaded depuis le store (déjà mocké). On les filtre sur `active`.
+// Teams + venues loaded depuis leurs stores respectifs.
 // ---------------------------------------------------------------------------
 
 onMounted(() => {
-  // load() est idempotent (vérifie loading.value). On garantit la liste
-  // dispo pour l'étape 2.
+  // load() est idempotent côté store (vérifie loading.value). On garantit
+  // les listes disponibles pour les étapes 2 (teams) et 3 (venues).
   if (teamsStore.teams.length === 0) {
     void teamsStore.load()
+  }
+  if (venuesStore.venues.length === 0) {
+    void venuesStore.load()
   }
 })
 
@@ -146,8 +138,8 @@ function ensureDefaultSelections(): void {
   if (form.value.selectedTeamIds.size === 0 && availableTeams.value.length > 0) {
     form.value.selectedTeamIds = new Set(availableTeams.value.map((t) => t.id))
   }
-  if (form.value.selectedVenueIds.size === 0) {
-    form.value.selectedVenueIds = new Set(VENUES.map((v) => v.id))
+  if (form.value.selectedVenueIds.size === 0 && availableVenues.value.length > 0) {
+    form.value.selectedVenueIds = new Set(availableVenues.value.map((v) => v.id))
   }
 }
 
@@ -266,6 +258,12 @@ function goToTeams(): void {
   void router.push({ name: 'teams' })
 }
 
+/** CTA empty state — pas de venue avec court actif : on route vers Venues
+ *  (création de salle + courts). */
+function goToVenues(): void {
+  void router.push({ name: 'venues' })
+}
+
 async function onSubmit(): Promise<void> {
   if (!canAdvance.value || submitting.value) return
   submitting.value = true
@@ -273,9 +271,9 @@ async function onSubmit(): Promise<void> {
   try {
     const teamIds = Array.from(form.value.selectedTeamIds)
     const venueIds = Array.from(form.value.selectedVenueIds)
-    const venueLabels = VENUES.filter((v) => form.value.selectedVenueIds.has(v.id)).map(
-      (v) => v.label,
-    )
+    const venueLabels = availableVenues.value
+      .filter((v) => form.value.selectedVenueIds.has(v.id))
+      .map((v) => v.name)
     const newId = await seasonsStore.create({
       name: form.value.name.trim(),
       startDate: new Date(form.value.startDate),
@@ -320,7 +318,9 @@ const selectedTeamLabels = computed<string[]>(() =>
 )
 
 const selectedVenueLabels = computed<string[]>(() =>
-  VENUES.filter((v) => form.value.selectedVenueIds.has(v.id)).map((v) => v.label),
+  availableVenues.value
+    .filter((v) => form.value.selectedVenueIds.has(v.id))
+    .map((v) => v.name),
 )
 </script>
 
@@ -716,36 +716,154 @@ const selectedVenueLabels = computed<string[]>(() =>
         <p class="text-[12px] text-surface-500 mt-1">
           Les venues utilisés cette saison (= `activeVenueIds`).
           <span class="num">{{ form.selectedVenueIds.size }}</span> sur
-          <span class="num">{{ VENUES.length }}</span> sélectionné<span
+          <span class="num">{{ availableVenues.length }}</span> sélectionné<span
             v-if="form.selectedVenueIds.size > 1"
           >s</span>.
         </p>
       </div>
 
-      <ul class="divide-y divide-surface-200 border border-surface-200 rounded-md">
+      <!-- Error : surface l'erreur du store (permission Firestore, etc.) avant
+           les états loading / empty. -->
+      <div
+        v-if="venuesStore.error"
+        class="card border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700 flex items-start gap-2"
+        role="alert"
+      >
+        <TriangleAlert
+          :size="14"
+          :stroke-width="2"
+          class="mt-0.5 shrink-0"
+        />
+        <div class="flex-1">
+          <div class="font-medium">
+            Impossible de charger les salles.
+          </div>
+          <div class="text-[12px] text-rose-700/80 mt-0.5">
+            {{ venuesStore.error }}
+          </div>
+        </div>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="venuesStore.load()"
+        >
+          Réessayer
+        </button>
+      </div>
+
+      <!-- Loading skeleton. -->
+      <div
+        v-else-if="venuesStore.loading && venuesStore.venues.length === 0"
+        class="border border-surface-200 rounded-md divide-y divide-surface-200"
+        aria-busy="true"
+      >
+        <div
+          v-for="i in 3"
+          :key="`venue-skel-${i}`"
+          class="flex items-center gap-3 px-4 py-3 animate-pulse"
+        >
+          <div class="flex-1 space-y-1.5">
+            <div class="h-3.5 w-32 bg-surface-200 rounded" />
+            <div class="h-2.5 w-56 bg-surface-100 rounded" />
+          </div>
+          <div class="h-5 w-9 bg-surface-200 rounded-full" />
+        </div>
+      </div>
+
+      <!-- Empty (no venues at all) : projet vierge. -->
+      <div
+        v-else-if="venuesStore.venues.length === 0"
+        class="border border-surface-200 rounded-md px-4 py-10 text-center flex flex-col items-center gap-2"
+      >
+        <span
+          class="w-10 h-10 rounded-full bg-surface-100 inline-flex items-center justify-center text-surface-500"
+        >
+          <MapPin
+            :size="18"
+            :stroke-width="2"
+          />
+        </span>
+        <div class="text-[14px] font-semibold">
+          Aucune salle disponible
+        </div>
+        <div class="text-[12px] text-surface-500 max-w-md">
+          Tu dois d'abord créer au moins une salle (avec ses courts) avant de
+          pouvoir configurer une saison.
+        </div>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm mt-2"
+          @click="goToVenues"
+        >
+          Créer des salles
+          <ArrowRight
+            :size="13"
+            :stroke-width="2"
+          />
+        </button>
+      </div>
+
+      <!-- Empty (salles existent mais aucune avec court actif) : on guide
+           vers la page Venues pour activer / ajouter des courts. -->
+      <div
+        v-else-if="availableVenues.length === 0"
+        class="border border-surface-200 rounded-md px-4 py-10 text-center flex flex-col items-center gap-2"
+      >
+        <span
+          class="w-10 h-10 rounded-full bg-surface-100 inline-flex items-center justify-center text-surface-500"
+        >
+          <MapPin
+            :size="18"
+            :stroke-width="2"
+          />
+        </span>
+        <div class="text-[14px] font-semibold">
+          Aucune salle utilisable
+        </div>
+        <div class="text-[12px] text-surface-500 max-w-md">
+          Aucune salle n'a de court actif. Ajoute des courts ou réactive-en
+          depuis la page Venues pour pouvoir les inscrire dans la saison.
+        </div>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm mt-2"
+          @click="goToVenues"
+        >
+          Gérer les salles
+          <ArrowRight
+            :size="13"
+            :stroke-width="2"
+          />
+        </button>
+      </div>
+
+      <ul
+        v-else
+        class="divide-y divide-surface-200 border border-surface-200 rounded-md"
+      >
         <li
-          v-for="venue in VENUES"
+          v-for="venue in availableVenues"
           :key="venue.id"
           class="flex items-center gap-3 px-4 py-3"
         >
           <div class="flex-1 min-w-0">
             <div class="text-[13px] font-medium">
-              {{ venue.label }}
+              {{ venue.name }}
             </div>
             <div class="text-[11px] text-surface-500">
-              {{ venue.address }}
+              {{ venueSubtitle(venue) }}
             </div>
           </div>
           <ToggleSwitch
             :model-value="isVenueSelected(venue.id)"
-            :aria-label="`Activer ${venue.label} pour la saison`"
+            :aria-label="`Activer ${venue.name} pour la saison`"
             @update:model-value="toggleVenue(venue.id)"
           />
         </li>
       </ul>
 
       <div
-        v-if="!step3Valid"
+        v-if="!step3Valid && availableVenues.length > 0"
         class="text-[12px] text-amber-700 flex items-center gap-1.5"
       >
         <TriangleAlert

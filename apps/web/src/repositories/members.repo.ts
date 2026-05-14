@@ -1,5 +1,6 @@
 import { FirebaseError } from 'firebase/app'
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
@@ -7,6 +8,7 @@ import {
   orderBy,
   query,
   setDoc,
+  Timestamp as FirestoreTimestamp,
   updateDoc,
   type DocumentSnapshot,
   type QueryDocumentSnapshot,
@@ -313,10 +315,72 @@ export async function getMemberDetail(id: string): Promise<MemberDetailRow | nul
 // ---------------------------------------------------------------------------
 // Writes — admin only (rules : isRootAdmin || isAdmin).
 //
+// `createMember` crée le doc parent et, si fournis, écrit email/phone
+// dans la sub-collection privée /members/{id}/private/contact.
 // `updateMember` ne touche QUE le doc parent /members/{id}.
 // `updateMemberContact` écrit dans la sub-collection privée
 // /members/{id}/private/contact (rules : admin ou self).
 // ---------------------------------------------------------------------------
+
+/**
+ * Payload de création d'un membre. `linkedUserId` n'est jamais fourni à la
+ * création depuis l'admin — le link member↔user se fait via le flow
+ * d'invitation (cf. docs/main.md "Admin invitation flow"). `duesStatus` est
+ * initialisé à `'n/a'` : il sera basculé à `'pending_grace'` par la Function
+ * `initiateDuesOnPlayerActivation` lorsque le membre sera ajouté au
+ * `playerIds` d'une équipe.
+ */
+export interface CreateMemberInput {
+  firstName: string
+  lastName: string
+  roles: string[]
+  licenseNumber?: string
+  officialLevel?: number | null
+  licensed?: boolean
+  active?: boolean
+  email?: string
+  phone?: string
+}
+
+/**
+ * Crée un nouveau membre dans `/members`.
+ *
+ * Si `email` ou `phone` est fourni, écrit aussi `/members/{id}/private/contact`
+ * (sub-collection privée — cf. rules). Les deux écritures ne sont pas dans une
+ * transaction : si la seconde échoue (rare, rules ou réseau), le membre est
+ * créé sans contact et l'admin pourra le compléter via l'édition.
+ */
+export async function createMember(input: CreateMemberInput): Promise<MemberRow> {
+  const data: MemberData = {
+    firstName: input.firstName,
+    lastName: input.lastName,
+    roles: input.roles,
+    linkedUserId: null,
+    licenseNumber: input.licenseNumber ?? '',
+    officialLevel: input.officialLevel ?? null,
+    licensed: input.licensed ?? false,
+    duesStatus: 'n/a',
+    duesStatusUpdatedAt: FirestoreTimestamp.now(),
+    active: input.active ?? true,
+  }
+  const ref = await addDoc(collection(db, MEMBERS), data)
+
+  if (input.email !== undefined || input.phone !== undefined) {
+    await setDoc(
+      doc(db, MEMBERS, ref.id, PRIVATE_SUBCOLL, CONTACT_DOC),
+      {
+        email: input.email ?? '',
+        phone: input.phone ?? '',
+      } satisfies MemberContactData,
+    )
+  }
+
+  const created = await getMemberById(ref.id)
+  if (!created) {
+    throw new Error(`Failed to read member ${ref.id} just after creation`)
+  }
+  return created
+}
 
 /**
  * Champs autorisés pour `updateMember`. Pas de `duesStatus` /

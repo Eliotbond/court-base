@@ -1,6 +1,11 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { listMembers, type MemberRow } from '@/repositories/members.repo'
+import {
+  createMember as repoCreateMember,
+  listMembers,
+  type CreateMemberInput,
+  type MemberRow,
+} from '@/repositories/members.repo'
 
 /**
  * Filtres rapides (chips) — alignés sur le design Mockups (screen 2).
@@ -52,6 +57,30 @@ export const useMembersStore = defineStore('members', () => {
 
   function setSearch(value: string): void {
     search.value = value
+  }
+
+  /**
+   * Crée un membre via le repository et l'insère dans `members` en préservant
+   * le tri par `lastName` (ordre du `listMembers`). Retourne l'id du nouveau
+   * membre, ou `null` en cas d'erreur (le message est posé dans `error`).
+   */
+  async function createMember(input: CreateMemberInput): Promise<string | null> {
+    error.value = null
+    try {
+      const row = await repoCreateMember(input)
+      // Insertion triée par lastName (locale française) pour rester cohérent
+      // avec l'ordre du `listMembers`. Stable + simple : O(n) acceptable
+      // pour quelques centaines de membres.
+      const next = [...members.value, row].sort((a, b) =>
+        a.lastName.localeCompare(b.lastName, 'fr'),
+      )
+      members.value = next
+      return row.id
+    } catch (e: unknown) {
+      error.value =
+        e instanceof Error ? e.message : 'Erreur lors de la création du membre'
+      return null
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -138,5 +167,6 @@ export const useMembersStore = defineStore('members', () => {
     load,
     setQuickFilter,
     setSearch,
+    createMember,
   }
 })

@@ -125,6 +125,64 @@ Avant le référentiel, `apps/web/src/repositories/teams.repo.ts` portait `CATEG
 - One-shot script (à écrire) qui scanne `/teams`, dédup les `category` (string) rencontrées, crée un `/categories/{id}` pour chacune (avec age range pris dans la table dure si match, sinon `null,null`), puis migre `team.category: string` → `team.categoryId: string`.
 - Tant que le script n'est pas exécuté, le code peut tolérer les deux formes (`category` legacy ET `categoryId` nouveau) pendant la transition.
 
+## Tags d'équipes
+
+Référentiel éditable par l'admin (Settings → Tags). Schéma : voir `firebase.md` (`/tags`).
+
+Sert à **différencier visuellement des équipes similaires** : deux U14M (groupe A vs B), versions "Compet" vs "Loisir" d'une même catégorie, équipes "Élite", etc. Orthogonal à la catégorie : `tag` ne remplace pas `categoryId`, il l'enrichit.
+
+### Lifecycle
+
+1. **Création** — admin crée un tag depuis Settings : `name` (libellé court), `color` (palette 6 variants : emerald, sky, amber, rose, violet, slate), `displayOrder`. `active: true` par défaut.
+2. **Sélection à la création/édition d'équipe** — le dialog "Nouvelle équipe" et le mode édition du drawer Team listent les tags `active: true` (multi-select). Pour chaque tag sélectionné, l'admin coche aussi **"afficher"** (flag `display` par-équipe). Le champ `team.tags` stocke `[{ tagId, display }]`.
+3. **Display flag par-équipe** — `display: true` = chip visible sur la carte / listes ; `display: false` = tag attaché mais invisible côté UI (futur : filtres internes, exports, scheduling). Permet d'utiliser un tag à des fins admin sans polluer l'affichage public d'une équipe.
+4. **Rename / recolor** — admin renomme / recolorise un tag : la modif se reflète automatiquement sur toutes les équipes (référence, pas dénormalisation).
+5. **Archive** — admin toggle `active: false` : le tag disparaît du picker mais reste résolvable sur les équipes existantes.
+6. **Suppression** — refusée tant qu'au moins une équipe référence le tag (le bouton "Supprimer" est désactivé avec tooltip). Sinon `deleteDoc` autorisé. En pratique, on encourage l'archive.
+
+### Cas d'erreur
+
+- Tag référencé mais introuvable (`/tags/{id}` absent) → la team garde la référence mais le repo l'ignore au moment de matérialiser les chips (fallback silencieux). Cas pathologique (suppression directe en console).
+- Pas de tags actifs au moment de créer une équipe → la section "Tags" du dialog reste vide avec lien "Créer un tag" → Settings → Tags. Optionnel : pas de validation requise.
+
+### Palette de couleurs
+
+Bornée aux 6 variants du composant `Pill` (cf. `apps/web/src/components/ui/Pill.vue`) — `emerald | sky | amber | rose | violet | slate`. Pas de hex libre pour préserver la cohérence design system. Une couleur peut être utilisée par plusieurs tags (pas de contrainte d'unicité).
+
+## Venues & courts
+
+Le club gère **plusieurs salles** (`/venues`). Une salle contient **plusieurs courts physiques** (`/venues/{id}/courts`). Schéma complet : voir `firebase.md`.
+
+### Courts physiques vs courts combinés
+
+`courtSize` (`small` | `normal` | `large`) **n'a pas de hiérarchie** — un match qui requiert `large` n'est pas planifiable sur un `normal` ou `small`. C'est une étiquette plate qui décrit la taille du terrain (pas un ordre).
+
+Un court peut être **physique** (`isCombined: false`) ou **combiné** (`isCombined: true`). Un court combiné est un terrain logique qui **occupe physiquement plusieurs courts adjacents** lors d'une réservation — typiquement quand on retire la cloison pour libérer un terrain pleine longueur. Quand on réserve un court combiné, le booking generator crée **N bookings liés** (`linkedBookingIds` + `isCombinedCourtEvent: true`, cf. `firebase.md → /bookings`).
+
+### Trois cas canoniques
+
+| Cas | Configuration | Exemple |
+|---|---|---|
+| **Combiné classique** | `large, isCombined:true, combinedCourtIds:[T1,T2,T3]` | Salle Marly Grand-Pré : 3 terrains normaux + 1 grand qui occupe les 3 |
+| **Combiné de tailles diverses** | `normal, isCombined:true, combinedCourtIds:[S1,S2]` | 2 petits courts → 1 normal en retirant la cloison |
+| **Standalone large** | `large, isCombined:false, combinedCourtIds:[]` | Halle conçue avec un seul terrain pleine longueur, pas de subdivision |
+
+### Invariants (enforced UI Venues.vue)
+
+1. **Same venue only.** `combinedCourtIds` ne référence que des courts de la même salle. Physiquement un match indoor ne s'étale pas sur deux bâtiments. Pas de support cross-venue.
+2. **Pas de chaîne.** Un combiné ne peut **pas** inclure un autre combiné. Le picker UI filtre `!c.isCombined`. Évite la récursion ambiguë A→B→C pour le booking generator.
+3. **Non-vide si combiné.** `isCombined: true` exige `combinedCourtIds.length > 0`. Sinon le générateur ne sait pas quoi bloquer → erreur de validation "Sélectionnez au moins un court à combiner".
+4. **Self-exclusion.** Un court ne se combine pas avec lui-même (filtré en mode édition).
+5. **Toggle off → clear.** Désactiver `isCombined` vide automatiquement `combinedCourtIds` (pas de state stale).
+
+### Custom closures vs closure periods
+
+Une salle porte aussi des **fermetures ponctuelles** (`customClosures` array inline : travaux, événement privé) — vivent sur le venue, pas réutilisables. À distinguer des **closure periods** (`/closurePeriods`) qui sont des fermetures cross-saisons partagées (vacances scolaires). Le venue référence ces dernières via `closurePeriodIds: string[]`.
+
+### Pas de cascade delete (limitation MVP)
+
+`deleteVenue()` **ne purge pas** les sous-collections `courts` ni `timeSlots`. Les docs orphelins restent en Firestore. Acceptable au MVP (l'admin supprime rarement une salle). À déléguer à une Cloud Function `onDelete /venues/{id}` plus tard pour les projets prod.
+
 ## Règles métier — synthèse
 
 ### Slot types

@@ -16,8 +16,17 @@ import {
   type UpdateData,
 } from 'firebase/firestore'
 import { db } from '@/services/firebase'
-import type { Category, Team, TeamData, TeamGender } from '@club-app/shared-types'
+import type {
+  Category,
+  Tag,
+  TagColor,
+  Team,
+  TeamData,
+  TeamGender,
+  TeamTagRef,
+} from '@club-app/shared-types'
 import { snapToCategory } from './categories.repo'
+import { snapToTag } from './tags.repo'
 
 /**
  * Repository Teams — Firestore-backed.
@@ -42,6 +51,7 @@ import { snapToCategory } from './categories.repo'
 const TEAMS = 'teams'
 const MEMBERS = 'members'
 const CATEGORIES = 'categories'
+const TAGS = 'tags'
 
 // ---------------------------------------------------------------------------
 // Types exposés pour la vue Teams
@@ -79,6 +89,19 @@ export interface TeamCategoryRef {
 }
 
 /**
+ * Tag résolu pour affichage. Snapshot léger : la source de vérité reste
+ * `/tags/{id}`. `display` provient du flag par-équipe stocké inline dans
+ * `/teams.tags`. Les références orphelines (tag supprimé) sont silencieusement
+ * filtrées à la résolution.
+ */
+export interface TeamTagResolved {
+  id: string
+  name: string
+  color: TagColor
+  display: boolean
+}
+
+/**
  * Ligne enrichie pour la liste Teams. Étend `Team` (schéma `/teams/{teamId}`)
  * avec les champs dérivés listés en tête de fichier.
  */
@@ -89,6 +112,12 @@ export interface TeamRow extends Team {
   preferredSlotLabels: string[]
   category: TeamCategoryRef | null
   ageRange: TeamAgeRange | null
+  /**
+   * Tags résolus (nom + couleur + display). Ordre préservé depuis
+   * `data.tags`. Les tags dont l'id ne pointe vers aucun doc `/tags/{id}`
+   * sont filtrés silencieusement.
+   */
+  tagRefs: TeamTagResolved[]
   rosterPlayerNames: string[]
   duesPaidToDate: number
   upcomingMatchesCount: number
@@ -161,10 +190,27 @@ async function readCategoryMap(): Promise<Map<string, Category>> {
   return map
 }
 
+// ---------------------------------------------------------------------------
+// Tag resolution — join `team.tags[].tagId` → `/tags/{id}`.
+//
+// Référentiel petit (~dizaines d'entrées max), donc on lit la collection
+// entière en un seul `getDocs` puis on map en mémoire. Pas de N+1.
+// ---------------------------------------------------------------------------
+
+async function readTagMap(): Promise<Map<string, Tag>> {
+  const snap = await getDocs(
+    query(collection(db, TAGS), orderBy('displayOrder')),
+  )
+  const map = new Map<string, Tag>()
+  for (const d of snap.docs) map.set(d.id, snapToTag(d))
+  return map
+}
+
 function snapToRow(
   snap: QueryDocumentSnapshot | DocumentSnapshot,
   avatarMap: Map<string, TeamCoachAvatar>,
   categoryMap: Map<string, Category>,
+  tagMap: Map<string, Tag>,
 ): TeamRow {
   const data = snap.data() as TeamData
   const coachIds = data.coachIds ?? []
@@ -178,9 +224,27 @@ function snapToRow(
   const ageRange: TeamAgeRange | null = cat && cat.minAge !== null
     ? { min: cat.minAge, max: cat.maxAge }
     : null
+  // Migration tolerante : les docs antérieurs au champ `tags` ne le portent
+  // pas — on traite `undefined` comme tableau vide.
+  const rawTags: TeamTagRef[] = data.tags ?? []
+  const tagRefs: TeamTagResolved[] = rawTags
+    .map((ref) => {
+      const t = tagMap.get(ref.tagId)
+      if (!t) return null
+      return {
+        id: t.id,
+        name: t.name,
+        color: t.color,
+        display: ref.display,
+      } satisfies TeamTagResolved
+    })
+    .filter((t): t is TeamTagResolved => t !== null)
   return {
     id: snap.id,
     ...data,
+    // Normalise `tags` côté lecture pour que les consumers ne voient jamais
+    // `undefined` même sur les anciens docs.
+    tags: rawTags,
     coachLabels: coachAvatars.map((c) => c.name),
     coachAvatars,
     playerCount: data.playerIds?.length ?? 0,
@@ -188,6 +252,7 @@ function snapToRow(
     preferredSlotLabels: [],
     category,
     ageRange,
+    tagRefs,
     // TODO(firestore): join `playerIds[]` → /members.firstName/lastName.
     rosterPlayerNames: [],
     // TODO(firestore): agréger /dues (status=paid) pour la saison active.
@@ -210,11 +275,12 @@ export async function listTeams(): Promise<TeamRow[]> {
     const data = d.data() as TeamData
     if (data.coachIds) allCoachIds.push(...data.coachIds)
   }
-  const [avatarMap, categoryMap] = await Promise.all([
+  const [avatarMap, categoryMap, tagMap] = await Promise.all([
     readCoachAvatars(allCoachIds),
     readCategoryMap(),
+    readTagMap(),
   ])
-  return snap.docs.map((d) => snapToRow(d, avatarMap, categoryMap))
+  return snap.docs.map((d) => snapToRow(d, avatarMap, categoryMap, tagMap))
 }
 
 /** Récupère une équipe par son id. */
@@ -222,11 +288,12 @@ export async function getTeamById(id: string): Promise<TeamRow | null> {
   const snap = await getDoc(doc(db, TEAMS, id))
   if (!snap.exists()) return null
   const data = snap.data() as TeamData
-  const [avatarMap, categoryMap] = await Promise.all([
+  const [avatarMap, categoryMap, tagMap] = await Promise.all([
     readCoachAvatars(data.coachIds ?? []),
     readCategoryMap(),
+    readTagMap(),
   ])
-  return snapToRow(snap, avatarMap, categoryMap)
+  return snapToRow(snap, avatarMap, categoryMap, tagMap)
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +307,8 @@ export interface CreateTeamInput {
   duesAmount: number
   trainingsPerWeek: number
   anticipatedMatches: number
+  /** Tags initiaux. Vide par défaut côté caller. */
+  tags?: TeamTagRef[]
 }
 
 /**
@@ -263,6 +332,7 @@ export async function createTeam(input: CreateTeamInput): Promise<TeamRow> {
       anticipatedMatches: input.anticipatedMatches,
       coachAvailability: [],
     },
+    tags: input.tags ?? [],
     active: true,
     createdAt: serverTimestamp(),
   })
@@ -280,6 +350,8 @@ export interface UpdateTeamInput {
   duesAmount?: number
   trainingsPerWeek?: number
   anticipatedMatches?: number
+  /** Remplace intégralement le tableau `tags` du doc. */
+  tags?: TeamTagRef[]
 }
 
 /**
@@ -301,6 +373,7 @@ export async function updateTeam(
   if (patch.anticipatedMatches !== undefined) {
     update['schedulingConstraints.anticipatedMatches'] = patch.anticipatedMatches
   }
+  if (patch.tags !== undefined) update.tags = patch.tags
   if (Object.keys(update).length === 0) return getTeamById(id)
   await updateDoc(doc(db, TEAMS, id), update)
   return getTeamById(id)
@@ -355,6 +428,9 @@ export async function duplicateTeam(id: string): Promise<TeamRow | null> {
     activeSeasonIds: [],
     duesAmount: data.duesAmount,
     schedulingConstraints: data.schedulingConstraints,
+    // Les tags sont sémantiquement liés à l'équipe (groupe A vs B, Compet…) :
+    // on les conserve sur la copie, l'admin peut les ajuster ensuite.
+    tags: data.tags ?? [],
     active: false,
     createdAt: serverTimestamp(),
   })

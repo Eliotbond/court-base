@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Check,
@@ -15,6 +15,11 @@ import {
 } from 'lucide-vue-next'
 import DataTable, { type DataTableRowClickEvent } from 'primevue/datatable'
 import Column from 'primevue/column'
+import Dialog from 'primevue/dialog'
+import InputText from 'primevue/inputtext'
+import MultiSelect from 'primevue/multiselect'
+import Select from 'primevue/select'
+import InputSwitch from 'primevue/inputswitch'
 import { useMembersStore, type MemberQuickFilter } from '@/stores/members'
 import type { MemberRow } from '@/repositories/members.repo'
 import type { DuesStatus } from '@club-app/shared-types'
@@ -128,11 +133,161 @@ function onRowClick(event: DataTableRowClickEvent): void {
 }
 
 const noop = (): void => {
-  /* TODO(actions): wire Importer CSV / Exporter / Ajouter membre. */
+  /* TODO(actions): wire Importer CSV / Exporter. */
 }
 
 function fullName(m: MemberRow): string {
   return `${m.firstName} ${m.lastName}`
+}
+
+// ---------------------------------------------------------------------------
+// Dialog — Créer un membre
+//
+// Pour l'instant l'admin assigne librement les rôles + le flag `licensed` +
+// le `officialLevel` depuis ce form (cf. user request 2026-05-14). Plus tard,
+// l'attribution de `licensed` / `official` / `coach` ne sera plus possible
+// directement ici : ces rôles seront posés via la création d'une licence
+// (workflow dédié — pas implémenté). Le form reste utilisable côté admin
+// même après bascule, mais les champs sensibles seront déplacés.
+//
+// Le link member↔user (linkedUserId) n'est PAS exposé : il sera renseigné
+// par le flow d'invitation modifié (cf. docs/main.md "Admin invitation flow").
+// ---------------------------------------------------------------------------
+
+interface RoleOption {
+  value: string
+  label: string
+}
+
+const ROLE_OPTIONS: ReadonlyArray<RoleOption> = [
+  { value: 'player', label: 'Joueur' },
+  { value: 'official', label: 'Officiel' },
+  { value: 'coach', label: 'Coach' },
+  { value: 'comite', label: 'Comité' },
+] as const
+
+interface OfficialLevelOption {
+  value: number | null
+  label: string
+}
+
+const OFFICIAL_LEVEL_OPTIONS: ReadonlyArray<OfficialLevelOption> = [
+  { value: null, label: '— Aucun' },
+  { value: 1, label: 'Niveau 1' },
+  { value: 2, label: 'Niveau 2' },
+] as const
+
+interface CreateMemberForm {
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  roles: string[]
+  licenseNumber: string
+  officialLevel: number | null
+  licensed: boolean
+  active: boolean
+}
+
+interface CreateMemberErrors {
+  firstName: string | null
+  lastName: string | null
+  email: string | null
+  officialLevel: string | null
+}
+
+function makeEmptyCreateForm(): CreateMemberForm {
+  return {
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    roles: [],
+    licenseNumber: '',
+    officialLevel: null,
+    licensed: false,
+    active: true,
+  }
+}
+
+const isCreateOpen = ref(false)
+const createForm = reactive<CreateMemberForm>(makeEmptyCreateForm())
+const createErrors = reactive<CreateMemberErrors>({
+  firstName: null,
+  lastName: null,
+  email: null,
+  officialLevel: null,
+})
+const submittingCreate = ref(false)
+
+function openCreateDialog(): void {
+  Object.assign(createForm, makeEmptyCreateForm())
+  createErrors.firstName = null
+  createErrors.lastName = null
+  createErrors.email = null
+  createErrors.officialLevel = null
+  isCreateOpen.value = true
+}
+
+function closeCreateDialog(): void {
+  isCreateOpen.value = false
+}
+
+// Regex email simple — pas RFC, juste "qqch@qqch.qqch". Suffisant pour
+// repérer les fautes de frappe avant submit.
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function validateCreateForm(): boolean {
+  createErrors.firstName = createForm.firstName.trim() ? null : 'Prénom requis'
+  createErrors.lastName = createForm.lastName.trim() ? null : 'Nom requis'
+
+  const email = createForm.email.trim()
+  createErrors.email =
+    !email || EMAIL_REGEX.test(email) ? null : 'Email invalide'
+
+  // Cohérence officiel : si on pose un officialLevel sans le rôle official,
+  // l'admin a probablement oublié le rôle. On le bloque pour éviter un
+  // membre "fantôme officiel" qui n'apparaîtrait pas dans le filtre
+  // Officiels (cf. counts.officials qui filtre sur `roles.includes('official')`).
+  const isOfficial = createForm.roles.includes('official')
+  if (createForm.officialLevel !== null && !isOfficial) {
+    createErrors.officialLevel =
+      'Cocher le rôle "Officiel" pour assigner un niveau'
+  } else {
+    createErrors.officialLevel = null
+  }
+
+  return (
+    !createErrors.firstName &&
+    !createErrors.lastName &&
+    !createErrors.email &&
+    !createErrors.officialLevel
+  )
+}
+
+async function submitCreate(): Promise<void> {
+  if (!validateCreateForm()) return
+  submittingCreate.value = true
+  try {
+    const email = createForm.email.trim()
+    const phone = createForm.phone.trim()
+    const newId = await store.createMember({
+      firstName: createForm.firstName.trim(),
+      lastName: createForm.lastName.trim(),
+      roles: [...createForm.roles],
+      licenseNumber: createForm.licenseNumber.trim(),
+      officialLevel: createForm.officialLevel,
+      licensed: createForm.licensed,
+      active: createForm.active,
+      email: email || undefined,
+      phone: phone || undefined,
+    })
+    if (newId) {
+      closeCreateDialog()
+    }
+  } finally {
+    submittingCreate.value = false
+  }
 }
 </script>
 
@@ -174,7 +329,7 @@ function fullName(m: MemberRow): string {
         <button
           type="button"
           class="btn btn-primary btn-sm"
-          @click="noop"
+          @click="openCreateDialog"
         >
           <UserPlus
             :size="14"
@@ -287,7 +442,7 @@ function fullName(m: MemberRow): string {
               <button
                 type="button"
                 class="btn btn-primary btn-sm"
-                @click="noop"
+                @click="openCreateDialog"
               >
                 <UserPlus
                   :size="14"
@@ -489,5 +644,177 @@ function fullName(m: MemberRow): string {
       />
       {{ store.error }}
     </div>
+
+    <!-- ================= Dialog — Ajouter un membre =================== -->
+    <Dialog
+      v-model:visible="isCreateOpen"
+      modal
+      :draggable="false"
+      :style="{ width: '560px' }"
+      header="Nouveau membre"
+    >
+      <div class="space-y-4 pt-1">
+        <!-- Identité -->
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Prénom <span class="text-rose-500">*</span></span>
+            <InputText
+              v-model="createForm.firstName"
+              class="mt-1 w-full"
+              :invalid="!!createErrors.firstName"
+              @keyup.enter="submitCreate"
+            />
+            <span
+              v-if="createErrors.firstName"
+              class="text-[11px] text-rose-600 mt-1 block"
+            >
+              {{ createErrors.firstName }}
+            </span>
+          </label>
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Nom <span class="text-rose-500">*</span></span>
+            <InputText
+              v-model="createForm.lastName"
+              class="mt-1 w-full"
+              :invalid="!!createErrors.lastName"
+              @keyup.enter="submitCreate"
+            />
+            <span
+              v-if="createErrors.lastName"
+              class="text-[11px] text-rose-600 mt-1 block"
+            >
+              {{ createErrors.lastName }}
+            </span>
+          </label>
+        </div>
+
+        <!-- Contact -->
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Email</span>
+            <InputText
+              v-model="createForm.email"
+              class="mt-1 w-full"
+              placeholder="prenom@example.com"
+              :invalid="!!createErrors.email"
+            />
+            <span
+              v-if="createErrors.email"
+              class="text-[11px] text-rose-600 mt-1 block"
+            >
+              {{ createErrors.email }}
+            </span>
+          </label>
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Téléphone</span>
+            <InputText
+              v-model="createForm.phone"
+              class="mt-1 w-full"
+              placeholder="+41 79 123 45 67"
+            />
+          </label>
+        </div>
+
+        <!-- Rôles -->
+        <label class="block">
+          <span class="text-[12px] text-surface-600">Rôles</span>
+          <MultiSelect
+            v-model="createForm.roles"
+            :options="[...ROLE_OPTIONS]"
+            option-label="label"
+            option-value="value"
+            placeholder="Sélectionner les rôles…"
+            class="mt-1 w-full"
+            display="chip"
+          />
+          <span class="text-[11px] text-surface-500 mt-1 block">
+            Un membre peut cumuler plusieurs rôles (ex. coach + officiel).
+          </span>
+        </label>
+
+        <!-- Licence + Officiel -->
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[12px] text-surface-600">N° de licence</span>
+            <InputText
+              v-model="createForm.licenseNumber"
+              class="mt-1 w-full"
+              placeholder="ex. CH-12345"
+            />
+          </label>
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Niveau officiel</span>
+            <Select
+              v-model="createForm.officialLevel"
+              :options="[...OFFICIAL_LEVEL_OPTIONS]"
+              option-label="label"
+              option-value="value"
+              class="mt-1 w-full"
+              :invalid="!!createErrors.officialLevel"
+            />
+            <span
+              v-if="createErrors.officialLevel"
+              class="text-[11px] text-rose-600 mt-1 block"
+            >
+              {{ createErrors.officialLevel }}
+            </span>
+          </label>
+        </div>
+
+        <!-- Switches -->
+        <div class="flex items-center justify-between py-2 border border-surface-100 rounded-lg px-3">
+          <div class="min-w-0 pr-3">
+            <div class="text-[13px] font-medium">
+              Joueur licencié
+            </div>
+            <div class="text-[11px] text-surface-500 mt-0.5">
+              Active la licence du joueur. Sera bientôt géré via la création
+              d'une licence dédiée.
+            </div>
+          </div>
+          <InputSwitch v-model="createForm.licensed" />
+        </div>
+
+        <div class="flex items-center justify-between py-2 border border-surface-100 rounded-lg px-3">
+          <div class="min-w-0 pr-3">
+            <div class="text-[13px] font-medium">
+              Membre actif
+            </div>
+            <div class="text-[11px] text-surface-500 mt-0.5">
+              Un membre inactif est conservé dans l'historique mais filtré par défaut.
+            </div>
+          </div>
+          <InputSwitch v-model="createForm.active" />
+        </div>
+      </div>
+
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          :disabled="submittingCreate"
+          @click="closeCreateDialog"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          :disabled="submittingCreate"
+          @click="submitCreate"
+        >
+          <UserPlus
+            :size="14"
+            :stroke-width="2"
+          />
+          <template v-if="submittingCreate">
+            Création…
+          </template>
+          <template v-else>
+            Créer le membre
+          </template>
+        </button>
+      </template>
+    </Dialog>
   </section>
 </template>
