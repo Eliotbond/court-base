@@ -10,16 +10,17 @@ import {
   BadgeCheck,
   CircleHelp,
   ClipboardCheck,
-  Tags,
+  ClipboardList,
   IdCard,
   Trophy,
   History,
   Settings,
-  ChevronsUpDown,
   Dribbble,
 } from 'lucide-vue-next'
-import type { Component } from 'vue'
+import { computed, onMounted, type Component } from 'vue'
 import Pill from '@/components/ui/Pill.vue'
+import { useMembersStore } from '@/stores/members'
+import { useSettingsStore } from '@/stores/settings'
 
 type NavItem = {
   to: string
@@ -29,18 +30,41 @@ type NavItem = {
   count?: string
 }
 
-const workspace: NavItem[] = [
+const membersStore = useMembersStore()
+const settingsStore = useSettingsStore()
+
+onMounted(() => {
+  // Sidebar globalement montée → charge la liste si pas encore en cache,
+  // pour alimenter le count "actifs". Les autres vues (ex. /members) lisent
+  // le même store, donc pas de double fetch.
+  if (membersStore.members.length === 0 && !membersStore.loading) {
+    void membersStore.load()
+  }
+  if (!settingsStore.config && !settingsStore.loading) {
+    void settingsStore.load()
+  }
+})
+
+const clubLogo = computed(() => settingsStore.config?.logo ?? null)
+const clubName = computed(() => settingsStore.config?.name ?? 'Courtbase')
+
+const activeMembersCount = computed(() =>
+  membersStore.members.length === 0 ? undefined : String(membersStore.counts.active),
+)
+
+const workspace = computed<NavItem[]>(() => [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/members', label: 'Members', icon: Users, count: '142' },
+  { to: '/members', label: 'Members', icon: Users, count: activeMembersCount.value },
   { to: '/teams', label: 'Teams', icon: UsersRound },
   { to: '/venues', label: 'Venues & courts', icon: MapPin },
   { to: '/seasons', label: 'Seasons', icon: CalendarRange },
   { to: '/bookings', label: 'Bookings', icon: Calendar },
-]
+])
 
 const operations: NavItem[] = [
+  { to: '/registrations', label: 'Inscriptions', icon: ClipboardList },
   { to: '/officials', label: 'Officials', icon: UsersRound },
-  { to: '/dues', label: 'Dues', icon: Banknote, badge: { text: '7', variant: 'rose' } },
+  { to: '/cotisations', label: 'Cotisations', icon: Banknote, badge: { text: '7', variant: 'rose' } },
   {
     to: '/licenses',
     label: 'License requests',
@@ -54,12 +78,11 @@ const operations: NavItem[] = [
     badge: { text: '2', variant: 'amber' },
   },
   { to: '/attendance', label: 'Attendance', icon: ClipboardCheck },
-  { to: '/match-types', label: 'Match types', icon: Tags },
+  { to: '/matches', label: 'Matches', icon: Trophy },
 ]
 
 const details: NavItem[] = [
   { to: '/members/_preview', label: 'Member detail', icon: IdCard },
-  { to: '/matches/_preview', label: 'Match home detail', icon: Trophy },
   { to: '/court-history', label: 'Court history', icon: History },
 ]
 
@@ -71,7 +94,14 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
     class="bg-white border-r border-surface-200 flex flex-col w-[240px] sticky top-0 h-screen shrink-0"
   >
     <div class="h-14 px-4 flex items-center gap-2 border-b border-surface-200">
+      <img
+        v-if="clubLogo"
+        :src="clubLogo"
+        :alt="clubName"
+        class="w-7 h-7 rounded-md object-cover bg-white"
+      />
       <div
+        v-else
         class="w-7 h-7 rounded-md bg-emerald-600 flex items-center justify-center text-white"
       >
         <Dribbble
@@ -79,34 +109,13 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
           :stroke-width="2"
         />
       </div>
-      <div class="flex flex-col leading-tight">
-        <span class="text-[13px] font-semibold tracking-tight">Courtbase</span>
+      <div class="flex flex-col leading-tight min-w-0">
+        <span class="text-[13px] font-semibold tracking-tight truncate">{{ clubName }}</span>
         <span class="text-[10px] text-surface-500 font-mono">v0.4.1 · pilot</span>
       </div>
     </div>
 
-    <button
-      class="mx-3 mt-3 mb-1 flex items-center gap-2 px-2 h-9 rounded-md hover:bg-surface-50 text-left"
-    >
-      <div
-        class="w-6 h-6 rounded bg-surface-900 text-white flex items-center justify-center text-[10px] font-bold"
-      >
-        BC
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="text-[12px] font-medium truncate">
-          BC Lausanne-Sud
-        </div>
-        <div class="text-[10px] text-surface-500 truncate">
-          Saison 2025-26
-        </div>
-      </div>
-      <ChevronsUpDown
-        :size="16"
-        class="text-surface-400"
-        :stroke-width="2"
-      />
-    </button>
+   
 
     <nav class="px-2 py-2 flex-1 overflow-y-auto text-[13px]">
       <div

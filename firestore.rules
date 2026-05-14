@@ -28,6 +28,10 @@ service cloud.firestore {
     }
     function isAdmin() { return hasRole('admin'); }
     function isCoach() { return hasRole('coach'); }
+    // Trésorier — rôle additif portant la responsabilité paiements. Lit toute
+    // la collection `/dues` (pas de scope team) et peut marquer un due payé
+    // via la callable `markDuePaid`. Pas de droits admin généraux.
+    function isTreasurer() { return hasRole('treasurer'); }
     // Le user est lié à ce member (auto-lecture autorisée).
     function isLinkedMember(memberId) {
       return isSignedIn() && userDoc().memberId == memberId;
@@ -41,6 +45,13 @@ service cloud.firestore {
       return isCoachOfTeam(
         get(/databases/$(database)/documents/bookings/$(bookingId)).data.teamId
       );
+    }
+    // Le user (typiquement rôle `parent`) est tuteur de ce member
+    // (UID listé dans /members/{memberId}.guardianUserIds).
+    // Étend la lecture du doc parent + de /private/contact aux tuteurs.
+    function isGuardianOf(memberId) {
+      return isSignedIn() && request.auth.uid in
+        get(/databases/$(database)/documents/members/$(memberId)).data.guardianUserIds;
     }
 
     // -------- rootAdmin bypass (à placer en premier dans chaque match) --------
@@ -57,25 +68,58 @@ service cloud.firestore {
     // ========================================================================
     // /users/{uid}
     // ========================================================================
+    // Note : `roles` peut contenir `'parent'` (tuteur légal d'un member mineur),
+    // en plus de admin/coach/official/player. Les rules n'énumèrent pas les rôles,
+    // donc rien à changer ici — la sémantique `parent` est portée par
+    // /members/{memberId}.guardianUserIds (cf. helper `isGuardianOf`).
     match /users/{uid} {
       allow read: if isRootAdmin() || isAdmin() || request.auth.uid == uid;
-      allow write: if isRootAdmin() || isAdmin();
+      // Self-create : un user signé peut créer SON propre doc, avec contraintes
+      // strictes (roles vides, pas de lien arbitraire à un member, pas de scope
+      // coach). Utilisé par l'app register §4.2 — le rôle `parent` est ajouté
+      // par la callable submitRegistration côté Admin SDK, jamais par le client.
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.roles.size() == 0
+        && request.resource.data.memberId == null
+        && request.resource.data.teamIds.size() == 0;
+      // Self-update : le user peut éditer son profil (phone, address, displayName,
+      // photoURL, profileCompletedAt) mais PAS roles / memberId / teamIds (réservés admin/callable).
+      allow update: if isRootAdmin() || isAdmin()
+        || (request.auth.uid == uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['displayName', 'photoURL', 'phone', 'address', 'profileCompletedAt']));
+      allow delete: if isRootAdmin() || isAdmin();
     }
 
     // ========================================================================
     // /members, /roles, /invitations
     // ========================================================================
     match /members/{memberId} {
-      // Doc parent : pas de contact info. Lisible par tous les rôles club et le membre lui-même.
+      // Doc parent : pas de contact info. Lisible par tous les rôles club, le
+      // membre lui-même, et ses tuteurs (UIDs dans guardianUserIds).
       allow read: if isRootAdmin() || isAdmin() || isCoach() ||
-        hasRole('official') || isLinkedMember(memberId);
+        hasRole('official') || isLinkedMember(memberId) || isGuardianOf(memberId);
+      // Write admin-only en v1. `guardianUserIds` et `comms` sont admin-only-write.
+      // NOTE : `docs/main.md` documente que le coach pourra éditer
+      // `comms.generalRecipients` pour les mineurs de son équipe — ce flow passera
+      // par une callable function (validation team + minor) en v1.1, PAS au niveau
+      // des rules. Ne pas ajouter de règle coach-update tant que la callable n'est
+      // pas livrée (sinon on ouvre trop large).
+      //
+      // Archive (`status='archived'`, `archivedAt`, `archivedReason`,
+      // `archivedByUid`) : posée par callable serveur (`archiveMember` ou
+      // déclenchée par `refuseRegistration`). PAS d'ouverture client dédiée —
+      // la rule admin globale couvre l'admin SDK ; les coachs/officials ne
+      // peuvent pas archiver directement.
       allow write: if isRootAdmin() || isAdmin();
 
       // Contact info isolés ici : email + phone.
-      // Lecture : admin, coach, et le membre lui-même. PAS les official-only.
-      // Écriture : admin et le membre lui-même.
+      // Lecture : admin, coach, le membre lui-même, et ses tuteurs. PAS les official-only.
+      // Écriture : admin et le membre lui-même (les tuteurs ne peuvent PAS écrire en v1).
       match /private/contact {
-        allow read: if isRootAdmin() || isAdmin() || isCoach() || isLinkedMember(memberId);
+        allow read: if isRootAdmin() || isAdmin() || isCoach() ||
+          isLinkedMember(memberId) || isGuardianOf(memberId);
         allow write: if isRootAdmin() || isAdmin() || isLinkedMember(memberId);
       }
     }
@@ -113,12 +157,25 @@ service cloud.firestore {
       allow read: if isSignedIn();
     }
 
+    // Rule collectionGroup `refusalLogs` — admin seulement. Permet la vue admin
+    // "tous les refus toutes équipes confondues" via collectionGroup('refusalLogs').
+    match /{path=**}/refusalLogs/{logId} {
+      allow read: if isRootAdmin() || isAdmin();
+    }
+
     // ========================================================================
     // /teams, /categories
     // ========================================================================
     match /teams/{teamId} {
       allow read: if isSignedIn();
       allow write: if isRootAdmin() || isAdmin();
+
+      // Logs de refus d'inscriptions, écrits uniquement via callable refuseRegistration
+      // (Admin SDK). Lecture admin seulement — audit. Cf. docs/chantier-registrations.md §7.2.
+      match /refusalLogs/{logId} {
+        allow read: if isRootAdmin() || isAdmin();
+        allow write: if false;
+      }
     }
     // Référentiel catégorie (U14, Seniors, Loisirs…). Read par tout user signé
     // (résolution `team.categoryId` côté client). Write admin only — édité depuis
@@ -131,6 +188,19 @@ service cloud.firestore {
     // /teams.tags[].tagId avec un flag display par-équipe. Read signed, write
     // admin only — édité depuis Settings → Tags.
     match /tags/{tagId} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+    // Référentiel cotisations (montant/an/joueur). Référencé par /teams.cotisationId.
+    // Read signed, write admin only — édité depuis Settings → Cotisations.
+    match /cotisations/{cotisationId} {
+      allow read: if isSignedIn();
+      allow write: if isRootAdmin() || isAdmin();
+    }
+    // Référentiel types de licence (rôle × niveau, prix courant). Sera référencé
+    // par la future entité /licenses. Read signed, write admin only — édité
+    // depuis Settings → Licences.
+    match /licenseTypes/{licenseTypeId} {
       allow read: if isSignedIn();
       allow write: if isRootAdmin() || isAdmin();
     }
@@ -149,6 +219,17 @@ service cloud.firestore {
     match /closurePeriods/{id} {
       allow read: if isSignedIn();
       allow write: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /bookingSeries — séries de réservations récurrentes (pattern Outlook)
+    // ========================================================================
+    // Chaque booking instance dans /bookings référence le seriesId. Seuls les
+    // admins gèrent les séries (création, édition, suppression) — les coachs
+    // ne peuvent pas créer/modifier de série.
+    match /bookingSeries/{seriesId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isRootAdmin() || isAdmin();
     }
 
     // ========================================================================
@@ -188,6 +269,20 @@ service cloud.firestore {
     }
 
     // ========================================================================
+    // /matches — entité produit match (équipe + type + adversaire + date)
+    // ========================================================================
+    // Référence bidirectionnelle avec /bookings :
+    //  - match HOME : `match.bookingId` ↔ `booking.matchId` (atomicité via
+    //    writeBatch côté repo).
+    //  - match AWAY : `match.bookingId === null` (pas de booking — date/heure
+    //    sont source de vérité sur le match).
+    // Cf. docs/firebase.md (section /matches).
+    match /matches/{matchId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
     // /matchRequests
     // ========================================================================
     match /matchRequests/{id} {
@@ -219,10 +314,43 @@ service cloud.firestore {
     // ========================================================================
     // Coach voit uniquement les dues de ses teams. Pour LIST, le client DOIT
     // filtrer par `teamId` (== ou `in`) pour passer les rules.
+    // Treasurer : read all (vue globale paiements). Pas de filtre par team.
+    //
+    // Lecture parent/membre (app `courtbase-register`) :
+    //  - le **membre lié** (`/members/{memberId}.linkedUserId == auth.uid`),
+    //  - les **tuteurs** (`/members/{memberId}.guardianUserIds` contient
+    //    `auth.uid`).
+    //
+    // Implémentation : `get()` direct sur `/members/{resource.data.memberId}`
+    // côté rules — coût = 1 lecture supplémentaire par doc évalué, acceptable
+    // car la query côté register filtre `memberId in [...]` (chunk de 30 max)
+    // donc au plus quelques docs/évaluation. Cf. notes coût Firestore rules
+    // (un get() est facturé en plus de la query elle-même).
+    //
+    // Sécurité : aucun champ écrit ici par le tuteur ni le membre — la rule
+    // `write` reste serrée à admin/rootAdmin. Le canal légitime pour passer
+    // `paid` est la callable `markDuePaid` (Admin SDK).
     match /dues/{id} {
-      allow read: if isRootAdmin() || isAdmin() ||
-        (isCoach() && resource.data.teamId in userDoc().teamIds);
-      // Pas d'écriture directe par les coachs. Admin pour paiement manuel, Functions pour transitions.
+      allow read: if isRootAdmin() || isAdmin() || isTreasurer() ||
+        (isCoach() && resource.data.teamId in userDoc().teamIds) ||
+        // Tuteurs du membre concerné (parent app inscriptions). Réutilise le
+        // helper existant `isGuardianOf` qui fait le get() sur /members et
+        // vérifie `auth.uid in guardianUserIds`.
+        isGuardianOf(resource.data.memberId) ||
+        // Membre lié à la cotisation (compte autonome du joueur). Inline
+        // plutôt qu'un helper dédié : le check pose un seul get() supplémentaire
+        // et reste lisible. NB : différent du helper `isLinkedMember(memberId)`
+        // qui s'appuie sur `userDoc().memberId` — ici on doit aller chercher
+        // le mapping depuis `/members` car la cotisation ne porte pas
+        // directement le linkedUserId.
+        (isSignedIn() &&
+         get(/databases/$(database)/documents/members/$(resource.data.memberId))
+           .data.linkedUserId == request.auth.uid);
+      // Écriture directe : admin/rootAdmin (filets de sécurité). Le passage
+      // `paid` standard passe par la callable `markDuePaid` (Admin SDK, scope
+      // admin OU treasurer enforcée côté callable). Treasurer n'a PAS de
+      // write direct ici — la rule reste serrée pour forcer le canal callable
+      // (audit centralisé, snapshot `recordedBy`, etc.).
       allow write: if isRootAdmin() || isAdmin();
     }
 
@@ -241,11 +369,56 @@ service cloud.firestore {
     // /licenseRequests
     // ========================================================================
     match /licenseRequests/{id} {
-      allow read: if isRootAdmin() || isAdmin() ||
-        (isCoach() && resource.data.teamId in userDoc().teamIds);
+      allow read: if isRootAdmin() || isAdmin()
+        || (isCoach() && resource.data.teamId in userDoc().teamIds)
+        || isLinkedMember(resource.data.memberId)
+        || isGuardianOf(resource.data.memberId);
       allow create: if isRootAdmin() || isAdmin() ||
         (isCoach() && request.resource.data.teamId in userDoc().teamIds);
       allow update, delete: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // /registrations  — inscriptions self-service via app courtbase-register
+    // ========================================================================
+    // Cf. docs/chantier-registrations.md. Les transitions de status post-`submitted`
+    // passent par callables (refuseRegistration, etc.) — pas de write direct client.
+    match /registrations/{registrationId} {
+      allow read: if isSignedIn() && (
+        resource.data.submittedByUid == request.auth.uid
+        || (resource.data.matchedMemberId != null && isGuardianOf(resource.data.matchedMemberId))
+        || isCoachOfTeam(resource.data.teamId)
+        || isAdmin()
+        || isRootAdmin()
+      );
+      // Create : auteur uniquement, status forcé à 'draft' ou 'submitted' au create.
+      allow create: if isSignedIn()
+        && request.resource.data.submittedByUid == request.auth.uid
+        && request.resource.data.status in ['draft', 'submitted'];
+      // Update : autorisé sur SON propre draft tant qu'il est en `draft` (autosave wizard).
+      // Toute autre transition de status (submitted → open_pending_trial, refused, etc.)
+      // passe par callables côté Admin SDK.
+      allow update: if isSignedIn()
+        && resource.data.submittedByUid == request.auth.uid
+        && resource.data.status == 'draft'
+        && request.resource.data.submittedByUid == resource.data.submittedByUid;
+      // Delete : auteur uniquement, et uniquement tant que la registration est
+      // encore un brouillon. Une fois soumise, le user passe par la callable
+      // `cancelRegistration` (qui set status='cancelled', conserve l'audit trail).
+      allow delete: if isSignedIn()
+        && resource.data.submittedByUid == request.auth.uid
+        && resource.data.status == 'draft';
+    }
+
+    // ========================================================================
+    // /pendingEmails/{emailId} — file d'attente d'emails sortants (server-only)
+    // ========================================================================
+    // Écrits par les Cloud Functions (Admin SDK bypass rules), lus par le worker
+    // d'envoi (idem). Lockdown total côté client : défensif — empêche un client
+    // mal-intentionné de lire des emails en attente ou d'en injecter.
+    match /pendingEmails/{emailId} {
+      allow read: if false;
+      allow write: if false;
     }
 
     // ========================================================================

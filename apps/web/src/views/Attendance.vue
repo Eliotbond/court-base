@@ -16,7 +16,7 @@ import {
 import InputText from 'primevue/inputtext'
 import { useAttendanceStore } from '@/stores/attendance'
 import type {
-  AttendanceDueStatus,
+  AttendanceCotisationStatus,
   AttendanceLineRow,
   BookingPickerRow,
 } from '@/repositories/attendance.repo'
@@ -136,7 +136,8 @@ function slotTypePillVariant(
 }
 
 // ---------------------------------------------------------------------------
-// Dues pill — variant + label par DueStatus (cohérent avec Members.vue).
+// Cotisation pill — variant + label par CotisationStatus (cohérent avec
+// Members.vue).
 // ---------------------------------------------------------------------------
 
 type PillVariant = 'emerald' | 'sky' | 'amber' | 'rose' | 'slate' | 'violet'
@@ -147,7 +148,7 @@ interface DuesPillDef {
   strike: boolean
 }
 
-function duesPill(status: AttendanceDueStatus): DuesPillDef | null {
+function duesPill(status: AttendanceCotisationStatus): DuesPillDef | null {
   if (!status) return null
   switch (status) {
     case 'paid':

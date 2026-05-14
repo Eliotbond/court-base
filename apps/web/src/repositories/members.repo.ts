@@ -1,25 +1,38 @@
 import { FirebaseError } from 'firebase/app'
 import {
   addDoc,
+  arrayRemove,
+  arrayUnion,
   collection,
   doc,
   getDoc,
   getDocs,
+  limit,
   orderBy,
   query,
   setDoc,
   Timestamp as FirestoreTimestamp,
   updateDoc,
+  where,
+  writeBatch,
   type DocumentSnapshot,
   type QueryDocumentSnapshot,
   type UpdateData,
 } from 'firebase/firestore'
 import { db } from '@/services/firebase'
+import {
+  deleteMember as deleteMemberCallable,
+  type DeleteMemberOutput,
+} from '@/services/cloudFunctions'
 import type {
+  CommsRecipient,
   Member,
+  MemberCommsConfig,
   MemberContactData,
   MemberData,
+  Timestamp,
   User,
+  UserAddress,
 } from '@club-app/shared-types'
 
 /**
@@ -48,6 +61,40 @@ const TEAMS = 'teams'
 const USERS = 'users'
 const CONTACT_DOC = 'contact'
 const PRIVATE_SUBCOLL = 'private'
+
+/**
+ * Âge légal de majorité (CH). On le déclare ici plutôt que dans un constants
+ * partagé pour rester local au seul consumer actuel. Si une autre couche en
+ * a besoin, le bouger dans `shared-types/src/member.ts` (note : pas de logique
+ * dans shared-types — donc seulement la constante, pas la fonction).
+ */
+const MAJORITY_AGE_YEARS = 18
+
+/**
+ * Vrai si `birthDate` représente une date < (now - 18 ans). `null` est traité
+ * comme majeur (cf. commentaire du type `MemberData.birthDate`).
+ */
+function isMinorDate(birthDate: Date | null, now: Date = new Date()): boolean {
+  if (!birthDate) return false
+  const cutoff = new Date(now)
+  cutoff.setFullYear(cutoff.getFullYear() - MAJORITY_AGE_YEARS)
+  return birthDate > cutoff
+}
+
+/**
+ * Defaults `comms` dérivés de `birthDate` (cf. docs/firebase.md /members).
+ *  - mineur : recipients = ['guardians'] (billing + general)
+ *  - majeur / inconnu : recipients = ['member']
+ * `majorityTransition` toujours `null` à la création.
+ */
+function defaultCommsForBirthDate(birthDate: Date | null): MemberCommsConfig {
+  const recipient: CommsRecipient = isMinorDate(birthDate) ? 'guardians' : 'member'
+  return {
+    billingRecipients: [recipient],
+    generalRecipients: [recipient],
+    majorityTransition: null,
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types exposés pour la vue Members
@@ -83,15 +130,40 @@ export interface MemberTeamRef {
 }
 
 /**
+ * Snapshot léger d'un tuteur `/users/{uid}` pour l'affichage en détail
+ * (avatar + nom + email + coordonnées renseignées via app register).
+ * Si la lecture est refusée (rules : autres users non lisibles selon le
+ * caller), on tombe sur un placeholder portant `uid` et tous les autres
+ * champs à `null` / chaîne vide.
+ *
+ * `phone`, `address` et `profileCompletedAt` sont alimentés par l'app
+ * `apps/courtbase-register` lors de l'inscription d'un parent (cf.
+ * `docs/chantier-registrations.md`). `profileCompletedAt === null` indique
+ * un profil incomplet (compte créé mais formulaire register pas terminé).
+ */
+export interface GuardianRef {
+  uid: string
+  displayName: string
+  email: string
+  photoURL: string
+  phone: string | null
+  address: UserAddress | null
+  profileCompletedAt: Timestamp | null
+}
+
+/**
  * Ligne enrichie pour la page Member detail. Étend `MemberRow` avec un
  * sur-ensemble de jointures résolues côté repo :
  *  - `teams` : équipes où le membre est coach ou joueur, avec rôle.
  *  - `linkedUser` : `/users/{linkedUserId}` (rôles auth, teamIds, photoURL).
  *    `null` si pas de compte lié OU si la lecture est refusée (rules).
+ *  - `guardians` : résolution batchée de chaque uid dans `guardianUserIds`.
+ *    Les uids non lisibles donnent un placeholder, pas une erreur.
  */
 export interface MemberDetailRow extends MemberRow {
   teams: MemberTeamRef[]
   linkedUser: User | null
+  guardians: GuardianRef[]
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +351,51 @@ async function readLinkedUser(linkedUserId: string | null): Promise<User | null>
 }
 
 /**
+ * Résout chaque uid de `guardianUserIds` vers un `GuardianRef`. Fetch en
+ * parallèle. Sur `permission-denied` ou doc absent → placeholder portant
+ * uniquement l'uid (le caller affiche au moins l'avatar fallback).
+ */
+async function readGuardians(uids: readonly string[]): Promise<GuardianRef[]> {
+  if (uids.length === 0) return []
+  const snaps = await Promise.all(
+    uids.map(async (uid) => {
+      try {
+        const snap = await getDoc(doc(db, USERS, uid))
+        return { uid, snap }
+      } catch (err: unknown) {
+        if (err instanceof FirebaseError && err.code === 'permission-denied') {
+          return { uid, snap: null }
+        }
+        throw err
+      }
+    }),
+  )
+  return snaps.map(({ uid, snap }) => {
+    if (!snap || !snap.exists()) {
+      return {
+        uid,
+        displayName: '',
+        email: '',
+        photoURL: '',
+        phone: null,
+        address: null,
+        profileCompletedAt: null,
+      }
+    }
+    const data = snap.data() as Partial<User>
+    return {
+      uid: snap.id,
+      displayName: data.displayName ?? '',
+      email: data.email ?? '',
+      photoURL: data.photoURL ?? '',
+      phone: data.phone ?? null,
+      address: data.address ?? null,
+      profileCompletedAt: data.profileCompletedAt ?? null,
+    }
+  })
+}
+
+/**
  * Récupère un membre enrichi pour la page détail.
  *
  * Retourne `null` si le doc parent n'existe pas. Les jointures sont
@@ -291,10 +408,11 @@ export async function getMemberDetail(id: string): Promise<MemberDetailRow | nul
   if (!snap.exists()) return null
   const data = snap.data() as MemberData
 
-  const [contact, teamRefsMap, linkedUser] = await Promise.all([
+  const [contact, teamRefsMap, linkedUser, guardians] = await Promise.all([
     readContact(id),
     buildTeamRefsMap(),
     readLinkedUser(data.linkedUserId),
+    readGuardians(data.guardianUserIds ?? []),
   ])
 
   const teams = teamRefsMap.get(id) ?? []
@@ -308,6 +426,7 @@ export async function getMemberDetail(id: string): Promise<MemberDetailRow | nul
     teamLabels,
     teams,
     linkedUser,
+    guardians,
     lastLoginAt: null,
   }
 }
@@ -329,6 +448,13 @@ export async function getMemberDetail(id: string): Promise<MemberDetailRow | nul
  * initialisé à `'n/a'` : il sera basculé à `'pending_grace'` par la Function
  * `initiateDuesOnPlayerActivation` lorsque le membre sera ajouté au
  * `playerIds` d'une équipe.
+ *
+ * `birthDate` peut être absente : `null` est traité comme adulte côté
+ * defaults `comms` (cf. `defaultCommsForBirthDate`). L'UI doit avertir
+ * l'admin que cette info reste à compléter.
+ *
+ * `guardianUserIds` n'est pas fourni à la création : le lien tuteur ↔ pupille
+ * passe toujours par `addGuardian` (atomicité avec `/users.roles`).
  */
 export interface CreateMemberInput {
   firstName: string
@@ -340,6 +466,10 @@ export interface CreateMemberInput {
   active?: boolean
   email?: string
   phone?: string
+  /** `null` (ou absent) = inconnue. */
+  birthDate?: Date | null
+  /** N° AVS au format `756.XXXX.XXXX.XX`. `null` (ou absent) = inconnu. */
+  avs?: string | null
 }
 
 /**
@@ -349,8 +479,14 @@ export interface CreateMemberInput {
  * (sub-collection privée — cf. rules). Les deux écritures ne sont pas dans une
  * transaction : si la seconde échoue (rare, rules ou réseau), le membre est
  * créé sans contact et l'admin pourra le compléter via l'édition.
+ *
+ * `comms` est dérivé de `birthDate` via `defaultCommsForBirthDate` :
+ *  - mineur : `['guardians']` pour billing et general
+ *  - majeur / inconnu : `['member']` pour les deux
+ * `guardianUserIds` démarre toujours vide ; ajouter via `addGuardian`.
  */
 export async function createMember(input: CreateMemberInput): Promise<MemberRow> {
+  const birthDate = input.birthDate ?? null
   const data: MemberData = {
     firstName: input.firstName,
     lastName: input.lastName,
@@ -362,6 +498,19 @@ export async function createMember(input: CreateMemberInput): Promise<MemberRow>
     duesStatus: 'n/a',
     duesStatusUpdatedAt: FirestoreTimestamp.now(),
     active: input.active ?? true,
+    birthDate: birthDate ? FirestoreTimestamp.fromDate(birthDate) : null,
+    guardianUserIds: [],
+    comms: defaultCommsForBirthDate(birthDate),
+    avs: input.avs ?? null,
+    transferState: 'none',
+    // Cycle de vie membre (cf. shared-types `MemberStatus`) : tout nouveau
+    // membre démarre en `'active'`. La bascule vers `'archived'` (et les
+    // métadonnées associées) est faite par une callable serveur dédiée
+    // (refus registration, départ, etc.) — jamais ici.
+    status: 'active',
+    archivedAt: null,
+    archivedReason: null,
+    archivedByUid: null,
   }
   const ref = await addDoc(collection(db, MEMBERS), data)
 
@@ -383,10 +532,25 @@ export async function createMember(input: CreateMemberInput): Promise<MemberRow>
 }
 
 /**
+ * Patch partiel `comms`. Volontairement restrictif : on autorise `billingRecipients`
+ * et `generalRecipients` à la modification fine ; `majorityTransition` reste
+ * du ressort des Cloud Functions (`onMajorityReached`, callables
+ * `respondGuardianConsent` / `respondMemberConsent`).
+ */
+export interface MemberCommsPatch {
+  billingRecipients?: CommsRecipient[]
+  generalRecipients?: CommsRecipient[]
+}
+
+/**
  * Champs autorisés pour `updateMember`. Pas de `duesStatus` /
  * `duesStatusUpdatedAt` ici : ces champs sont gérés par la Function
  * `syncMemberDuesStatus` à partir des `/dues`. Pas de `linkedUserId` non
- * plus pour le MVP (relink → flow dédié plus tard).
+ * plus : le relink member ↔ compte Auth passe désormais par la fonction
+ * dédiée `setLinkedUser` (atomicité bidirectionnelle avec `/users.memberId`).
+ *
+ * `guardianUserIds` est volontairement absent : passer par `addGuardian` /
+ * `removeGuardian` pour préserver la synchro avec `/users.roles`.
  */
 export interface MemberPatch {
   firstName?: string
@@ -396,14 +560,242 @@ export interface MemberPatch {
   officialLevel?: number | null
   licensed?: boolean
   active?: boolean
+  /** `null` = effacer (membre dont on ne connaît pas la date). */
+  birthDate?: Date | null
+  /** `null` = effacer le n° AVS. Format attendu : `756.XXXX.XXXX.XX`. */
+  avs?: string | null
+  /** Patch partiel `comms` — pas `majorityTransition`. */
+  comms?: MemberCommsPatch
+}
+
+/**
+ * Champs internes Firestore que `updateMember` peut écrire en plus de ceux
+ * du patch public. Utilisé pour étendre proprement le payload typé.
+ */
+type MemberInternalUpdate = UpdateData<MemberData> & {
+  birthDate?: FirestoreTimestamp | null
+  'comms.billingRecipients'?: CommsRecipient[]
+  'comms.generalRecipients'?: CommsRecipient[]
 }
 
 export async function updateMember(id: string, patch: MemberPatch): Promise<void> {
-  // UpdateData préserve les types Firestore (FieldValue, Timestamp) que
-  // l'on n'utilise pas ici mais qui restent valides pour l'SDK.
-  const update: UpdateData<MemberData> = { ...patch }
+  // On part du sous-ensemble "plat" du patch — birthDate et comms demandent
+  // une conversion / des dotted paths, donc ils sont gérés à part.
+  const { birthDate, comms, ...flat } = patch
+  const update: MemberInternalUpdate = { ...flat }
+
+  if (birthDate !== undefined) {
+    update.birthDate = birthDate ? FirestoreTimestamp.fromDate(birthDate) : null
+
+    // Si la birthDate change, ré-aligner les defaults `comms` UNIQUEMENT si
+    // aucune transition de majorité n'est en cours (sinon les Cloud Functions
+    // sont responsables). On lit le doc courant pour vérifier `majorityTransition`.
+    const snap = await getDoc(doc(db, MEMBERS, id))
+    if (snap.exists()) {
+      const current = snap.data() as MemberData
+      if (current.comms?.majorityTransition == null) {
+        const defaults = defaultCommsForBirthDate(birthDate)
+        // Patch caller n'a pas explicitement touché ces champs ? On les
+        // ré-aligne. Si le caller a fourni un comms patch, on respecte ses
+        // valeurs (priorité explicite > defaults).
+        if (!comms || comms.billingRecipients === undefined) {
+          update['comms.billingRecipients'] = defaults.billingRecipients
+        }
+        if (!comms || comms.generalRecipients === undefined) {
+          update['comms.generalRecipients'] = defaults.generalRecipients
+        }
+      }
+    }
+  }
+
+  if (comms) {
+    if (comms.billingRecipients !== undefined) {
+      update['comms.billingRecipients'] = comms.billingRecipients
+    }
+    if (comms.generalRecipients !== undefined) {
+      update['comms.generalRecipients'] = comms.generalRecipients
+    }
+  }
+
+  if (Object.keys(update).length === 0) return
   await updateDoc(doc(db, MEMBERS, id), update)
 }
+
+// ---------------------------------------------------------------------------
+// Guardians — link / unlink user ↔ member.
+//
+// Source de vérité du lien : `/members/{memberId}.guardianUserIds`. En miroir,
+// `/users/{uid}.roles` doit contenir `'parent'` ssi l'uid apparaît dans au
+// moins un `guardianUserIds`. On maintient cet invariant côté client :
+//   - addGuardian : batch atomique (member + user.roles arrayUnion 'parent').
+//     `arrayUnion` est idempotent → pas de risque de double si déjà parent.
+//   - removeGuardian : retire d'abord du membre, puis check s'il reste un autre
+//     lien guardian quelque part ; sinon retire 'parent' de user.roles.
+//     Non-atomique entre les deux étapes : fenêtre brève (<100ms) où l'uid
+//     n'est plus guardian de personne mais conserve `'parent'`. Acceptable :
+//     pas de fuite de droits réelle (rules: parent = lecture conditionnée à
+//     `guardianUserIds`, donc inoffensive sans entrée).
+// ---------------------------------------------------------------------------
+
+/**
+ * Lie un user comme tuteur d'un membre. Atomique sur les deux writes via
+ * `writeBatch` : soit les deux passent, soit aucun.
+ *
+ * Idempotent : `arrayUnion` ignore les doublons. Appeler deux fois avec le
+ * même couple (memberId, userId) est sans effet.
+ */
+export async function addGuardian(
+  memberId: string,
+  userId: string,
+): Promise<void> {
+  const batch = writeBatch(db)
+  batch.update(doc(db, MEMBERS, memberId), {
+    guardianUserIds: arrayUnion(userId),
+  })
+  batch.update(doc(db, USERS, userId), {
+    roles: arrayUnion('parent'),
+  })
+  await batch.commit()
+}
+
+/**
+ * Délie un user d'un membre. Deux étapes :
+ *  1. `arrayRemove` sur `/members/{memberId}.guardianUserIds`.
+ *  2. Query `where('guardianUserIds', 'array-contains', userId).limit(1)` —
+ *     si vide, `arrayRemove('parent')` sur `/users/{userId}.roles`.
+ *
+ * Non-atomique entre les deux étapes (cf. note plus haut sur l'invariant).
+ */
+export async function removeGuardian(
+  memberId: string,
+  userId: string,
+): Promise<void> {
+  await updateDoc(doc(db, MEMBERS, memberId), {
+    guardianUserIds: arrayRemove(userId),
+  })
+  const remaining = await getDocs(
+    query(
+      collection(db, MEMBERS),
+      where('guardianUserIds', 'array-contains', userId),
+      limit(1),
+    ),
+  )
+  if (remaining.empty) {
+    await updateDoc(doc(db, USERS, userId), {
+      roles: arrayRemove('parent'),
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Link member ↔ user (compte Auth).
+//
+// Invariant bidirectionnel : `/members/{memberId}.linkedUserId === uid`
+// SSI `/users/{uid}.memberId === memberId`. La fonction maintient cet
+// invariant côté client via un `writeBatch` atomique (deux ou trois writes
+// dans la même opération Firestore). Si un ancien lien existait (côté
+// member ou côté user), il est nettoyé dans le même batch pour éviter les
+// orphelins ("user pointing to nothing" / "member pointing to nothing").
+// ---------------------------------------------------------------------------
+
+/**
+ * Lie (ou délie) un member à un compte Auth `/users/{uid}`.
+ *
+ * Invariant bidirectionnel : `/members/{memberId}.linkedUserId === uid`
+ * SSI `/users/{uid}.memberId === memberId`. Implémenté via `writeBatch`
+ * atomique :
+ *  - `uid === null` → délie : `member.linkedUserId = null` + clear
+ *    `users/{ancien}.memberId` si un lien existait côté member.
+ *  - `uid` fourni → (re)lie : `member.linkedUserId = uid` +
+ *    `user.memberId = memberId`, plus deux nettoyages d'orphelins le cas
+ *    échéant (ancien linkedUserId du member, ancien memberId du user).
+ *
+ * Idempotent : si le couple (memberId, uid) est déjà cohérent, le batch
+ * réécrit les mêmes valeurs sans effet observable. Aucune lecture ne pose
+ * d'invariant fort — c'est le batch atomique qui garantit la cohérence
+ * finale, même si plusieurs admins déclenchent un relink en parallèle (le
+ * dernier write gagne, mais l'invariant bidirectionnel reste vrai côté
+ * deux docs).
+ */
+export async function setLinkedUser(
+  memberId: string,
+  uid: string | null,
+): Promise<void> {
+  const memberRef = doc(db, MEMBERS, memberId)
+  const memberSnap = await getDoc(memberRef)
+  const previousLinkedUserId = memberSnap.exists()
+    ? ((memberSnap.data() as MemberData).linkedUserId ?? null)
+    : null
+
+  const batch = writeBatch(db)
+
+  if (uid === null) {
+    batch.update(memberRef, { linkedUserId: null })
+    if (previousLinkedUserId) {
+      batch.update(doc(db, USERS, previousLinkedUserId), { memberId: null })
+    }
+    await batch.commit()
+    return
+  }
+
+  const userRef = doc(db, USERS, uid)
+  const userSnap = await getDoc(userRef)
+  const previousMemberIdOfUser = userSnap.exists()
+    ? ((userSnap.data() as Partial<User>).memberId ?? null)
+    : null
+
+  batch.update(memberRef, { linkedUserId: uid })
+  batch.update(userRef, { memberId })
+
+  // Si le member pointait vers un autre user → clear l'ancien user.memberId.
+  if (previousLinkedUserId && previousLinkedUserId !== uid) {
+    batch.update(doc(db, USERS, previousLinkedUserId), { memberId: null })
+  }
+
+  // Si le user pointait vers un autre member → clear l'ancien member.linkedUserId.
+  if (previousMemberIdOfUser && previousMemberIdOfUser !== memberId) {
+    batch.update(doc(db, MEMBERS, previousMemberIdOfUser), { linkedUserId: null })
+  }
+
+  await batch.commit()
+}
+
+/**
+ * Liste les membres dont `uid` est tuteur (`array-contains` sur
+ * `guardianUserIds`). Enrichit chaque ligne comme `listMembers` :
+ *  - contact (dégradation `permission-denied` → null)
+ *  - teamLabels (un seul scan `/teams`)
+ *
+ * Ordonné par `lastName`. Pas de limite côté repo : un user a typiquement
+ * 1-3 pupilles, OK de tout retourner.
+ */
+export async function getMembersAsGuardian(uid: string): Promise<MemberRow[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, MEMBERS),
+      where('guardianUserIds', 'array-contains', uid),
+      orderBy('lastName'),
+    ),
+  )
+  if (snap.empty) return []
+
+  const teamLabelsPromise = buildTeamLabelsMap()
+  const contactsPromise = Promise.all(snap.docs.map((d) => readContact(d.id)))
+
+  const [teamLabelsMap, contacts] = await Promise.all([
+    teamLabelsPromise,
+    contactsPromise,
+  ])
+
+  return snap.docs.map((d, i) =>
+    snapToRow(
+      d,
+      contacts[i] ?? EMPTY_CONTACT,
+      teamLabelsMap.get(d.id) ?? [],
+    ),
+  )
+}
+
 
 export interface MemberContactPatch {
   email?: string
@@ -446,4 +838,43 @@ export async function archiveMember(id: string): Promise<void> {
  */
 export async function reactivateMember(id: string): Promise<void> {
   await updateDoc(doc(db, MEMBERS, id), { active: true })
+}
+
+// ---------------------------------------------------------------------------
+// Suppression DÉFINITIVE (correction d'erreur de création).
+//
+// Distinct de `archiveMember` : ici on appelle la Cloud Function `deleteMember`
+// qui exécute en transaction côté serveur :
+//   - delete physique de /members/{id} + sub-collections
+//   - retrait du member des teams (coachIds / playerIds)
+//   - clear du `matchedMemberId` sur les registrations historiques
+//   - delete des /dues non payées
+//
+// Réservé aux admins (vérification côté Cloud Function). À utiliser uniquement
+// pour corriger une erreur de création — pour une fin d'adhésion normale,
+// préférer `archiveMember` qui conserve l'historique comptable.
+// ---------------------------------------------------------------------------
+
+/**
+ * Supprime définitivement un membre via la callable serveur.
+ *
+ * @param memberId    Id du membre à supprimer.
+ * @param confirmName Confirmation typée par l'admin (`"<firstName> <lastName>"`).
+ *                    Le serveur fait la comparaison case-insensitive +
+ *                    normalisation diacritiques.
+ * @throws FirebaseError avec code parmi : `unauthenticated`, `permission-denied`,
+ *  `not-found`, `invalid-argument`, `failed-precondition`. Le caller (store)
+ *  peut adapter le message UI selon le code.
+ */
+export async function deleteMemberPermanently(
+  memberId: string,
+  confirmName: string,
+): Promise<DeleteMemberOutput> {
+  try {
+    return await deleteMemberCallable({ memberId, confirmName })
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`[members.repo/deleteMemberPermanently] failed [${code}]`, err)
+    throw err
+  }
 }

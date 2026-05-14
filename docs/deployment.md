@@ -248,6 +248,52 @@ firebase functions:artifacts:setpolicy
 
 ou passer `--force` au prochain deploy.
 
+### 5. Binding IAM `allUsers/run.invoker` manquant après deploy d'une nouvelle Function v2
+
+`firebase deploy --only functions:<newFunc>` ne pose **pas** par défaut le binding Cloud Run `allUsers → roles/run.invoker` sur les nouvelles services. Conséquence : la callable rejette toutes les requêtes Firebase Auth (Cloud Run vérifie d'abord l'auth IAM avant que le code de la function ne voie le token Firebase), et le SDK client remonte l'erreur générique `internal`. Cf. mémoire `[[deploy-functions-v2-invoker-binding]]`.
+
+**Diagnostic** :
+
+```bash
+# 1. Vérifier la policy IAM — si pas de binding allUsers / roles/run.invoker, c'est le bug
+gcloud run services get-iam-policy <fn-name-lowercase> \
+  --region=europe-west6 \
+  --project=<projectId>
+
+# 2. Lire les logs Cloud Run (la commande `firebase functions:log` est cassée sur ce projet)
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="<lowercase-name>"' \
+  --project=<projectId> --limit=10
+```
+
+Symptôme dans les logs : `WARNING: The request was not authenticated. Empty Authorization header value.`
+
+**Fix** (à appliquer après tout deploy de nouvelle function v2) :
+
+```bash
+gcloud run services add-iam-policy-binding <fn-name-lowercase> \
+  --region=europe-west6 \
+  --member="allUsers" \
+  --role="roles/run.invoker" \
+  --project=<projectId>
+```
+
+⚠ Le nom du service Cloud Run est l'export Function name **en lowercase** (ex. `matchExistingMember` → `matchexistingmember`).
+
+À automatiser dans le script de provisioning + dans la CI cross-projet : après chaque deploy d'une nouvelle callable, lister les services Cloud Run créés et appliquer le binding. Sinon chaque nouveau projet client part en `internal` au premier appel client.
+
+### 6. `tsc` compile tout, même quand on deploy partiel
+
+`firebase deploy --only functions:onlyOne` recompile **toute** la lib functions avec `tsc` avant de pousser. Une erreur TS dans une function non concernée bloque le déploiement complet. Reflexe :
+
+```bash
+# Toujours valider le build local avant deploy
+npm run build -w @club-app/functions
+# Puis seulement
+firebase deploy --only functions:onlyOne --project <id>
+```
+
+Vaut aussi pour les nouvelles deps : si `@club-app/shared-types` introduit un type cassé pour une function tierce, le deploy partiel échoue malgré le scope. Cf. `functions/CLAUDE.md` section "Avant de deploy".
+
 ## Firestore rules / indexes deploy — gotchas
 
 `firestore.rules` et `firestore.indexes.json` sont des artefacts **déployés** séparément du code applicatif. Modifier le fichier local **ne change rien en prod** tant qu'on n'a pas pushé sur Firebase.

@@ -1,526 +1,385 @@
-import type { Season, SeasonStatus, Timestamp } from '@club-app/shared-types'
+import {
+  addDoc,
+  arrayUnion,
+  collection,
+  doc,
+  getCountFromServer,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  Timestamp as FirestoreTimestamp,
+  updateDoc,
+  where,
+  writeBatch,
+  type DocumentData,
+  type DocumentSnapshot,
+  type QueryDocumentSnapshot,
+} from 'firebase/firestore'
+import { db } from '@/services/firebase'
+import type {
+  Season,
+  SeasonData,
+  Timestamp,
+  VenueData,
+} from '@club-app/shared-types'
 
 /**
- * Repository Seasons — fournit la liste des saisons et les mutations de statut.
+ * Repository Seasons — Firestore-backed.
  *
- * Cette couche est la SEULE à pouvoir importer le SDK Firebase. Pour
- * l'instant la collection `/seasons/{seasonId}` n'est pas provisionnée de
- * manière exploitable côté client, on renvoie donc des données mockées
- * réalistes (~6 saisons couvrant past / current / future). Chaque retour est
- * annoté d'un `TODO(firestore)` indiquant la query réelle qui le remplacera.
+ * Cette couche est la SEULE à pouvoir importer le SDK Firebase
+ * (cf. docs/frontend-desktop.md — architecture en couches). Les writes
+ * passent par `/seasons/{seasonId}` (rules : isAdmin || isRootAdmin).
  *
  * Voir docs/firebase.md (`/seasons/{seasonId}`) pour le schéma cible et
  * docs/main.md ("Season — draft → active → archived") pour le lifecycle.
+ *
+ * Champs dérivés portés sur `SeasonRow` mais qui ne vivent PAS dans le doc :
+ *  - `teamsCount`  : count agrégé via `getCountFromServer` sur `/teams` filtré
+ *    `activeSeasonIds array-contains id`. 1 read facturé par saison listée.
+ *  - `bookingsCount` : idem sur `/bookings where seasonId == id`. 1 read.
+ *  - `venueLabels` : join sur `/venues` (batched, 1 read collection à la
+ *    liste — pas N+1).
+ *
+ * Conversion Timestamp ↔ Date à la frontière repo (Timestamp en storage).
  */
 
+const SEASONS = 'seasons'
+const TEAMS = 'teams'
+const VENUES = 'venues'
+const BOOKINGS = 'bookings'
+
 // ---------------------------------------------------------------------------
-// Types exposés pour la vue Seasons
+// Types exposés
 // ---------------------------------------------------------------------------
 
 /**
- * Ligne enrichie pour la liste Seasons.
+ * Ligne enrichie pour la liste Seasons. Étend `Season` (schéma `/seasons/{id}`)
+ * avec quelques champs dérivés nécessaires à l'affichage qui ne sont PAS
+ * portés par le doc.
  *
- * Étend `Season` (schéma Firestore) avec quelques champs dérivés nécessaires
- * à l'affichage que la collection brute ne porte pas encore : count d'équipes
- * participantes (dérivé de /teams.activeSeasonIds), count de bookings générés
- * (dérivé de /bookings where seasonId == id), libellé venues. Tous ces champs
- * additionnels sont marqués `// TODO(firestore)` et ne doivent PAS être
- * ajoutés à `packages/shared-types/src/season.ts` tant qu'ils ne sont pas
- * dans le schéma `docs/firebase.md`.
+ * Ne pas ajouter ces champs à `packages/shared-types/src/season.ts` — ce sont
+ * des résultats de joins / aggregates côté repo.
  */
 export interface SeasonRow extends Season {
-  // TODO(firestore): dériver depuis /teams where activeSeasonIds array-contains id.
+  /** Dérivé via `/teams where activeSeasonIds array-contains id`. */
   teamsCount: number
-  // TODO(firestore): dériver depuis /bookings where seasonId == id (count). 0 en
-  // draft tant que la génération n'a pas tourné.
+  /** Dérivé via `/bookings where seasonId == id`. 0 en draft. */
   bookingsCount: number
-  // TODO(firestore): joindre /venues sur activeVenueIds → liste des noms. Pour
-  // l'instant : libellés mockés cohérents avec le design (Forêt, Vergers,
-  // Beaulieu).
+  /** Libellés des venues actifs (join `/venues` sur `activeVenueIds`). */
   venueLabels: string[]
 }
 
 // ---------------------------------------------------------------------------
-// Mock dataset
+// Snapshot helpers privés
 // ---------------------------------------------------------------------------
-
-const MOCK_DELAY_MS = 100
-
-function delay<T>(value: T, ms: number = MOCK_DELAY_MS): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), ms))
-}
-
-/** Helpers de construction. Évite de répéter `Timestamp` partout. */
-function ts(date: Date): { seconds: number; nanoseconds: number } {
-  return { seconds: Math.floor(date.getTime() / 1000), nanoseconds: 0 }
-}
-
-/** Construit un Date au 1er septembre AAAA, 00:00 local. */
-function septFirst(year: number): Date {
-  return new Date(year, 8, 1, 0, 0, 0, 0)
-}
-
-/** Construit un Date au 30 juin AAAA, 23:59 local. */
-function juneLast(year: number): Date {
-  return new Date(year, 5, 30, 23, 59, 0, 0)
-}
-
-interface MockSeasonSeed {
-  id: string
-  name: string
-  startDate: Date
-  endDate: Date
-  status: SeasonStatus
-  activeVenueIds: string[]
-  closurePeriodIds: string[]
-  generatedAt: Date | null
-  teamsCount: number
-  bookingsCount: number
-  venueLabels: string[]
-}
 
 /**
- * 6 saisons couvrant tout le lifecycle :
- *  - 2 archived (saisons passées 2023-24 et 2024-25)
- *  - 1 active (2025-26 — celle qu'on voit partout dans le design "saison 2025-26")
- *  - 3 draft (futures : 2026-27 prête à activer, 2027-28 ébauche, 2028-29 vide)
- *
- * Cohérent avec le wording du design : "Saison 2025-26", venues "Forêt /
- * Vergers / Beaulieu", ~5 équipes, ~412 bookings annuels.
+ * Convertit un Firestore `Timestamp` (SDK class instance ou plain object) en
+ * type neutre `{ seconds, nanoseconds }`. Tolère les deux formes pour rester
+ * indépendant de la classe Firestore côté consumers.
  */
-const SEEDS: MockSeasonSeed[] = [
-  {
-    id: 'mock-season-23-24',
-    name: 'Saison 2023-24',
-    startDate: septFirst(2023),
-    endDate: juneLast(2024),
-    status: 'archived',
-    activeVenueIds: ['mock-venue-foret', 'mock-venue-beaulieu'],
-    closurePeriodIds: ['mock-closure-noel-23', 'mock-closure-fevrier-24'],
-    generatedAt: new Date(2023, 7, 15),
-    teamsCount: 4,
-    bookingsCount: 318,
-    venueLabels: ['Forêt', 'Beaulieu'],
-  },
-  {
-    id: 'mock-season-24-25',
-    name: 'Saison 2024-25',
-    startDate: septFirst(2024),
-    endDate: juneLast(2025),
-    status: 'archived',
-    activeVenueIds: ['mock-venue-foret', 'mock-venue-vergers', 'mock-venue-beaulieu'],
-    closurePeriodIds: ['mock-closure-noel-24', 'mock-closure-fevrier-25'],
-    generatedAt: new Date(2024, 7, 22),
-    teamsCount: 5,
-    bookingsCount: 396,
-    venueLabels: ['Forêt', 'Vergers', 'Beaulieu'],
-  },
-  {
-    id: 'mock-season-25-26',
-    name: 'Saison 2025-26',
-    startDate: septFirst(2025),
-    endDate: juneLast(2026),
-    status: 'active',
-    activeVenueIds: ['mock-venue-foret', 'mock-venue-vergers', 'mock-venue-beaulieu'],
-    closurePeriodIds: ['mock-closure-noel-25', 'mock-closure-fevrier-26', 'mock-closure-foret-mars-26'],
-    generatedAt: new Date(2025, 7, 18),
-    teamsCount: 5,
-    bookingsCount: 412,
-    venueLabels: ['Forêt', 'Vergers', 'Beaulieu'],
-  },
-  {
-    id: 'mock-season-26-27',
-    name: 'Saison 2026-27',
-    startDate: septFirst(2026),
-    endDate: juneLast(2027),
-    status: 'draft',
-    activeVenueIds: ['mock-venue-foret', 'mock-venue-vergers', 'mock-venue-beaulieu'],
-    closurePeriodIds: ['mock-closure-noel-26'],
-    generatedAt: null,
-    teamsCount: 6,
-    bookingsCount: 0,
-    venueLabels: ['Forêt', 'Vergers', 'Beaulieu'],
-  },
-  {
-    id: 'mock-season-27-28',
-    name: 'Saison 2027-28',
-    startDate: septFirst(2027),
-    endDate: juneLast(2028),
-    status: 'draft',
-    activeVenueIds: ['mock-venue-foret'],
-    closurePeriodIds: [],
-    generatedAt: null,
-    teamsCount: 2,
-    bookingsCount: 0,
-    venueLabels: ['Forêt'],
-  },
-  {
-    id: 'mock-season-28-29',
-    name: 'Saison 2028-29',
-    startDate: septFirst(2028),
-    endDate: juneLast(2029),
-    status: 'draft',
-    activeVenueIds: [],
-    closurePeriodIds: [],
-    generatedAt: null,
-    teamsCount: 0,
-    bookingsCount: 0,
-    venueLabels: [],
-  },
-]
+function tsToNeutral(value: unknown): Timestamp {
+  if (value instanceof FirestoreTimestamp) {
+    return { seconds: value.seconds, nanoseconds: value.nanoseconds }
+  }
+  // Plain object fallback (ex. doc data brute, hors classe Firestore).
+  if (
+    value &&
+    typeof value === 'object' &&
+    'seconds' in value &&
+    'nanoseconds' in value
+  ) {
+    const v = value as { seconds: number; nanoseconds: number }
+    return { seconds: v.seconds, nanoseconds: v.nanoseconds }
+  }
+  // Cas pathologique (champ manquant ou type inattendu) : on retombe sur 0.
+  return { seconds: 0, nanoseconds: 0 }
+}
 
-/** Sérialise un seed en `SeasonRow` complet (Date → Timestamp). */
-function seedToRow(seed: MockSeasonSeed): SeasonRow {
+/** Convertit un `Date` JS en Firestore `Timestamp`. */
+function dateToTs(d: Date): FirestoreTimestamp {
+  return FirestoreTimestamp.fromDate(d)
+}
+
+interface RawSeasonDoc {
+  name: string
+  startDate: unknown
+  endDate: unknown
+  status: SeasonData['status']
+  activeVenueIds?: string[]
+  closurePeriodIds?: string[]
+  generatedAt?: unknown
+}
+
+/** Convertit un snapshot `/seasons/{id}` en `Season` neutre (sans enrichissement). */
+function snapToSeason(snap: QueryDocumentSnapshot | DocumentSnapshot): Season {
+  const data = snap.data() as RawSeasonDoc
   return {
-    id: seed.id,
-    name: seed.name,
-    startDate: ts(seed.startDate),
-    endDate: ts(seed.endDate),
-    status: seed.status,
-    activeVenueIds: seed.activeVenueIds,
-    closurePeriodIds: seed.closurePeriodIds,
-    generatedAt: seed.generatedAt ? ts(seed.generatedAt) : null,
-    teamsCount: seed.teamsCount,
-    bookingsCount: seed.bookingsCount,
-    venueLabels: seed.venueLabels,
+    id: snap.id,
+    name: data.name,
+    startDate: tsToNeutral(data.startDate),
+    endDate: tsToNeutral(data.endDate),
+    status: data.status,
+    activeVenueIds: data.activeVenueIds ?? [],
+    closurePeriodIds: data.closurePeriodIds ?? [],
+    generatedAt: data.generatedAt ? tsToNeutral(data.generatedAt) : null,
   }
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Lookups internes — venues map (1 collection read, partagé sur la liste).
+// ---------------------------------------------------------------------------
+
+/** Lit tous les venues et retourne une `Map<id, name>` pour résoudre `venueLabels`. */
+async function readVenueNameMap(): Promise<Map<string, string>> {
+  const snap = await getDocs(collection(db, VENUES))
+  const map = new Map<string, string>()
+  for (const d of snap.docs) {
+    const data = d.data() as Pick<VenueData, 'name'>
+    map.set(d.id, data.name)
+  }
+  return map
+}
+
+// ---------------------------------------------------------------------------
+// Aggregates dérivés par-saison
+// ---------------------------------------------------------------------------
+
+/**
+ * Compte les équipes inscrites à une saison.
+ *
+ * 1 read facturé via `getCountFromServer`. Le filtre `activeSeasonIds
+ * array-contains seasonId` ne nécessite pas d'index composite (Firestore
+ * supporte l'opérateur array-contains seul nativement).
+ */
+async function countTeamsForSeason(seasonId: string): Promise<number> {
+  const snap = await getCountFromServer(
+    query(
+      collection(db, TEAMS),
+      where('activeSeasonIds', 'array-contains', seasonId),
+    ),
+  )
+  return snap.data().count
+}
+
+/**
+ * Compte les bookings rattachés à une saison.
+ *
+ * 1 read facturé via `getCountFromServer`. L'index composite
+ * `bookings (seasonId, status, date)` existe déjà mais n'est pas requis pour
+ * un simple count sur `seasonId == X`.
+ */
+async function countBookingsForSeason(seasonId: string): Promise<number> {
+  const snap = await getCountFromServer(
+    query(collection(db, BOOKINGS), where('seasonId', '==', seasonId)),
+  )
+  return snap.data().count
+}
+
+/**
+ * Enrichit un `Season` neutre en `SeasonRow` : ajoute teamsCount,
+ * bookingsCount, venueLabels.
+ */
+async function enrichSeason(
+  season: Season,
+  venueMap: Map<string, string>,
+): Promise<SeasonRow> {
+  const [teamsCount, bookingsCount] = await Promise.all([
+    countTeamsForSeason(season.id),
+    countBookingsForSeason(season.id),
+  ])
+  const venueLabels = season.activeVenueIds
+    .map((id) => venueMap.get(id))
+    .filter((label): label is string => typeof label === 'string')
+  return {
+    ...season,
+    teamsCount,
+    bookingsCount,
+    venueLabels,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reads
 // ---------------------------------------------------------------------------
 
 /**
  * Liste toutes les saisons du club, triées par `startDate` desc.
  *
- * TODO(firestore): remplacer par
- *   `collection('/seasons').orderBy('startDate', 'desc').get()`
- *   puis pour chaque saison, dériver :
- *     - `teamsCount` via `query('/teams', where('activeSeasonIds', 'array-contains', id))`
- *     - `bookingsCount` via `query('/bookings', where('seasonId', '==', id)).count()`
- *     - `venueLabels` via `getDocs('/venues', where(documentId(), 'in', activeVenueIds))`
- *   (Pour l'efficacité prod, agréger côté serveur dans un sub-doc dénormalisé.)
+ * Pour chaque saison on calcule `teamsCount` et `bookingsCount` via deux
+ * `getCountFromServer` (1 read facturé chacun). Soit `2 × N` reads où N est
+ * le nombre de saisons (en pratique ≤ 10 saisons → ≤ 20 reads). À terme
+ * (volume), dénormaliser ces counts dans le doc saison (write par triggers).
  */
 export async function listSeasons(): Promise<SeasonRow[]> {
-  // TODO(firestore): replace with real query when /seasons is provisioned.
-  const sorted = [...SEEDS].sort((a, b) => b.startDate.getTime() - a.startDate.getTime())
-  return delay(sorted.map(seedToRow))
+  const [seasonSnap, venueMap] = await Promise.all([
+    getDocs(query(collection(db, SEASONS), orderBy('startDate', 'desc'))),
+    readVenueNameMap(),
+  ])
+  if (seasonSnap.empty) return []
+  const seasons = seasonSnap.docs.map(snapToSeason)
+  return Promise.all(seasons.map((s) => enrichSeason(s, venueMap)))
 }
 
 /**
- * Récupère la saison active (au plus une) — utilisée par tout l'app pour
- * indiquer "Saison 2025-26" partout (Dashboard, Officials, Dues, etc.).
+ * Récupère la saison active (au plus une), enrichie en `SeasonRow`. Renvoie
+ * `null` si aucune saison n'est en statut `active`.
  *
- * TODO(firestore): remplacer par
- *   `query('/seasons', where('status', '==', 'active'), limit(1)).get()`
+ * Requête : `where status == 'active' limit 1`. Pas d'index composite requis.
  */
 export async function getActiveSeason(): Promise<SeasonRow | null> {
-  // TODO(firestore): replace when /seasons is provisioned.
-  const found = SEEDS.find((s) => s.status === 'active')
-  return delay(found ? seedToRow(found) : null)
+  const q = query(
+    collection(db, SEASONS),
+    where('status', '==', 'active'),
+    limit(1),
+  )
+  const snap = await getDocs(q)
+  if (snap.empty) return null
+  const season = snapToSeason(snap.docs[0]!)
+  const venueMap = await readVenueNameMap()
+  return enrichSeason(season, venueMap)
 }
 
+/** Récupère une saison par son id, enrichie en `SeasonRow`. */
+export async function getSeasonById(seasonId: string): Promise<SeasonRow | null> {
+  const snap = await getDoc(doc(db, SEASONS, seasonId))
+  if (!snap.exists()) return null
+  const season = snapToSeason(snap)
+  const venueMap = await readVenueNameMap()
+  return enrichSeason(season, venueMap)
+}
+
+// ---------------------------------------------------------------------------
+// Writes — Activate / Archive / Duplicate
+// ---------------------------------------------------------------------------
+
 /**
- * Active une saison en passant `draft` → `active`. Côté backend, ceci doit
- * être un wrapper autour de la Function `generateSeasonBookings` (cf.
- * docs/firebase.md "Functions catalog"). Côté UI, le bouton "Activer"
- * doit en réalité router vers l'écran "Activation — preview" (dry-run) et
- * c'est ce dernier qui appellera la mutation après confirmation.
+ * Active une saison : passe `status` à `active` et pose `generatedAt`.
  *
- * Pour l'instant on simule une mutation en mémoire et on renvoie le row
- * mis à jour pour permettre une update optimiste côté store.
+ * Les bookings ne sont **PAS** générés automatiquement à l'activation — ils
+ * sont ajoutés manuellement via le wizard de création (`/bookings`) une fois
+ * la saison active. L'option "Jusqu'à la fin de la saison" du wizard
+ * (`BookingFormDialog`) s'appuie justement sur la `endDate` de la saison
+ * active pour ancrer la fin des séries.
  *
- * TODO(firestore): remplacer par un appel à `callable('activateSeason', { seasonId })`
- * (la Function se charge d'updater /seasons/{id} et de générer les bookings).
+ * `generatedAt` reste posé à l'activation comme repère "saison ouverte aux
+ * bookings depuis cette date" (utile pour l'audit / les statistiques).
  */
 export async function activateSeason(seasonId: string): Promise<SeasonRow | null> {
-  // TODO(firestore): replace by callable Function `activateSeason`.
-  const seed = SEEDS.find((s) => s.id === seasonId)
-  if (!seed) return delay(null)
-  seed.status = 'active'
-  seed.generatedAt = new Date()
-  return delay(seedToRow(seed))
+  const ref = doc(db, SEASONS, seasonId)
+  await updateDoc(ref, {
+    status: 'active',
+    generatedAt: FirestoreTimestamp.now(),
+  })
+  return getSeasonById(seasonId)
 }
 
-/**
- * Archive une saison en passant `active` → `archived`. Geste réversible côté
- * UI mais le doc Firestore reste éditable (les bookings ne sont pas
- * supprimés).
- *
- * TODO(firestore): remplacer par `updateDoc('/seasons/{id}', { status: 'archived' })`.
- */
+/** Archive une saison : `status` → `archived`. Reversible côté UI uniquement
+ *  pour cas exceptionnels (pas d'undo automatique). */
 export async function archiveSeason(seasonId: string): Promise<SeasonRow | null> {
-  // TODO(firestore): replace with updateDoc on /seasons/{id}.
-  const seed = SEEDS.find((s) => s.id === seasonId)
-  if (!seed) return delay(null)
-  seed.status = 'archived'
-  return delay(seedToRow(seed))
+  await updateDoc(doc(db, SEASONS, seasonId), { status: 'archived' })
+  return getSeasonById(seasonId)
 }
 
 /**
- * Duplique une saison (typiquement la dernière `active`) en `draft`. Reprend
- * `activeVenueIds`, `closurePeriodIds` et incrémente le nom (ex. "Saison
- * 2025-26" → "Saison 2026-27"). Ne copie pas les bookings (ils seront
- * générés à l'activation).
+ * Duplique une saison en `draft`. Reprend `activeVenueIds` + `closurePeriodIds`
+ * et incrémente le nom d'un an (ex. "Saison 2025-26" → "Saison 2026-27").
  *
- * TODO(firestore): remplacer par un callable `duplicateSeason({ seasonId,
- * newName, newStartDate, newEndDate })` qui crée le doc et renvoie son id.
+ * Ne propage PAS les équipes : `/teams.activeSeasonIds` doit être édité
+ * séparément (ou via le wizard SeasonNewWizard sur la saison dupliquée).
+ *
+ * Les bookings ne sont jamais copiés — ils seront générés à l'activation.
  */
 export async function duplicateSeason(seasonId: string): Promise<SeasonRow | null> {
-  // TODO(firestore): replace by callable Function `duplicateSeason`.
-  const seed = SEEDS.find((s) => s.id === seasonId)
-  if (!seed) return delay(null)
-  const nextStartYear = seed.startDate.getFullYear() + 1
-  const newSeed: MockSeasonSeed = {
-    id: `mock-season-dup-${Date.now()}`,
+  const src = await getDoc(doc(db, SEASONS, seasonId))
+  if (!src.exists()) return null
+  const source = snapToSeason(src)
+  const nextStartYear =
+    new Date(source.startDate.seconds * 1000).getFullYear() + 1
+  // Garde la même longueur de saison que la source (delta seconds), ancrée
+  // au 1er sept de l'année suivante.
+  const newStart = new Date(nextStartYear, 8, 1, 0, 0, 0, 0)
+  const newEnd = new Date(nextStartYear + 1, 5, 30, 23, 59, 0, 0)
+  const ref = await addDoc(collection(db, SEASONS), {
     name: `Saison ${nextStartYear}-${(nextStartYear + 1) % 100}`,
-    startDate: septFirst(nextStartYear),
-    endDate: juneLast(nextStartYear + 1),
+    startDate: dateToTs(newStart),
+    endDate: dateToTs(newEnd),
     status: 'draft',
-    activeVenueIds: [...seed.activeVenueIds],
-    closurePeriodIds: [...seed.closurePeriodIds],
+    activeVenueIds: [...source.activeVenueIds],
+    closurePeriodIds: [...source.closurePeriodIds],
     generatedAt: null,
-    teamsCount: 0,
-    bookingsCount: 0,
-    venueLabels: [...seed.venueLabels],
-  }
-  SEEDS.push(newSeed)
-  return delay(seedToRow(newSeed))
+  } satisfies DocumentData)
+  return getSeasonById(ref.id)
 }
 
 // ---------------------------------------------------------------------------
-// Dry-run preview (B2)
+// Create — wizard "Nouvelle saison" (B3)
 // ---------------------------------------------------------------------------
 
-/**
- * Slot type d'un booking — aligné sur le futur schéma `/bookings.slotType` (cf.
- * docs/firebase.md "Booking lifecycle"). Pour le mock on s'en tient aux 3
- * valeurs principales visibles dans le design.
- */
-export type DryRunSlotType = 'training' | 'match-home' | 'match-away'
-
-/**
- * Booking unitaire dans la preview du dry-run (~20 premières lignes générées).
- * À terme : ce shape sortira du callable `previewSeasonActivation` sous forme
- * d'array tronqué côté serveur (pagination cliente sur demande).
- */
-export interface DryRunBookingPreview {
-  /** Id mock — Firestore générera un vrai id à la confirmation. */
-  id: string
-  /** Date du booking (jour ouvré) en `Timestamp`. */
-  date: Timestamp
-  /** Plage horaire affichée "HH:MM → HH:MM". */
-  timeSlot: string
-  /** Libellé court "Forêt · Court A". */
-  court: string
-  /** Libellé équipe ("U16M", "Seniors 1 M"…). */
-  team: string
-  /** Type de slot — drive la couleur du Pill côté UI. */
-  slotType: DryRunSlotType
-}
-
-/**
- * Résultat agrégé du dry-run d'activation (B2).
- *
- * Structure pensée pour matcher le callable serveur :
- *   `previewSeasonActivation({ seasonId }) → DryRunResult`
- * — le callable compile la liste complète des bookings à générer en RAM,
- * renvoie les counts + la fenêtre de preview (top 20), et stocke le résultat
- * complet sous `/seasons/{id}/_dryRun/{runId}` pour permettre la confirmation
- * sans recomputation. Côté UI, la page Activer affiche les counts + la
- * preview et un CTA "Confirmer" → callable `activateSeason({ seasonId, runId })`.
- */
-export interface DryRunResult {
-  seasonId: string
-  /** Nombre total de bookings qui seront créés à la confirmation. */
-  bookingsCount: number
-  /** Nombre d'équipes couvertes (au moins un booking généré). */
-  teamsCount: number
-  /** Nombre de venues impliqués (`activeVenueIds` réellement utilisés). */
-  venuesCount: number
-  /** Nombre de slots en conflit détectés (>1 booking sur même court+heure). */
-  conflictsCount: number
-  /** Nombre de jours/sessions exclus par les closure periods. */
-  closuresCount: number
-  /**
-   * Tronqué à ~20 lignes pour le rendu DataTable de la preview. La query
-   * côté serveur renverra un sous-ensemble représentatif (chronologique).
-   */
-  preview: DryRunBookingPreview[]
-}
-
-/**
- * Quelques équipes/courts canons réutilisés par le mock — alignés sur le
- * design (Forêt / Vergers / Beaulieu, U14F / U16M / U20F / Seniors 1 M / 2 F).
- */
-interface MockBookingTemplate {
-  team: string
-  court: string
-  slotType: DryRunSlotType
-  /** Jour de la semaine (0 = dimanche, 1 = lundi, …). */
-  weekday: number
-  /** Heure de début "HH:MM". */
-  start: string
-  /** Heure de fin "HH:MM". */
-  end: string
-}
-
-const PREVIEW_TEMPLATES: readonly MockBookingTemplate[] = [
-  { team: 'U14F', court: 'Forêt · Court A', slotType: 'training', weekday: 1, start: '17:00', end: '18:30' },
-  { team: 'U14F', court: 'Forêt · Court A', slotType: 'training', weekday: 3, start: '17:00', end: '18:30' },
-  { team: 'U16M', court: 'Forêt · Court B', slotType: 'training', weekday: 2, start: '18:30', end: '20:00' },
-  { team: 'U16M', court: 'Forêt · Court B', slotType: 'training', weekday: 4, start: '18:30', end: '20:00' },
-  { team: 'U20F', court: 'Vergers · Court A', slotType: 'training', weekday: 2, start: '17:30', end: '19:00' },
-  { team: 'U20F', court: 'Vergers · Court A', slotType: 'training', weekday: 4, start: '17:30', end: '19:00' },
-  { team: 'Seniors 1 M', court: 'Beaulieu · Court A', slotType: 'training', weekday: 1, start: '20:00', end: '22:00' },
-  { team: 'Seniors 1 M', court: 'Beaulieu · Court A', slotType: 'training', weekday: 3, start: '20:00', end: '22:00' },
-  { team: 'Seniors 2 F', court: 'Forêt · Court A', slotType: 'training', weekday: 5, start: '19:00', end: '21:00' },
-  { team: 'U16M', court: 'Forêt · Court A+B', slotType: 'match-home', weekday: 6, start: '14:00', end: '16:00' },
-  { team: 'U14F', court: 'Forêt · Court A', slotType: 'match-home', weekday: 6, start: '10:30', end: '12:00' },
-  { team: 'Seniors 1 M', court: 'Beaulieu · Court A', slotType: 'match-home', weekday: 6, start: '18:00', end: '20:00' },
-  { team: 'U20F', court: 'Vergers · Court A', slotType: 'match-home', weekday: 0, start: '11:00', end: '13:00' },
-  { team: 'Seniors 2 F', court: 'Extérieur', slotType: 'match-away', weekday: 6, start: '16:00', end: '18:00' },
-  { team: 'U16M', court: 'Extérieur', slotType: 'match-away', weekday: 0, start: '14:00', end: '16:00' },
-  { team: 'U14F', court: 'Forêt · Court A', slotType: 'training', weekday: 1, start: '17:00', end: '18:30' },
-  { team: 'U16M', court: 'Forêt · Court B', slotType: 'training', weekday: 2, start: '18:30', end: '20:00' },
-  { team: 'U20F', court: 'Vergers · Court A', slotType: 'training', weekday: 2, start: '17:30', end: '19:00' },
-  { team: 'Seniors 1 M', court: 'Beaulieu · Court A', slotType: 'training', weekday: 1, start: '20:00', end: '22:00' },
-  { team: 'U14F', court: 'Forêt · Court A', slotType: 'training', weekday: 3, start: '17:00', end: '18:30' },
-]
-
-/**
- * Trouve la prochaine date qui tombe sur `weekday` à partir d'une base. Permet
- * de générer une preview chronologique cohérente à partir du `startDate` de la
- * saison.
- */
-function dateForWeekday(base: Date, weekday: number, weekOffset: number): Date {
-  const result = new Date(base.getTime())
-  const baseDay = result.getDay()
-  const diff = (weekday - baseDay + 7) % 7
-  result.setDate(result.getDate() + diff + weekOffset * 7)
-  return result
-}
-
-/**
- * Génère la preview d'activation d'une saison (B2).
- *
- * Implémentation mock : on prend la `SeasonRow` correspondante et on dérive
- * des counts approximatifs depuis ses champs (`teamsCount`, `bookingsCount`,
- * `closurePeriodIds.length`). On hydrate ~20 bookings à partir de
- * `PREVIEW_TEMPLATES` en datant chacun à partir de `startDate`.
- *
- * TODO(firestore): replace with callable result.
- *   `httpsCallable('previewSeasonActivation')({ seasonId }) → DryRunResult`
- *   Le callable consomme :
- *     - `/seasons/{seasonId}` (dates, activeVenueIds, closurePeriodIds)
- *     - `/teams` where activeSeasonIds array-contains seasonId
- *     - `/venues/{venueId}/timeSlots` for each active venue
- *     - `/closurePeriods` for each closurePeriodId
- *   et compile la liste exhaustive de bookings à créer + conflits + exclusions.
- */
-export async function previewActivation(seasonId: string): Promise<DryRunResult | null> {
-  // TODO(firestore): replace with callable Function `previewSeasonActivation`.
-  const seed = SEEDS.find((s) => s.id === seasonId)
-  if (!seed) return delay(null)
-
-  // Counts : reprennent les valeurs déjà portées par le seed (cohérent avec la
-  // liste Seasons). bookingsCount pour un draft est 0, on simule donc une
-  // projection à partir de teamsCount × venuesCount × ~weeks.
-  const venuesCount = seed.activeVenueIds.length
-  const closuresCount = seed.closurePeriodIds.length
-
-  // Projection naïve : 30 semaines effectives * ~3 sessions par équipe + matchs.
-  const projectedBookings = seed.teamsCount === 0
-    ? 0
-    : Math.round(seed.teamsCount * (30 * 2.5 + 14))
-
-  // Preview : ~20 lignes datées chronologiquement depuis seed.startDate.
-  const previewLimit = Math.min(20, PREVIEW_TEMPLATES.length)
-  const preview: DryRunBookingPreview[] = []
-  for (let i = 0; i < previewLimit; i++) {
-    const tpl = PREVIEW_TEMPLATES[i]
-    if (!tpl) continue
-    const weekOffset = Math.floor(i / 7)
-    const date = dateForWeekday(seed.startDate, tpl.weekday, weekOffset)
-    preview.push({
-      id: `dry-run-${seasonId}-${i}`,
-      date: ts(date),
-      timeSlot: `${tpl.start} → ${tpl.end}`,
-      court: tpl.court,
-      team: tpl.team,
-      slotType: tpl.slotType,
-    })
-  }
-
-  const result: DryRunResult = {
-    seasonId,
-    bookingsCount: projectedBookings,
-    teamsCount: seed.teamsCount,
-    venuesCount,
-    // Pour v1, on annonce 0 conflit — la détection réelle se fait côté serveur.
-    conflictsCount: 0,
-    closuresCount,
-    preview,
-  }
-  return delay(result)
-}
-
-// ---------------------------------------------------------------------------
-// Création de saison (B3 — wizard)
-// ---------------------------------------------------------------------------
-
-/**
- * Payload du wizard 4-étapes (B3). On reste lisible et plat : `name` + dates
- * + sélection booléenne des `teamIds` participantes + sélection des
- * `venueIds` actifs. Le `closurePeriodIds` n'est pas couvert par le wizard
- * v1 (l'admin l'éditera ensuite via la page détail saison).
- */
 export interface CreateSeasonInput {
   name: string
   startDate: Date
   endDate: Date
   /**
-   * Ids d'équipes à inscrire dans la saison. Côté Firestore : update parallèle
-   * de `/teams/{id}.activeSeasonIds` (array union). Ici on stocke juste le
-   * count dans le row mocké.
+   * Ids d'équipes à inscrire dans la saison. Pour chacune, le repo fera un
+   * `updateDoc('/teams/{id}', { activeSeasonIds: arrayUnion(seasonId) })`
+   * dans un `writeBatch` atomique.
    */
   teamIds: string[]
-  /** Ids de venues à activer (= `activeVenueIds` du doc saison). */
+  /** Ids de venues activés (= `activeVenueIds` du doc saison). */
   venueIds: string[]
-  /** Libellés des venues sélectionnées — utilisés pour la colonne Venues. */
-  venueLabels: string[]
+  /**
+   * Libellés des venues sélectionnés — utilisés pour la colonne Venues côté
+   * UI sans nécessiter un nouveau read. Optionnel : le repo recalcule sinon.
+   */
+  venueLabels?: string[]
 }
 
 /**
- * Crée une nouvelle saison en `draft` (B3).
+ * Crée une nouvelle saison en `draft`.
  *
- * Implémentation mock : push d'un `MockSeasonSeed` dans le singleton SEEDS et
- * renvoi du `SeasonRow` correspondant pour permettre au store d'`upsert()`.
+ * Séquence :
+ *   1. `addDoc('/seasons')` avec `status: 'draft'`, `generatedAt: null`.
+ *   2. Pour chaque `teamId`, `updateDoc('/teams/{id}', { activeSeasonIds:
+ *      arrayUnion(seasonId) })` dans un `writeBatch` (atomique).
+ *   3. Relit le doc enrichi pour renvoyer un `SeasonRow`.
  *
- * TODO(firestore): remplacer par
- *   `addDoc('/seasons', { name, startDate: Timestamp, endDate: Timestamp,
- *                        status: 'draft', activeVenueIds, closurePeriodIds: [],
- *                        generatedAt: null })`
- *   + boucle `updateDoc('/teams/{id}', { activeSeasonIds: arrayUnion(seasonId) })`
- *   pour chaque teamId. Toute la séquence peut être consolidée dans un
- *   callable `createSeason` pour rester atomique côté serveur.
+ * Le batch fait jusqu'à 500 writes par défaut (limite Firestore) — largement
+ * suffisant pour des dizaines d'équipes en pratique.
+ *
+ * À terme : consolider en callable serveur `createSeason` pour atomicité
+ * cross-collection + validation des refs venues/teams. v1 : OK côté client
+ * car restreint aux admins par les rules.
  */
 export async function createSeason(input: CreateSeasonInput): Promise<SeasonRow> {
-  // TODO(firestore): replace by callable `createSeason` (atomic batch).
-  const id = `mock-season-new-${Date.now()}`
-  const newSeed: MockSeasonSeed = {
-    id,
+  const seasonRef = await addDoc(collection(db, SEASONS), {
     name: input.name,
-    startDate: input.startDate,
-    endDate: input.endDate,
+    startDate: dateToTs(input.startDate),
+    endDate: dateToTs(input.endDate),
     status: 'draft',
     activeVenueIds: [...input.venueIds],
     closurePeriodIds: [],
     generatedAt: null,
-    teamsCount: input.teamIds.length,
-    bookingsCount: 0,
-    venueLabels: [...input.venueLabels],
+  } satisfies DocumentData)
+
+  if (input.teamIds.length > 0) {
+    const batch = writeBatch(db)
+    for (const teamId of input.teamIds) {
+      batch.update(doc(db, TEAMS, teamId), {
+        activeSeasonIds: arrayUnion(seasonRef.id),
+      })
+    }
+    await batch.commit()
   }
-  SEEDS.push(newSeed)
-  return delay(seedToRow(newSeed))
+
+  const created = await getSeasonById(seasonRef.id)
+  if (!created) {
+    throw new Error(
+      `Failed to read season ${seasonRef.id} just after creation`,
+    )
+  }
+  return created
 }
+

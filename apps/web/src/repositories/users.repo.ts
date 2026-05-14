@@ -8,10 +8,34 @@ import {
   type Unsubscribe,
   type UserCredential,
 } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
+import {
+  collection,
+  doc,
+  endAt,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  startAt,
+} from 'firebase/firestore'
 import type { User, UserData } from '@club-app/shared-types'
 import { auth, db } from '@/services/firebase'
 import { acceptInvitation } from '@/services/cloudFunctions'
+
+const USERS = 'users'
+
+/**
+ * Projection minimaliste d'un /users/{uid} suffisante pour les pickers et
+ * jointures simples (ex. dialog "Manage Guardians"). Évite de transporter
+ * `roles`, `teamIds`, `memberId`, etc. quand on n'en a pas besoin.
+ */
+export interface UserMini {
+  uid: string
+  email: string
+  displayName: string
+  photoURL: string
+}
 
 /**
  * Levée quand un compte Firebase Auth valide signe in mais n'a pas de
@@ -59,9 +83,63 @@ export function subscribeAuthState(
 }
 
 export async function getUserDoc(uid: string): Promise<User | null> {
-  const snap = await getDoc(doc(db, 'users', uid))
+  const snap = await getDoc(doc(db, USERS, uid))
   if (!snap.exists()) return null
   return { id: snap.id, ...(snap.data() as UserData) }
+}
+
+/**
+ * Projection légère de /users/{uid} → `UserMini`. Retourne `null` si le doc
+ * n'existe pas (orphan ou uid invalide). Les erreurs Firebase remontent
+ * (pas de dégradation silencieuse ici : si le caller a besoin de l'identité
+ * d'un user, l'absence est différente d'une erreur réseau).
+ */
+export async function getUserMini(uid: string): Promise<UserMini | null> {
+  const snap = await getDoc(doc(db, USERS, uid))
+  if (!snap.exists()) return null
+  const data = snap.data() as Partial<UserData>
+  return {
+    uid: snap.id,
+    email: data.email ?? '',
+    displayName: data.displayName ?? '',
+    photoURL: data.photoURL ?? '',
+  }
+}
+
+/**
+ * Recherche start-with sur le champ `email` de `/users`. Utilisé par les
+ * pickers (ex. "Manage Guardians" → choisir un user par email). Retourne
+ * au plus 10 résultats triés alphabétiquement.
+ *
+ * Implémentation Firestore : `orderBy('email')` + `startAt(q)` + `endAt(q + '')`.
+ * Le caractère `` est la borne haute Unicode classique pour les
+ * range queries lexico.
+ *
+ * `query` vide → liste les 10 premiers users (utile pour amorcer une UI
+ * de picker sans saisie).
+ */
+export async function searchUsersByEmail(searchQuery: string): Promise<UserMini[]> {
+  const needle = searchQuery.trim().toLowerCase()
+  const base = query(collection(db, USERS), orderBy('email'), limit(10))
+  const q = needle.length === 0
+    ? base
+    : query(
+        collection(db, USERS),
+        orderBy('email'),
+        startAt(needle),
+        endAt(`${needle}`),
+        limit(10),
+      )
+  const snap = await getDocs(q)
+  return snap.docs.map((d) => {
+    const data = d.data() as Partial<UserData>
+    return {
+      uid: d.id,
+      email: data.email ?? '',
+      displayName: data.displayName ?? '',
+      photoURL: data.photoURL ?? '',
+    }
+  })
 }
 
 export function signInWithEmail(email: string, password: string): Promise<void> {

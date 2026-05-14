@@ -64,14 +64,48 @@ Functions à version `N+1` doivent gérer le schéma `N` jusqu'à fin de migrati
 
 ## Avant de deploy
 
-**Toujours repacker `shared-types` en tarball** (le buildpack Cloud Functions ne sait pas résoudre les workspace symlinks) :
+1. **Toujours `npm run build -w @club-app/functions` localement avant `firebase deploy`.** Le CLI Firebase recompile **toute** la lib functions avec `tsc` avant de pousser, même quand on cible `--only functions:onlyOne`. Une erreur TS dans une function hors-scope bloque le déploiement complet. Build local d'abord = catch des erreurs latentes (mémoire : `[[deploy-functions-monorepo-fix]]`).
+
+2. **Repacker `shared-types` en tarball** (le buildpack Cloud Functions ne sait pas résoudre les workspace symlinks) :
+
+   ```bash
+   cd packages/shared-types && npm pack --pack-destination ../../functions/
+   cd - && firebase deploy --only functions:<functionName> -P dev
+   ```
+
+   Cf. `docs/deployment.md` section "Cloud Functions deploy — gotchas" pour le détail (Blaze obligatoire, IAM cloudbuild SA, tarball, cleanup policy).
+
+3. **Cleanup tarball après deploy.** Penser à supprimer le `.tgz` du dossier `functions/` une fois le deploy passé, ou l'exclure via `.gitignore` (vérifier l'état actuel : `ls functions/*.tgz` puis `cat functions/.gitignore` si présent — ajouter `*.tgz` si manque). Évite de polluer les commits / les builds futurs avec un tarball stale.
+
+## Après deploy — binding IAM `allUsers/run.invoker` obligatoire (Functions v2)
+
+`firebase deploy --only functions:<newFunc>` ne pose **pas** par défaut le binding Cloud Run `allUsers → roles/run.invoker` sur les nouvelles services. Conséquence : la callable rejette toutes les requêtes Firebase Auth (Cloud Run vérifie d'abord l'auth IAM avant que le code de la function ne voie le token Firebase), et le SDK client remonte l'erreur générique `internal`. Cf. `docs/deployment.md` section "Cloud Functions deploy — gotchas" §5 pour le diagnostic complet (mémoire : `[[deploy-functions-v2-invoker-binding]]`).
+
+**Fix immédiat** (à appliquer après tout deploy de nouvelle function v2) :
 
 ```bash
-cd packages/shared-types && npm pack --pack-destination ../../functions/
-cd - && firebase deploy --only functions:<functionName> -P dev
+gcloud run services add-iam-policy-binding <fn-name-lowercase> \
+  --region=europe-west6 \
+  --member="allUsers" \
+  --role="roles/run.invoker" \
+  --project=<projectId>
 ```
 
-Cf. `docs/deployment.md` section "Cloud Functions deploy — gotchas" pour le détail (Blaze obligatoire, IAM cloudbuild SA, tarball, cleanup policy).
+⚠ Le nom du service Cloud Run est l'export Function name **en lowercase** (ex. `matchExistingMember` → `matchexistingmember`).
+
+**Diagnostic** si une callable nouvellement déployée rejette en `internal` sans logs Function :
+
+```bash
+# 1. Vérifier la policy IAM
+gcloud run services get-iam-policy <fn-name-lowercase> --region=europe-west6 --project=<projectId>
+# (cherche un binding allUsers / roles/run.invoker — sinon c'est le bug)
+
+# 2. Lire les logs Cloud Run (la commande `firebase functions:log` est cassée sur certains projets)
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="<lowercase-name>"' \
+  --project=<projectId> --limit=10
+```
+
+Symptôme typique dans les logs : `WARNING: The request was not authenticated. Empty Authorization header value.`
 
 ## Bootstrap du premier rootAdmin
 
@@ -110,3 +144,12 @@ Le script vit volontairement dans `functions/scripts/` (hors `src/`) pour rester
 - Hardcoder un `projectId` (toujours via env / context).
 - Écrire dans `_meta/schema` depuis une Function autre que `runMigrations`.
 - Supprimer une migration une fois mergée (forward-only).
+
+## `markDuePaid` — garde "montant partiel = comité only" (2026-05-15)
+
+La callable accepte deux niveaux de permission :
+
+1. **Auth de base** (`assertAdminOrTreasurer`) — rôle `admin` OU `treasurer` requis, sinon `permission-denied`. C'est la garde "qui peut marquer payé".
+2. **Garde "montant partiel"** (`assertCanRecordPartial`) — déclenchée **dans la transaction** après lecture de `due.amount`, si `paidAmount < due.amount`. Exige le claim `rootAdmin` OU le rôle `treasurer`. Un admin standard avec `paidAmount` plein passe → un admin standard avec `paidAmount` partiel se prend `permission-denied`. C'est la "capability comité" pour les arrangements in extremis.
+
+Quand tu ajoutes une nouvelle callable de paiement (ou que tu touches `markDuePaid`), garde cette séparation : auth de base + garde additionnelle pour les actions "exceptionnelles" qui ne sont pas dans le périmètre admin standard. Tests existants dans `markDuePaid.test.ts` (suite *"partial amount (comité only)"*) — extends si tu ajoutes des règles similaires.

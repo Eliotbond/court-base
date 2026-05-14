@@ -1,19 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
+  Ban,
   CalendarDays,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   History,
   Link2,
-  Locate,
   MapPin,
+  Pencil,
+  Plus,
+  Trash2,
   TriangleAlert,
 } from 'lucide-vue-next'
 import Button from 'primevue/button'
 import Drawer from 'primevue/drawer'
 import Select from 'primevue/select'
+import Tabs from 'primevue/tabs'
+import TabList from 'primevue/tablist'
+import Tab from 'primevue/tab'
+import TabPanels from 'primevue/tabpanels'
+import TabPanel from 'primevue/tabpanel'
+import VueCal, { type VueCalEvent, type VueCalSplit } from 'vue-cal'
+import 'vue-cal/dist/vuecal.css'
 import { useBookingsStore } from '@/stores/bookings'
 import type { BookingRow } from '@/repositories/bookings.repo'
 import type {
@@ -22,222 +30,288 @@ import type {
   SlotType,
 } from '@club-app/shared-types'
 import Pill from '@/components/ui/Pill.vue'
-import SlotCell from '@/components/ui/SlotCell.vue'
+import BookingEditScopeDialog from '@/components/bookings/BookingEditScopeDialog.vue'
+import BookingEditFormDialog from '@/components/bookings/BookingEditFormDialog.vue'
+import BookingFormDialog from '@/components/bookings/BookingFormDialog.vue'
+import BookingListPanel from '@/components/bookings/BookingListPanel.vue'
 
 const store = useBookingsStore()
 
+// ---------------------------------------------------------------------------
+// Onglets : planning (vue calendrier vue-cal) + list (toutes les réservations).
+// ---------------------------------------------------------------------------
+
+const activeTab = ref<'planning' | 'list'>('planning')
+
 onMounted(async () => {
+  // `loadActiveContext` charge saison + venues + tous les bookings/séries
+  // de la saison en une seule passe. vue-cal consomme ensuite la même source.
   await store.loadActiveContext()
-  if (store.activeSeasonId) {
-    await store.loadWeek(store.currentWeekStart)
-  }
 })
 
 // ---------------------------------------------------------------------------
-// Time slot rows — 06:00..22:00 par tranches de 30 min.
-//
-// La grille affiche un slot par 30 min ; une cellule de booking peut
-// occuper plusieurs lignes consécutives (rowSpan = durée / 30) — calculé
-// par `cellFor`. On indexe les bookings par `courtId` + `"HH:MM-HH:MM"`
-// dans le store.
+// vue-cal — configuration
 // ---------------------------------------------------------------------------
 
-const SLOT_STEP_MINUTES = 30
-const SLOT_START_HOUR = 6
-const SLOT_END_HOUR = 22
-
-interface TimeRow {
-  /** "HH:MM" début. */
-  start: string
-  /** Minutes depuis 00:00. */
-  startMinutes: number
+/** Lundi 00:00 local de la semaine contenant `from` — pour l'init du picker. */
+function startOfWeek(from: Date): Date {
+  const d = new Date(from)
+  const day = d.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  d.setDate(d.getDate() + diff)
+  d.setHours(0, 0, 0, 0)
+  return d
 }
 
-const timeRows = computed<TimeRow[]>(() => {
-  const rows: TimeRow[] = []
-  for (let h = SLOT_START_HOUR; h < SLOT_END_HOUR; h += 1) {
-    for (let m = 0; m < 60; m += SLOT_STEP_MINUTES) {
-      const start = `${pad2(h)}:${pad2(m)}`
-      rows.push({ start, startMinutes: h * 60 + m })
+const selectedDate = ref<Date>(new Date())
+const activeView = ref<'day' | 'week' | 'month'>('day')
+
+/** Heure d'ouverture du planning — 06:00 → 22:00, pas de 30 min. */
+const TIME_FROM = 6 * 60
+const TIME_TO = 22 * 60
+const TIME_STEP = 30
+const TIME_CELL_HEIGHT = 36
+
+// ---------------------------------------------------------------------------
+// Splits — un split par court (uniquement quand on est en mode "day").
+//
+// Le composite key venueId__courtId permet de dérouler tous les courts de tous
+// les venues (filtrés) en colonnes. Les évènements portent le même composite
+// dans leur `split` pour s'aligner sur la bonne colonne.
+// ---------------------------------------------------------------------------
+
+interface CourtSplit extends VueCalSplit {
+  id: string
+  label: string
+  venueId: string
+  courtId: string
+}
+
+const courtSplits = computed<CourtSplit[]>(() => {
+  const out: CourtSplit[] = []
+  const multiVenue = store.filteredVenues.length > 1
+  for (const v of store.filteredVenues) {
+    for (const c of v.courts) {
+      out.push({
+        id: `${v.id}__${c.id}`,
+        label: multiVenue ? `${v.name} · ${c.name}` : c.name,
+        venueId: v.id,
+        courtId: c.id,
+      })
     }
   }
-  return rows
+  return out
 })
+
+// ---------------------------------------------------------------------------
+// Events — map booking → VueCalEvent.
+//
+// `start` / `end` au format `YYYY-MM-DD HH:MM` (heure locale machine,
+// cohérent avec la convention du repo : `Timestamp.fromDate(startOfLocalDay)`).
+// On porte `bookingId` en plus pour permettre le lookup au clic.
+// ---------------------------------------------------------------------------
+
+interface BookingEvent extends VueCalEvent {
+  bookingId: string
+  split: string
+  class: string
+  start: string
+  end: string
+  title: string
+}
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n)
 }
 
-function timeToMinutes(hhmm: string): number {
-  const parts = hhmm.split(':')
-  if (parts.length !== 2) return 0
-  const h = Number(parts[0])
-  const m = Number(parts[1])
-  if (Number.isNaN(h) || Number.isNaN(m)) return 0
-  return h * 60 + m
-}
-
-// ---------------------------------------------------------------------------
-// Day grouping — colonnes du grid : (court, dayOfWeek).
-//
-// Le mockup montre une vue hebdomadaire ; chaque court est subdivisé en 7
-// jours. Pour la lisibilité MVP, on garde un layout simplifié : une seule
-// "journée par court" affichée à la fois, sélectionnée via le picker de
-// jour. Évite un grid à 50+ colonnes sur écran 1280px.
-// ---------------------------------------------------------------------------
-
-interface DayTab {
-  /** 0 = lundi, …, 6 = dimanche (offset depuis `currentWeekStart`). */
-  offset: number
-  /** Libellé court "Lun 12". */
-  label: string
-  /** Date 00:00 local du jour. */
-  date: Date
-}
-
-const dayTabs = computed<DayTab[]>(() => {
-  const tabs: DayTab[] = []
-  const dayFormatter = new Intl.DateTimeFormat('fr-CH', {
-    weekday: 'short',
-    day: '2-digit',
-  })
-  for (let i = 0; i < 7; i += 1) {
-    const date = new Date(store.currentWeekStart)
-    date.setDate(date.getDate() + i)
-    const raw = dayFormatter.format(date)
-    const pretty = raw.charAt(0).toUpperCase() + raw.slice(1)
-    tabs.push({ offset: i, label: pretty, date })
-  }
-  return tabs
-})
-
-const selectedDayOffset = ref<number>(currentDayOffsetFromMonday())
-
-function currentDayOffsetFromMonday(): number {
-  const today = new Date()
-  const day = today.getDay() // 0 = dimanche
-  return day === 0 ? 6 : day - 1
-}
-
-function selectDay(offset: number): void {
-  selectedDayOffset.value = offset
-}
-
-const selectedDate = computed<Date>(() => {
-  const d = new Date(store.currentWeekStart)
-  d.setDate(d.getDate() + selectedDayOffset.value)
-  return d
-})
-
-/** Bookings du jour sélectionné (filtrés par venue si filtre actif). */
-const dayBookings = computed<BookingRow[]>(() => {
-  const target = selectedDate.value
-  const targetTs = startOfDay(target).getTime()
-  const targetTsEnd = endOfDay(target).getTime()
-  const venueId = store.venueFilter
-  return store.bookings.filter((b) => {
-    const t = bookingDateMillis(b)
-    if (t < targetTs || t > targetTsEnd) return false
-    if (venueId && b.venueId !== venueId) return false
-    return true
-  })
-})
-
 function bookingDateMillis(b: BookingRow): number {
-  // Le Timestamp de shared-types est neutre ({seconds, nanoseconds}) mais
-  // Firestore renvoie un vrai Timestamp avec `.toDate()`. On utilise la
-  // valeur `seconds` qui existe sur les deux représentations.
-  // any: le type neutre exporté par shared-types n'exposant pas `toDate`,
-  // on lit `seconds` directement (présent sur le Timestamp Firestore SDK aussi).
+  // any: le Timestamp neutre de shared-types n'expose pas `.toDate()` ; on
+  // lit `seconds` qui existe sur les deux représentations.
   const ts = b.date as unknown as { seconds: number; toDate?: () => Date }
   if (typeof ts.toDate === 'function') return ts.toDate().getTime()
   return ts.seconds * 1000
 }
 
-function startOfDay(d: Date): Date {
-  const x = new Date(d)
-  x.setHours(0, 0, 0, 0)
-  return x
-}
-
-function endOfDay(d: Date): Date {
-  const x = new Date(d)
-  x.setHours(23, 59, 59, 999)
-  return x
-}
-
-// ---------------------------------------------------------------------------
-// Per-(court, time-row) lookup — pour chaque (court, time-row) on demande
-// si un booking commence à ce slot. La cellule porte alors `rowSpan` =
-// durée / 30 min. Les rangées suivantes sont marquées "occupées" pour ne
-// pas re-rendre une cellule vide par-dessus.
-// ---------------------------------------------------------------------------
-
-interface CellInfo {
-  booking: BookingRow | null
-  /** Nombre de rangées que la cellule occupe (1 si vide ou < 30 min). */
-  rowSpan: number
-  /** Si `true`, la cellule est couverte par une cellule au-dessus → ne pas afficher. */
-  covered: boolean
+function formatLocalDateKey(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 }
 
 /**
- * Renvoie un tableau [court][rowIndex] → CellInfo, précalculé pour éviter
- * un recompute par cellule pendant le rendu.
+ * Classe CSS de l'évènement — combine `slotType` + modifiers d'état
+ * (`cancelled`, `freed`, `pending` quand match_home sans matchTypeId).
+ * Mappé sur les variants tailwind définis dans le `<style scoped>`.
  */
-const cellMatrix = computed<Map<string, CellInfo[]>>(() => {
-  const matrix = new Map<string, CellInfo[]>()
-  const rows = timeRows.value
-  for (const venue of store.filteredVenues) {
-    for (const court of venue.courts) {
-      const courtCells: CellInfo[] = rows.map(() => ({
-        booking: null,
-        rowSpan: 1,
-        covered: false,
-      }))
-      // Sélectionne les bookings du court pour le jour affiché.
-      const courtBookings = dayBookings.value.filter((b) => b.courtId === court.id)
-      for (const b of courtBookings) {
-        const startMin = timeToMinutes(b.startTime)
-        const endMin = timeToMinutes(b.endTime)
-        const rowIdx = rows.findIndex((r) => r.startMinutes === startMin)
-        if (rowIdx < 0) continue
-        const span = Math.max(1, Math.round((endMin - startMin) / SLOT_STEP_MINUTES))
-        courtCells[rowIdx] = { booking: b, rowSpan: span, covered: false }
-        for (let i = 1; i < span && rowIdx + i < courtCells.length; i += 1) {
-          courtCells[rowIdx + i] = { booking: null, rowSpan: 1, covered: true }
-        }
-      }
-      matrix.set(court.id, courtCells)
-    }
+function eventClass(b: BookingRow): string {
+  const tokens: string[] = ['vc-booking']
+  if (b.status === 'cancelled') tokens.push('vc-cancelled')
+  if (b.status === 'freed') tokens.push('vc-freed')
+  else if (b.slotType === 'match_home' && b.matchTypeId === null) {
+    tokens.push('vc-match-pending')
+  } else {
+    tokens.push(`vc-${b.slotType.replace('_', '-')}`)
   }
-  return matrix
+  return tokens.join(' ')
+}
+
+/**
+ * Compose le titre d'un event :
+ *  - match_home + opponentName → "<teamName|Match> vs <opponentName>"
+ *  - match_away + opponentName → "À <opponentName>"
+ *  - fallback : teamName, sinon label du slotType.
+ */
+function eventTitle(b: BookingRow): string {
+  const opponent = b.opponentName?.trim()
+  if (b.slotType === 'match_home' && opponent) {
+    return `${b.teamName ?? 'Match'} vs ${opponent}`
+  }
+  if (b.slotType === 'match_away' && opponent) {
+    return `À ${opponent}`
+  }
+  return b.teamName ?? slotTypeLabel(b.slotType)
+}
+
+const calendarEvents = computed<BookingEvent[]>(() => {
+  const events: BookingEvent[] = []
+  for (const b of store.allBookings) {
+    const dateMs = bookingDateMillis(b)
+    const dateKey = formatLocalDateKey(new Date(dateMs))
+    events.push({
+      bookingId: b.id,
+      split: `${b.venueId}__${b.courtId}`,
+      class: eventClass(b),
+      start: `${dateKey} ${b.startTime}`,
+      end: `${dateKey} ${b.endTime}`,
+      title: eventTitle(b),
+    })
+  }
+  return events
 })
 
 // ---------------------------------------------------------------------------
-// Slot kind mapping — la cellule cancelled/freed est traitée à part par la
-// vue (overlay muted/struck), donc on map juste le `slotType` pour les
-// scheduled. `SlotCell` accepte 'training' | 'match_home' | 'match_away'
-// | 'reserve' | 'custom' | 'empty'.
+// Click handler — vue-cal émet l'event modifié (avec `_eid` interne) ; on
+// retrouve le booking par `bookingId` qu'on a porté nous-mêmes.
 // ---------------------------------------------------------------------------
 
-function cellKind(b: BookingRow | null): SlotType | 'empty' {
-  if (!b) return 'empty'
-  return b.slotType
+function onEventClick(payload: unknown): void {
+  // any: vue-cal renvoie un objet event dont la signature exacte change selon
+  // la version ; on lit `bookingId` à travers une cast étroit.
+  const evt = payload as { bookingId?: string } | null
+  if (!evt?.bookingId) return
+  selectedBookingId.value = evt.bookingId
 }
 
-function cancelReasonLabel(reason: BookingCancelReason | null): string {
-  if (!reason) return ''
-  const map: Record<BookingCancelReason, string> = {
-    closure: 'Fermeture',
-    holiday: 'Jour férié',
-    manual: 'Annulation manuelle',
-    match_home: 'Match home',
-    match_away: 'Match away',
-    coach_cancel: 'Annulé par coach',
+// ---------------------------------------------------------------------------
+// Navigation — boutons custom pour conserver l'identité visuelle (vue-cal a
+// son propre title bar qu'on cache via `:hide-title-bar="true"`).
+// ---------------------------------------------------------------------------
+
+const longDateFormatter = new Intl.DateTimeFormat('fr-CH', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+})
+
+const dateLabel = computed<string>(() => {
+  if (activeView.value === 'day') {
+    const raw = longDateFormatter.format(selectedDate.value)
+    return raw.charAt(0).toUpperCase() + raw.slice(1)
   }
-  return map[reason]
+  if (activeView.value === 'week') {
+    const start = startOfWeek(selectedDate.value)
+    const end = new Date(start)
+    end.setDate(end.getDate() + 6)
+    const fmt = new Intl.DateTimeFormat('fr-CH', { day: 'numeric', month: 'long' })
+    const yearFmt = new Intl.DateTimeFormat('fr-CH', { year: 'numeric' })
+    return `${fmt.format(start)} → ${fmt.format(end)} ${yearFmt.format(end)}`
+  }
+  // month
+  const fmt = new Intl.DateTimeFormat('fr-CH', { month: 'long', year: 'numeric' })
+  const raw = fmt.format(selectedDate.value)
+  return raw.charAt(0).toUpperCase() + raw.slice(1)
+})
+
+function shiftDate(deltaDays: number): void {
+  const next = new Date(selectedDate.value)
+  next.setDate(next.getDate() + deltaDays)
+  selectedDate.value = next
 }
+
+function goPrevious(): void {
+  if (activeView.value === 'day') shiftDate(-1)
+  else if (activeView.value === 'week') shiftDate(-7)
+  else {
+    const next = new Date(selectedDate.value)
+    next.setMonth(next.getMonth() - 1)
+    selectedDate.value = next
+  }
+}
+
+function goNext(): void {
+  if (activeView.value === 'day') shiftDate(1)
+  else if (activeView.value === 'week') shiftDate(7)
+  else {
+    const next = new Date(selectedDate.value)
+    next.setMonth(next.getMonth() + 1)
+    selectedDate.value = next
+  }
+}
+
+function goToday(): void {
+  selectedDate.value = new Date()
+}
+
+// ---------------------------------------------------------------------------
+// Venue filter — options du Select.
+// ---------------------------------------------------------------------------
+
+interface VenueOption {
+  id: string | null
+  label: string
+}
+
+const venueOptions = computed<VenueOption[]>(() => {
+  const all: VenueOption = { id: null, label: 'Tous les venues' }
+  const list = store.venues.map<VenueOption>((v) => ({ id: v.id, label: v.name }))
+  return [all, ...list]
+})
+
+// ---------------------------------------------------------------------------
+// View selector
+// ---------------------------------------------------------------------------
+
+interface ViewOption {
+  value: 'day' | 'week' | 'month'
+  label: string
+}
+const viewOptions: ReadonlyArray<ViewOption> = [
+  { value: 'day', label: 'Jour' },
+  { value: 'week', label: 'Semaine' },
+  { value: 'month', label: 'Mois' },
+]
+
+// ---------------------------------------------------------------------------
+// Drawer — sélection d'un booking.
+// ---------------------------------------------------------------------------
+
+const selectedBookingId = ref<string | null>(null)
+
+const drawerOpen = computed<boolean>({
+  get: () => selectedBookingId.value !== null,
+  set: (v: boolean) => {
+    if (!v) selectedBookingId.value = null
+  },
+})
+
+const selectedBooking = computed<BookingRow | null>(() => {
+  const id = selectedBookingId.value
+  if (!id) return null
+  return store.allBookings.find((b) => b.id === id) ?? null
+})
+
+// ---------------------------------------------------------------------------
+// Formatters — drawer.
+// ---------------------------------------------------------------------------
 
 function slotTypeLabel(t: SlotType): string {
   switch (t) {
@@ -253,6 +327,20 @@ function slotTypeLabel(t: SlotType): string {
     default:
       return 'Custom'
   }
+}
+
+function cancelReasonLabel(reason: BookingCancelReason | null): string {
+  if (!reason) return ''
+  const map: Record<BookingCancelReason, string> = {
+    closure: 'Fermeture',
+    holiday: 'Jour férié',
+    manual: 'Annulation manuelle',
+    series_edit: 'Modif. de série',
+    match_home: 'Match home',
+    match_away: 'Match away',
+    coach_cancel: 'Annulé par coach',
+  }
+  return map[reason]
 }
 
 function slotTypePillVariant(
@@ -273,55 +361,6 @@ function slotTypePillVariant(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Venue filter — options du Select.
-// ---------------------------------------------------------------------------
-
-interface VenueOption {
-  id: string | null
-  label: string
-}
-
-const venueOptions = computed<VenueOption[]>(() => {
-  const all: VenueOption = { id: null, label: 'Tous les venues' }
-  const list = store.venues.map<VenueOption>((v) => ({ id: v.id, label: v.name }))
-  return [all, ...list]
-})
-
-// ---------------------------------------------------------------------------
-// Drawer — sélection d'une cellule de booking.
-// ---------------------------------------------------------------------------
-
-const selectedBookingId = ref<string | null>(null)
-
-const drawerOpen = computed<boolean>({
-  get: () => selectedBookingId.value !== null,
-  set: (v: boolean) => {
-    if (!v) selectedBookingId.value = null
-  },
-})
-
-const selectedBooking = computed<BookingRow | null>(() => {
-  const id = selectedBookingId.value
-  if (!id) return null
-  return store.bookings.find((b) => b.id === id) ?? null
-})
-
-function openBooking(b: BookingRow): void {
-  selectedBookingId.value = b.id
-}
-
-// ---------------------------------------------------------------------------
-// Formatters — date drawer.
-// ---------------------------------------------------------------------------
-
-const longDateFormatter = new Intl.DateTimeFormat('fr-CH', {
-  weekday: 'long',
-  day: 'numeric',
-  month: 'long',
-  year: 'numeric',
-})
-
 function formatLongDate(b: BookingRow): string {
   const ms = bookingDateMillis(b)
   const raw = longDateFormatter.format(new Date(ms))
@@ -329,8 +368,8 @@ function formatLongDate(b: BookingRow): string {
 }
 
 function formatActionLogTime(entry: BookingActionLogEntry): string {
-  // any: même contrainte que `bookingDateMillis` — l'alias `Timestamp` du
-  // package shared-types n'expose pas `.toDate()` ; on lit `seconds`.
+  // any: comme `bookingDateMillis`, on lit `seconds` (le Timestamp neutre
+  // exporté par shared-types n'expose pas `.toDate()`).
   const ts = entry.at as unknown as { seconds: number; toDate?: () => Date }
   const d = typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts.seconds * 1000)
   const fmt = new Intl.DateTimeFormat('fr-CH', {
@@ -343,10 +382,6 @@ function formatActionLogTime(entry: BookingActionLogEntry): string {
   return fmt.format(d)
 }
 
-// ---------------------------------------------------------------------------
-// Status pill helper for drawer.
-// ---------------------------------------------------------------------------
-
 function statusPill(b: BookingRow): {
   variant: 'emerald' | 'rose' | 'slate'
   label: string
@@ -356,459 +391,593 @@ function statusPill(b: BookingRow): {
   return { variant: 'slate', label: 'Libéré' }
 }
 
-// Nombre total de colonnes de courts affichés (somme sur venues filtrés).
-const columnsCount = computed<number>(() => {
-  let n = 0
-  for (const v of store.filteredVenues) n += v.courts.length
-  return Math.max(n, 1)
+// ---------------------------------------------------------------------------
+// Création — dialog "+ Nouvelle réservation".
+// ---------------------------------------------------------------------------
+
+const showCreateDialog = ref<boolean>(false)
+
+function openCreateDialog(): void {
+  showCreateDialog.value = true
+}
+
+// ---------------------------------------------------------------------------
+// Edit / Cancel / Delete — workflow scope dialog → action ou edit form.
+// ---------------------------------------------------------------------------
+
+const showScopeDialog = ref<boolean>(false)
+const scopeIntent = ref<'edit' | 'cancel' | 'delete'>('edit')
+const showEditFormDialog = ref<boolean>(false)
+const editScope = ref<'occurrence' | 'future' | 'all'>('occurrence')
+
+const isSelectedBookingPast = computed<boolean>(() => {
+  if (!selectedBooking.value) return false
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return bookingDateMillis(selectedBooking.value) < today.getTime()
 })
+
+const isSelectedBookingSeries = computed<boolean>(() => {
+  return selectedBooking.value?.seriesId !== null && selectedBooking.value?.seriesId !== undefined
+})
+
+function openScopeDialog(intent: 'edit' | 'cancel' | 'delete'): void {
+  scopeIntent.value = intent
+  showScopeDialog.value = true
+}
+
+async function handleScopeConfirm(scope: 'occurrence' | 'future' | 'all'): Promise<void> {
+  const booking = selectedBooking.value
+  if (!booking) return
+  const intent = scopeIntent.value
+  if (intent === 'edit') {
+    editScope.value = scope
+    showEditFormDialog.value = true
+    return
+  }
+  if (intent === 'cancel') {
+    try {
+      await store.editBooking(booking.id, scope, {
+        status: 'cancelled',
+        cancelReason: 'manual',
+      })
+      selectedBookingId.value = null
+    } catch {
+      // store.error gère l'affichage.
+    }
+    return
+  }
+  try {
+    await store.deleteBooking(booking.id, scope)
+    selectedBookingId.value = null
+  } catch {
+    // idem
+  }
+}
+
+function handleEditSaved(): void {
+  selectedBookingId.value = null
+}
 </script>
 
 <template>
   <section class="p-6 space-y-4">
-    <!-- ================= Toolbar : week nav + venue filter =================== -->
-    <div class="flex items-center gap-3 flex-wrap">
-      <div class="flex items-center gap-1.5">
-        <Button
-          severity="secondary"
-          size="small"
-          outlined
-          aria-label="Semaine précédente"
-          @click="store.goToPreviousWeek"
-        >
-          <ChevronLeft
-            :size="14"
-            :stroke-width="2"
-          />
-        </Button>
-        <Button
-          severity="secondary"
-          size="small"
-          outlined
-          @click="store.goToToday"
-        >
-          <Locate
-            :size="14"
-            :stroke-width="2"
-          />
-          <span class="ml-1.5">Aujourd'hui</span>
-        </Button>
-        <Button
-          severity="secondary"
-          size="small"
-          outlined
-          aria-label="Semaine suivante"
-          @click="store.goToNextWeek"
-        >
-          <ChevronRight
-            :size="14"
-            :stroke-width="2"
-          />
-        </Button>
-      </div>
+    <Tabs v-model:value="activeTab">
+      <TabList>
+        <Tab value="planning">
+          Planning
+        </Tab>
+        <Tab value="list">
+          Toutes les réservations
+        </Tab>
+      </TabList>
+      <TabPanels>
+        <TabPanel value="planning">
+          <div class="space-y-4">
+            <!-- Toolbar : nav + view switch + venue filter + create -->
+            <div class="flex items-center gap-3 flex-wrap">
+              <div class="flex items-center gap-1.5">
+                <Button
+                  severity="secondary"
+                  size="small"
+                  outlined
+                  aria-label="Précédent"
+                  @click="goPrevious"
+                >
+                  &lt;
+                </Button>
+                <Button
+                  severity="secondary"
+                  size="small"
+                  outlined
+                  @click="goToday"
+                >
+                  Aujourd'hui
+                </Button>
+                <Button
+                  severity="secondary"
+                  size="small"
+                  outlined
+                  aria-label="Suivant"
+                  @click="goNext"
+                >
+                  &gt;
+                </Button>
+              </div>
 
-      <div class="flex items-center gap-2 text-[13px] text-surface-600">
-        <CalendarDays
-          :size="14"
-          :stroke-width="2"
-          class="text-surface-500"
-        />
-        <span class="font-medium text-surface-900">{{ store.weekLabel }}</span>
-      </div>
-
-      <div class="ml-auto flex items-center gap-2">
-        <MapPin
-          v-if="store.venues.length > 1"
-          :size="14"
-          :stroke-width="2"
-          class="text-surface-500"
-        />
-        <Select
-          v-if="store.venues.length > 1"
-          :model-value="store.venueFilter"
-          :options="venueOptions"
-          option-label="label"
-          option-value="id"
-          placeholder="Tous les venues"
-          size="small"
-          class="!min-w-44"
-          @update:model-value="store.setVenueFilter($event)"
-        />
-      </div>
-    </div>
-
-    <!-- ================= Day picker — tabs 7 jours =================== -->
-    <div
-      class="flex items-center gap-1.5 flex-wrap"
-      role="tablist"
-      aria-label="Jour de la semaine"
-    >
-      <button
-        v-for="tab in dayTabs"
-        :key="tab.offset"
-        type="button"
-        role="tab"
-        :aria-selected="selectedDayOffset === tab.offset"
-        class="px-3 h-8 rounded-md2 text-[12px] font-medium border transition-colors"
-        :class="
-          selectedDayOffset === tab.offset
-            ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
-            : 'bg-white border-surface-200 text-surface-700 hover:bg-surface-50'
-        "
-        @click="selectDay(tab.offset)"
-      >
-        {{ tab.label }}
-      </button>
-    </div>
-
-    <!-- ================= Empty state — pas de saison active =================== -->
-    <div
-      v-if="!store.loading && !store.activeSeasonId"
-      class="card p-10 text-center flex flex-col items-center gap-2"
-    >
-      <span
-        class="w-10 h-10 rounded-full bg-surface-100 inline-flex items-center justify-center text-surface-500"
-      >
-        <CalendarDays
-          :size="18"
-          :stroke-width="2"
-        />
-      </span>
-      <div class="text-[14px] font-semibold">
-        Aucune saison active
-      </div>
-      <div class="text-[12px] text-surface-500 max-w-md">
-        Activez une saison pour générer les bookings et les afficher dans le planning hebdomadaire.
-      </div>
-      <RouterLink
-        to="/seasons"
-        class="btn btn-primary btn-sm mt-2"
-      >
-        Aller aux saisons
-      </RouterLink>
-    </div>
-
-    <!-- ================= Empty state — saison active mais aucun venue =================== -->
-    <div
-      v-else-if="!store.loading && store.activeSeasonId && store.venues.length === 0"
-      class="card p-10 text-center flex flex-col items-center gap-2"
-    >
-      <span
-        class="w-10 h-10 rounded-full bg-surface-100 inline-flex items-center justify-center text-surface-500"
-      >
-        <MapPin
-          :size="18"
-          :stroke-width="2"
-        />
-      </span>
-      <div class="text-[14px] font-semibold">
-        Aucun venue configuré
-      </div>
-      <div class="text-[12px] text-surface-500 max-w-md">
-        Ajoutez au moins un venue avec des courts depuis les paramètres pour afficher le planning.
-      </div>
-    </div>
-
-    <!-- ================= Loading skeleton =================== -->
-    <div
-      v-else-if="store.loading && store.bookings.length === 0"
-      class="card p-4 overflow-hidden"
-      aria-busy="true"
-    >
-      <div class="grid grid-cols-[64px_repeat(4,minmax(140px,1fr))] gap-2">
-        <div
-          v-for="i in 60"
-          :key="`skel-${i}`"
-          class="h-9 bg-surface-100 animate-pulse rounded-md2"
-        />
-      </div>
-    </div>
-
-    <!-- ================= Grid =================== -->
-    <div
-      v-else
-      class="card overflow-auto"
-    >
-      <div
-        class="grid"
-        :style="{
-          gridTemplateColumns: `64px repeat(${columnsCount}, minmax(140px, 1fr))`,
-        }"
-      >
-        <!-- Header row : empty corner + (venue · court) labels -->
-        <div
-          class="sticky top-0 left-0 z-30 bg-surface-50 border-b border-r border-surface-200 h-12 flex items-center justify-center text-[11px] text-surface-500"
-        >
-          <Clock
-            :size="14"
-            :stroke-width="2"
-          />
-        </div>
-        <template
-          v-for="venue in store.filteredVenues"
-          :key="venue.id"
-        >
-          <div
-            v-for="court in venue.courts"
-            :key="`hdr-${venue.id}-${court.id}`"
-            class="sticky top-0 z-20 bg-surface-50 border-b border-surface-200 h-12 px-3 flex flex-col justify-center"
-          >
-            <div class="text-[10px] uppercase tracking-wide text-surface-400 truncate">
-              {{ venue.name }}
-            </div>
-            <div class="text-[12px] font-semibold truncate">
-              {{ court.name }}
-            </div>
-          </div>
-        </template>
-
-        <!-- Body rows : time label + cellules par court -->
-        <template
-          v-for="(row, rowIndex) in timeRows"
-          :key="`row-${row.start}`"
-        >
-          <!-- Sticky first column : libellé horaire -->
-          <div
-            class="sticky left-0 z-10 bg-white border-r border-surface-100 h-9 flex items-start justify-end pr-2 pt-0.5 text-[10px] font-mono text-surface-400"
-            :class="row.start.endsWith(':00') ? 'border-t border-surface-200' : ''"
-          >
-            <span v-if="row.start.endsWith(':00')">{{ row.start }}</span>
-          </div>
-
-          <!-- Cellules courts -->
-          <template
-            v-for="venue in store.filteredVenues"
-            :key="`body-${row.start}-${venue.id}`"
-          >
-            <div
-              v-for="court in venue.courts"
-              :key="`cell-${row.start}-${venue.id}-${court.id}`"
-              class="h-9 border-surface-100 p-0.5"
-              :class="[
-                row.start.endsWith(':00') ? 'border-t border-surface-200' : 'border-t border-dashed',
-                cellMatrix.get(court.id)?.[rowIndex]?.covered ? 'border-t-0' : '',
-              ]"
-              :style="{
-                gridRow: `span ${cellMatrix.get(court.id)?.[rowIndex]?.rowSpan ?? 1}`,
-              }"
-            >
-              <template v-if="!cellMatrix.get(court.id)?.[rowIndex]?.covered">
-                <div
-                  v-if="!cellMatrix.get(court.id)?.[rowIndex]?.booking"
-                  class="h-full w-full"
+              <div class="flex items-center gap-2 text-[13px] text-surface-600">
+                <CalendarDays
+                  :size="14"
+                  :stroke-width="2"
+                  class="text-surface-500"
                 />
-                <SlotCell
-                  v-else
-                  :kind="cellKind(cellMatrix.get(court.id)?.[rowIndex]?.booking ?? null)"
-                  class="h-full"
-                  :class="
-                    cellMatrix.get(court.id)?.[rowIndex]?.booking?.status === 'cancelled'
-                      ? 'opacity-50 line-through'
-                      : cellMatrix.get(court.id)?.[rowIndex]?.booking?.status === 'freed'
-                        ? 'opacity-70 italic'
-                        : ''
-                  "
-                  @click="
-                    openBooking(
-                      cellMatrix.get(court.id)?.[rowIndex]?.booking as BookingRow,
-                    )
-                  "
-                >
-                  <div class="flex flex-col gap-0.5">
-                    <div class="font-semibold truncate">
-                      {{
-                        cellMatrix.get(court.id)?.[rowIndex]?.booking?.teamName
-                          ?? slotTypeLabel(cellKind(cellMatrix.get(court.id)?.[rowIndex]?.booking ?? null) as SlotType)
-                      }}
-                    </div>
-                    <div class="num text-[10px] opacity-80">
-                      {{ cellMatrix.get(court.id)?.[rowIndex]?.booking?.startTime }}–{{ cellMatrix.get(court.id)?.[rowIndex]?.booking?.endTime }}
-                    </div>
-                  </div>
-                </SlotCell>
-              </template>
-            </div>
-          </template>
-        </template>
-      </div>
-    </div>
+                <span class="font-medium text-surface-900">{{ dateLabel }}</span>
+              </div>
 
-    <!-- ================= Error banner =================== -->
-    <div
-      v-if="store.error"
-      class="card border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700 flex items-center gap-2"
-    >
-      <TriangleAlert
-        :size="14"
-        :stroke-width="2"
-      />
-      {{ store.error }}
-    </div>
+              <Select
+                :model-value="activeView"
+                :options="[...viewOptions]"
+                option-label="label"
+                option-value="value"
+                size="small"
+                class="!min-w-32"
+                @update:model-value="(v: 'day' | 'week' | 'month') => (activeView = v)"
+              />
 
-    <!-- ================= Drawer : détail booking =================== -->
-    <Drawer
-      v-model:visible="drawerOpen"
-      position="right"
-      :show-close-icon="true"
-      :pt="{ root: { style: 'width: 480px; max-width: 100vw;' } }"
-      aria-label="Détail du booking"
-    >
-      <template #container="{ closeCallback }">
-        <div
-          v-if="selectedBooking"
-          class="flex flex-col h-full"
-        >
-          <!-- Header -->
-          <header class="flex items-start justify-between gap-3 px-5 py-4 border-b border-surface-200">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 flex-wrap mb-1">
-                <Pill :variant="slotTypePillVariant(selectedBooking.slotType)">
-                  {{ slotTypeLabel(selectedBooking.slotType) }}
-                </Pill>
-                <Pill :variant="statusPill(selectedBooking).variant">
-                  {{ statusPill(selectedBooking).label }}
-                </Pill>
-                <Pill
-                  v-if="selectedBooking.isCombinedCourtEvent"
-                  variant="amber"
+              <div class="ml-auto flex items-center gap-2">
+                <Button
+                  severity="primary"
+                  size="small"
+                  @click="openCreateDialog"
                 >
-                  <Link2
-                    :size="11"
+                  <Plus
+                    :size="14"
                     :stroke-width="2"
                   />
-                  Courts combinés
-                </Pill>
-              </div>
-              <div class="text-[15px] font-semibold truncate">
-                {{ selectedBooking.teamName ?? slotTypeLabel(selectedBooking.slotType) }}
-              </div>
-              <div class="text-[12px] text-surface-500">
-                {{ formatLongDate(selectedBooking) }}
+                  <span class="ml-1.5">Nouvelle réservation</span>
+                </Button>
+                <MapPin
+                  v-if="store.venues.length > 1"
+                  :size="14"
+                  :stroke-width="2"
+                  class="text-surface-500"
+                />
+                <Select
+                  v-if="store.venues.length > 1"
+                  :model-value="store.venueFilter"
+                  :options="venueOptions"
+                  option-label="label"
+                  option-value="id"
+                  placeholder="Tous les venues"
+                  size="small"
+                  class="!min-w-44"
+                  @update:model-value="store.setVenueFilter($event)"
+                />
               </div>
             </div>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm !px-1.5 text-surface-500"
-              aria-label="Fermer"
-              @click="closeCallback"
-            >
-              <span aria-hidden="true">×</span>
-            </button>
-          </header>
 
-          <!-- Body -->
-          <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5 text-[13px]">
-            <!-- Date + time block -->
-            <section class="space-y-2">
-              <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold">
-                Créneau
-              </h4>
-              <div class="flex items-center gap-2 text-[13px]">
-                <Clock
-                  :size="14"
+            <!-- Empty state — pas de saison active -->
+            <div
+              v-if="!store.loading && !store.activeSeasonId"
+              class="card p-10 text-center flex flex-col items-center gap-2"
+            >
+              <span
+                class="w-10 h-10 rounded-full bg-surface-100 inline-flex items-center justify-center text-surface-500"
+              >
+                <CalendarDays
+                  :size="18"
                   :stroke-width="2"
-                  class="text-surface-500"
                 />
-                <span class="num font-medium">{{ selectedBooking.startTime }} — {{ selectedBooking.endTime }}</span>
+              </span>
+              <div class="text-[14px] font-semibold">
+                Aucune saison active
               </div>
-              <div class="flex items-center gap-2 text-[13px]">
+              <div class="text-[12px] text-surface-500 max-w-md">
+                Activez une saison pour afficher le planning.
+              </div>
+              <RouterLink
+                to="/seasons"
+                class="btn btn-primary btn-sm mt-2"
+              >
+                Aller aux saisons
+              </RouterLink>
+            </div>
+
+            <!-- Empty state — pas de venue -->
+            <div
+              v-else-if="!store.loading && store.activeSeasonId && store.venues.length === 0"
+              class="card p-10 text-center flex flex-col items-center gap-2"
+            >
+              <span
+                class="w-10 h-10 rounded-full bg-surface-100 inline-flex items-center justify-center text-surface-500"
+              >
                 <MapPin
-                  :size="14"
+                  :size="18"
                   :stroke-width="2"
-                  class="text-surface-500"
                 />
-                <span>
-                  {{ selectedBooking.venueName ?? '—' }}
-                  <template v-if="selectedBooking.courtName">
-                    · {{ selectedBooking.courtName }}
-                  </template>
-                </span>
+              </span>
+              <div class="text-[14px] font-semibold">
+                Aucun venue configuré
               </div>
-            </section>
+              <div class="text-[12px] text-surface-500 max-w-md">
+                Ajoutez au moins un venue avec des courts.
+              </div>
+            </div>
 
-            <!-- Cancel reason — si annulé -->
-            <section
-              v-if="selectedBooking.status === 'cancelled' && selectedBooking.cancelReason"
-              class="card border-rose-200 bg-rose-50 px-3 py-2"
+            <!-- Calendrier vue-cal -->
+            <div
+              v-else
+              class="card overflow-hidden"
             >
-              <div class="text-[11px] uppercase tracking-wide text-rose-500 font-semibold">
-                Raison de l'annulation
-              </div>
-              <div class="text-[13px] text-rose-700 mt-0.5">
-                {{ cancelReasonLabel(selectedBooking.cancelReason) }}
-              </div>
-            </section>
+              <VueCal
+                v-model:selected-date="selectedDate"
+                v-model:active-view="activeView"
+                :events="calendarEvents"
+                :split-days="activeView === 'day' ? courtSplits : []"
+                :sticky-split-labels="activeView === 'day'"
+                :time-from="TIME_FROM"
+                :time-to="TIME_TO"
+                :time-step="TIME_STEP"
+                :time-cell-height="TIME_CELL_HEIGHT"
+                :hide-title-bar="true"
+                :hide-view-selector="true"
+                :disable-views="['years', 'year']"
+                :events-on-month-view="'short'"
+                locale="fr"
+                :twelve-hour="false"
+                @event-click="onEventClick"
+              />
+            </div>
 
-            <!-- Linked bookings — courts combinés -->
-            <section
-              v-if="selectedBooking.linkedBookingIds.length > 0"
-              class="space-y-2"
+            <!-- Bannière erreur -->
+            <div
+              v-if="store.error || store.listError"
+              class="card border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700 flex items-center gap-2"
             >
-              <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold flex items-center gap-1.5">
-                <Link2
-                  :size="12"
-                  :stroke-width="2"
-                />
-                Bookings liés ({{ selectedBooking.linkedBookingIds.length }})
-              </h4>
-              <ul class="text-[12px] text-surface-600 space-y-1">
-                <li
-                  v-for="lid in selectedBooking.linkedBookingIds"
-                  :key="lid"
-                  class="font-mono text-[11px] truncate"
-                >
-                  {{ lid }}
-                </li>
-              </ul>
-            </section>
+              <TriangleAlert
+                :size="14"
+                :stroke-width="2"
+              />
+              {{ store.error ?? store.listError }}
+            </div>
 
-            <!-- Action log -->
-            <section class="space-y-2">
-              <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold flex items-center gap-1.5">
-                <History
-                  :size="12"
-                  :stroke-width="2"
-                />
-                Historique
-              </h4>
-              <div
-                v-if="selectedBooking.actionLog.length === 0"
-                class="text-[12px] text-surface-500"
-              >
-                Aucune action enregistrée pour ce booking.
-              </div>
-              <ol
-                v-else
-                class="space-y-2 border-l border-surface-200 pl-3"
-              >
-                <li
-                  v-for="(entry, idx) in selectedBooking.actionLog"
-                  :key="`log-${idx}`"
-                  class="relative"
+            <!-- Drawer détail booking -->
+            <Drawer
+              v-model:visible="drawerOpen"
+              position="right"
+              :show-close-icon="true"
+              :pt="{ root: { style: 'width: 480px; max-width: 100vw;' } }"
+              aria-label="Détail du booking"
+            >
+              <template #container="{ closeCallback }">
+                <div
+                  v-if="selectedBooking"
+                  class="flex flex-col h-full"
                 >
-                  <span
-                    class="absolute -left-[7px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"
-                    aria-hidden="true"
-                  />
-                  <div class="text-[12px]">
-                    <span class="font-medium">{{ entry.action }}</span>
-                    <span class="text-surface-500"> · {{ entry.by }}</span>
+                  <header class="flex items-start justify-between gap-3 px-5 py-4 border-b border-surface-200">
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-2 flex-wrap mb-1">
+                        <Pill :variant="slotTypePillVariant(selectedBooking.slotType)">
+                          {{ slotTypeLabel(selectedBooking.slotType) }}
+                        </Pill>
+                        <Pill :variant="statusPill(selectedBooking).variant">
+                          {{ statusPill(selectedBooking).label }}
+                        </Pill>
+                        <Pill
+                          v-if="selectedBooking.isCombinedCourtEvent"
+                          variant="amber"
+                        >
+                          <Link2
+                            :size="11"
+                            :stroke-width="2"
+                          />
+                          Courts combinés
+                        </Pill>
+                      </div>
+                      <div class="text-[15px] font-semibold truncate">
+                        {{ selectedBooking.teamName ?? slotTypeLabel(selectedBooking.slotType) }}
+                      </div>
+                      <div class="text-[12px] text-surface-500">
+                        {{ formatLongDate(selectedBooking) }}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm !px-1.5 text-surface-500"
+                      aria-label="Fermer"
+                      @click="closeCallback"
+                    >
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  </header>
+
+                  <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5 text-[13px]">
+                    <section class="space-y-2">
+                      <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold">
+                        Créneau
+                      </h4>
+                      <div class="flex items-center gap-2 text-[13px]">
+                        <Clock
+                          :size="14"
+                          :stroke-width="2"
+                          class="text-surface-500"
+                        />
+                        <span class="num font-medium">
+                          {{ selectedBooking.startTime }} — {{ selectedBooking.endTime }}
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-2 text-[13px]">
+                        <MapPin
+                          :size="14"
+                          :stroke-width="2"
+                          class="text-surface-500"
+                        />
+                        <span>
+                          {{ selectedBooking.venueName ?? '—' }}
+                          <template v-if="selectedBooking.courtName">
+                            · {{ selectedBooking.courtName }}
+                          </template>
+                        </span>
+                      </div>
+                    </section>
+
+                    <section
+                      v-if="selectedBooking.status === 'cancelled' && selectedBooking.cancelReason"
+                      class="card border-rose-200 bg-rose-50 px-3 py-2"
+                    >
+                      <div class="text-[11px] uppercase tracking-wide text-rose-500 font-semibold">
+                        Raison de l'annulation
+                      </div>
+                      <div class="text-[13px] text-rose-700 mt-0.5">
+                        {{ cancelReasonLabel(selectedBooking.cancelReason) }}
+                      </div>
+                    </section>
+
+                    <section
+                      v-if="selectedBooking.linkedBookingIds.length > 0"
+                      class="space-y-2"
+                    >
+                      <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold flex items-center gap-1.5">
+                        <Link2
+                          :size="12"
+                          :stroke-width="2"
+                        />
+                        Bookings liés ({{ selectedBooking.linkedBookingIds.length }})
+                      </h4>
+                      <ul class="text-[12px] text-surface-600 space-y-1">
+                        <li
+                          v-for="lid in selectedBooking.linkedBookingIds"
+                          :key="lid"
+                          class="font-mono text-[11px] truncate"
+                        >
+                          {{ lid }}
+                        </li>
+                      </ul>
+                    </section>
+
+                    <section class="space-y-2">
+                      <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold flex items-center gap-1.5">
+                        <History
+                          :size="12"
+                          :stroke-width="2"
+                        />
+                        Historique
+                      </h4>
+                      <div
+                        v-if="selectedBooking.actionLog.length === 0"
+                        class="text-[12px] text-surface-500"
+                      >
+                        Aucune action enregistrée pour ce booking.
+                      </div>
+                      <ol
+                        v-else
+                        class="space-y-2 border-l border-surface-200 pl-3"
+                      >
+                        <li
+                          v-for="(entry, idx) in selectedBooking.actionLog"
+                          :key="`log-${idx}`"
+                          class="relative"
+                        >
+                          <span
+                            class="absolute -left-[7px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"
+                            aria-hidden="true"
+                          />
+                          <div class="text-[12px]">
+                            <span class="font-medium">{{ entry.action }}</span>
+                            <span class="text-surface-500"> · {{ entry.by }}</span>
+                          </div>
+                          <div class="text-[11px] font-mono text-surface-400">
+                            {{ formatActionLogTime(entry) }}
+                          </div>
+                          <div
+                            v-if="entry.note"
+                            class="text-[12px] text-surface-600 mt-0.5"
+                          >
+                            {{ entry.note }}
+                          </div>
+                        </li>
+                      </ol>
+                    </section>
+
+                    <section class="space-y-2 pt-2 border-t border-surface-200">
+                      <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold">
+                        Actions
+                      </h4>
+                      <div class="flex flex-col gap-2">
+                        <Button
+                          severity="secondary"
+                          size="small"
+                          outlined
+                          @click="openScopeDialog('edit')"
+                        >
+                          <Pencil
+                            :size="14"
+                            :stroke-width="2"
+                          />
+                          <span class="ml-1.5">Modifier</span>
+                        </Button>
+                        <Button
+                          v-if="selectedBooking.status === 'scheduled'"
+                          severity="warn"
+                          size="small"
+                          outlined
+                          @click="openScopeDialog('cancel')"
+                        >
+                          <Ban
+                            :size="14"
+                            :stroke-width="2"
+                          />
+                          <span class="ml-1.5">Annuler ce créneau</span>
+                        </Button>
+                        <Button
+                          severity="danger"
+                          size="small"
+                          outlined
+                          @click="openScopeDialog('delete')"
+                        >
+                          <Trash2
+                            :size="14"
+                            :stroke-width="2"
+                          />
+                          <span class="ml-1.5">Supprimer</span>
+                        </Button>
+                      </div>
+                    </section>
                   </div>
-                  <div class="text-[11px] font-mono text-surface-400">
-                    {{ formatActionLogTime(entry) }}
-                  </div>
-                  <div
-                    v-if="entry.note"
-                    class="text-[12px] text-surface-600 mt-0.5"
-                  >
-                    {{ entry.note }}
-                  </div>
-                </li>
-              </ol>
-            </section>
+                </div>
+              </template>
+            </Drawer>
+
+            <BookingFormDialog v-model:visible="showCreateDialog" />
+
+            <BookingEditScopeDialog
+              v-model:visible="showScopeDialog"
+              :intent="scopeIntent"
+              :is-series="isSelectedBookingSeries"
+              :is-past="isSelectedBookingPast"
+              @confirm="handleScopeConfirm"
+            />
+
+            <BookingEditFormDialog
+              v-model:visible="showEditFormDialog"
+              :booking="selectedBooking"
+              :scope="editScope"
+              :is-past="isSelectedBookingPast"
+              @saved="handleEditSaved"
+            />
           </div>
-        </div>
-      </template>
-    </Drawer>
+        </TabPanel>
+        <TabPanel value="list">
+          <BookingListPanel />
+        </TabPanel>
+      </TabPanels>
+    </Tabs>
   </section>
 </template>
+
+<style scoped>
+/*
+ * vue-cal — overrides ciblés.
+ *
+ * On garde le CSS de base de vue-cal (importé dans le <script setup>) et on
+ * override uniquement :
+ *  - les couleurs d'évènements par type (mapping slotType → palette tailwind)
+ *  - quelques détails de typographie pour matcher le reste de l'app
+ *
+ * Les sélecteurs sont `:deep()` car vue-cal génère ses propres classes hors
+ * du scope Vue. On évite `!important` quand un poids plus élevé suffit.
+ */
+
+:deep(.vuecal) {
+  font-size: 12px;
+  font-family: inherit;
+}
+
+:deep(.vuecal__title-bar) {
+  display: none;
+}
+
+:deep(.vuecal__event) {
+  border-radius: 6px;
+  border-width: 1px;
+  border-style: solid;
+  padding: 4px 6px;
+  font-weight: 500;
+  color: inherit;
+  background-clip: padding-box;
+  overflow: hidden;
+}
+
+:deep(.vuecal__event.vc-training) {
+  background: rgb(239 246 255);
+  border-color: rgb(191 219 254);
+  color: rgb(29 78 216);
+}
+
+:deep(.vuecal__event.vc-match-home) {
+  background: rgb(167 243 208);
+  border-width: 2px;
+  border-color: rgb(5 150 105);
+  color: rgb(6 78 59);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(16 185 129 / 0.15);
+}
+
+:deep(.vuecal__event.vc-match-away) {
+  background: rgb(245 243 255);
+  border-color: rgb(196 181 253);
+  color: rgb(91 33 182);
+}
+
+:deep(.vuecal__event.vc-match-pending) {
+  background: rgb(255 247 237);
+  border-color: rgb(253 186 116);
+  color: rgb(154 52 18);
+}
+
+:deep(.vuecal__event.vc-reserve) {
+  background: rgb(244 244 245);
+  border-color: rgb(212 212 216);
+  color: rgb(82 82 91);
+}
+
+:deep(.vuecal__event.vc-custom) {
+  background: rgb(254 252 232);
+  border-color: rgb(253 224 71);
+  color: rgb(133 77 14);
+}
+
+:deep(.vuecal__event.vc-cancelled) {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+:deep(.vuecal__event.vc-freed) {
+  background: rgb(250 250 250);
+  border-color: rgb(212 212 216);
+  border-style: dashed;
+  color: rgb(113 113 122);
+}
+
+/* Splits header (courts) : libellé centré, sticky. */
+:deep(.vuecal__split-days-headers .day-split-header) {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(82 82 91);
+  padding: 6px 4px;
+}
+
+/* Heures de la grille. */
+:deep(.vuecal__time-column .vuecal__time-cell-label) {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgb(161 161 170);
+}
+
+/* Cellule du jour en cours. */
+:deep(.vuecal--day-view .vuecal__cell--today) {
+  background: rgb(254 252 232 / 0.4);
+}
+</style>

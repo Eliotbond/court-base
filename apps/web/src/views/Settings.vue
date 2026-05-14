@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import {
+  BadgeCheck,
   Banknote,
   Building2,
   CalendarX,
@@ -17,6 +18,7 @@ import {
   Tags,
   Trash2,
   TriangleAlert,
+  Trophy,
   Users,
   X,
 } from 'lucide-vue-next'
@@ -25,16 +27,34 @@ import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
+import Textarea from 'primevue/textarea'
 import { useSettingsStore, type SettingsSection } from '@/stores/settings'
 import { useCategoriesStore } from '@/stores/categories'
 import { useTagsStore } from '@/stores/tags'
+import { useCotisationTypesStore } from '@/stores/cotisationTypes'
+import { useLicenseTypesStore } from '@/stores/licenseTypes'
+import { useMatchTypesStore, type MatchTypeInput } from '@/stores/matchTypes'
 import Avatar from '@/components/ui/Avatar.vue'
 import Pill from '@/components/ui/Pill.vue'
 import RoleBadge from '@/components/ui/RoleBadge.vue'
+import {
+  BANKING_FIELD_LIMITS,
+  formatIbanForDisplay,
+  normalizeBic,
+  normalizeIban,
+  validateBic,
+  validateIban,
+} from '@/utils/banking'
 import type {
   Category,
   ClubAddress,
+  CotisationType,
+  CourtSize,
   DuesConfig,
+  LicenseRole,
+  LicenseType,
+  MatchType,
+  OfficialRequirement,
   OfficialsConfig,
   Role,
   SubscriptionStatus,
@@ -59,15 +79,59 @@ interface NavItem {
   icon: typeof Building2
 }
 
-const NAV_ITEMS: readonly NavItem[] = [
-  { id: 'general', label: 'General', icon: Building2 },
-  { id: 'officials', label: 'Officials', icon: Siren },
-  { id: 'dues', label: 'Dues', icon: Banknote },
-  { id: 'roles', label: 'Member roles', icon: Tags },
-  { id: 'categories', label: 'Catégories', icon: Layers },
-  { id: 'tags', label: 'Tags', icon: TagIcon },
-  { id: 'closurePeriods', label: 'Closure periods', icon: CalendarX },
-  { id: 'adminTeam', label: 'Admin team', icon: Users },
+interface NavGroup {
+  label: string
+  items: readonly NavItem[]
+}
+
+/**
+ * Nav groupée par domaine. Le header de groupe est non-cliquable (juste un
+ * label uppercase muted), les items dessous sont les boutons existants.
+ * Garde les ids alignés sur `SettingsSection` — ne change pas l'id `general`
+ * (utilisé partout dans le store et les watchers).
+ */
+const NAV_GROUPS: readonly NavGroup[] = [
+  {
+    label: 'Club',
+    items: [
+      { id: 'general', label: 'Club info', icon: Building2 },
+      { id: 'adminTeam', label: 'Admin team', icon: Users },
+    ],
+  },
+  {
+    label: 'Équipes',
+    items: [
+      { id: 'categories', label: 'Catégories', icon: Layers },
+      { id: 'tags', label: 'Tags', icon: TagIcon },
+      { id: 'cotisations', label: 'Types de cotisation', icon: Banknote },
+    ],
+  },
+  {
+    label: 'Membres',
+    items: [
+      { id: 'roles', label: 'Member roles', icon: Tags },
+    ],
+  },
+  {
+    label: 'Saison / Compétition',
+    items: [
+      { id: 'officials', label: 'Officials', icon: Siren },
+      { id: 'matchTypes', label: 'Match types', icon: Trophy },
+      { id: 'closurePeriods', label: 'Closure periods', icon: CalendarX },
+    ],
+  },
+  {
+    label: 'Licences',
+    items: [
+      { id: 'licenses', label: 'Types de licence', icon: BadgeCheck },
+    ],
+  },
+  {
+    label: 'Finances',
+    items: [
+      { id: 'dues', label: 'Dues config', icon: Banknote },
+    ],
+  },
 ] as const
 
 const activeSection = ref<SettingsSection>('general')
@@ -188,6 +252,207 @@ function resetGeneral(): void {
     }
     generalErrors.value = {}
   }
+}
+
+// ---------------------------------------------------------------------------
+// Logo upload — file input caché, déclenché par le bouton "Remplacer".
+//
+// Validation locale : type image + taille < 2 MB (aligné avec storage.rules).
+// Le store gère l'upload + le patch /config/club.logo + le cleanup ancien.
+// ---------------------------------------------------------------------------
+
+const logoInputRef = ref<HTMLInputElement | null>(null)
+const logoUploading = ref(false)
+const logoError = ref<string | null>(null)
+
+const LOGO_MAX_BYTES = 2 * 1024 * 1024
+const LOGO_ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp']
+
+function triggerLogoPicker(): void {
+  logoError.value = null
+  logoInputRef.value?.click()
+}
+
+async function onLogoSelected(e: Event): Promise<void> {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0] ?? null
+  // Reset le input pour permettre un re-pick du même fichier après une erreur.
+  target.value = ''
+  if (!file) return
+  if (!LOGO_ACCEPTED_TYPES.includes(file.type)) {
+    logoError.value = 'Format non supporté (PNG, JPG, SVG ou WebP attendu).'
+    return
+  }
+  if (file.size > LOGO_MAX_BYTES) {
+    logoError.value = 'Fichier trop volumineux (max 2 MB).'
+    return
+  }
+  logoUploading.value = true
+  try {
+    await store.setLogo(file)
+  } catch {
+    logoError.value = store.error ?? "Erreur lors de l'upload."
+  } finally {
+    logoUploading.value = false
+  }
+}
+
+async function removeLogo(): Promise<void> {
+  logoError.value = null
+  logoUploading.value = true
+  try {
+    await store.removeLogo()
+  } catch {
+    logoError.value = store.error ?? 'Erreur lors de la suppression.'
+  } finally {
+    logoUploading.value = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Banking info — local form synced from `/config/club.banking`.
+//
+// Tous les champs sont optionnels (`null` côté schéma) ; on les manipule en
+// string vide côté UI pour les InputText, puis on normalise au save :
+//   - chaîne trimée non-vide → string
+//   - chaîne trimée vide     → null
+// Le bouton "Sauvegarder" persiste l'objet complet (ou `null` si tous les
+// champs sont vides — pour permettre de "reset" la section).
+// ---------------------------------------------------------------------------
+
+interface BankingForm {
+  iban: string
+  bic: string
+  bankName: string
+  accountHolder: string
+  paymentInstructions: string
+}
+
+const bankingForm = ref<BankingForm>({
+  iban: '',
+  bic: '',
+  bankName: '',
+  accountHolder: '',
+  paymentInstructions: '',
+})
+const bankingErrors = ref<Partial<Record<keyof BankingForm, string>>>({})
+
+watch(
+  () => store.config?.banking,
+  (banking) => {
+    bankingForm.value = {
+      // Affichage IBAN avec groupes de 4 (la forme canonique est sans espaces
+      // côté base — cf. `normalizeIban` au save).
+      iban: banking?.iban ? formatIbanForDisplay(banking.iban) : '',
+      bic: banking?.bic ?? '',
+      bankName: banking?.bankName ?? '',
+      accountHolder: banking?.accountHolder ?? '',
+      paymentInstructions: banking?.paymentInstructions ?? '',
+    }
+  },
+  { immediate: true, deep: true },
+)
+
+/**
+ * Validation du formulaire banking. Politique :
+ *  - Tous les champs vides → OK (reset complet, persiste `banking: null`).
+ *  - Dès qu'un champ est rempli, on impose le **minimum vital pour un virement** :
+ *    IBAN valide + titulaire du compte (sinon le parent ne peut pas payer côté
+ *    register, cf. `useClubStore.hasUsableBanking` dans `apps/courtbase-register`).
+ *  - L'IBAN est validé strictement (format + longueur pays + mod-97).
+ *  - Le BIC est validé strictement s'il est renseigné (format ISO 9362).
+ *  - Les champs libres (bankName, accountHolder, paymentInstructions) sont
+ *    bornés en longueur pour bloquer les paste accidentels.
+ */
+function validateBanking(): boolean {
+  const errors: Partial<Record<keyof BankingForm, string>> = {}
+  const f = bankingForm.value
+  const allEmpty =
+    !f.iban.trim() &&
+    !f.bic.trim() &&
+    !f.bankName.trim() &&
+    !f.accountHolder.trim() &&
+    !f.paymentInstructions.trim()
+  if (allEmpty) {
+    bankingErrors.value = {}
+    return true
+  }
+
+  // IBAN — requis dès qu'un champ est rempli, validation stricte.
+  const ibanErr = validateIban(f.iban)
+  if (ibanErr) errors.iban = ibanErr
+
+  // Titulaire — requis pour qu'un virement soit possible.
+  if (!f.accountHolder.trim()) {
+    errors.accountHolder = 'Titulaire du compte requis'
+  } else if (f.accountHolder.trim().length > BANKING_FIELD_LIMITS.accountHolder) {
+    errors.accountHolder = `Maximum ${BANKING_FIELD_LIMITS.accountHolder} caractères`
+  }
+
+  // BIC — optionnel mais strict si renseigné.
+  const bicErr = validateBic(f.bic)
+  if (bicErr) errors.bic = bicErr
+
+  // bankName — borne uniquement.
+  if (f.bankName.trim().length > BANKING_FIELD_LIMITS.bankName) {
+    errors.bankName = `Maximum ${BANKING_FIELD_LIMITS.bankName} caractères`
+  }
+
+  // paymentInstructions — borne uniquement.
+  if (f.paymentInstructions.trim().length > BANKING_FIELD_LIMITS.paymentInstructions) {
+    errors.paymentInstructions = `Maximum ${BANKING_FIELD_LIMITS.paymentInstructions} caractères`
+  }
+
+  bankingErrors.value = errors
+  return Object.keys(errors).length === 0
+}
+
+async function saveBanking(): Promise<void> {
+  if (!validateBanking()) return
+  const f = bankingForm.value
+  const trim = (s: string): string | null => {
+    const t = s.trim()
+    return t.length === 0 ? null : t
+  }
+  // Normalisation : IBAN/BIC stockés en forme canonique (uppercase, sans
+  // espaces) — la couche présentation reformate à l'affichage.
+  const ibanCanon = trim(f.iban)
+  const bicCanon = trim(f.bic)
+  const banking = {
+    iban: ibanCanon ? normalizeIban(ibanCanon) : null,
+    bic: bicCanon ? normalizeBic(bicCanon) : null,
+    bankName: trim(f.bankName),
+    accountHolder: trim(f.accountHolder),
+    paymentInstructions: trim(f.paymentInstructions),
+  }
+  const isAllNull =
+    banking.iban === null &&
+    banking.bic === null &&
+    banking.bankName === null &&
+    banking.accountHolder === null &&
+    banking.paymentInstructions === null
+  try {
+    await store.saveBanking(isAllNull ? null : banking)
+    // Re-sync du form sur la valeur normalisée (sans cela, l'utilisateur
+    // verrait toujours sa saisie minuscule + espacée alors qu'on a persisté
+    // la canonique).
+    if (banking.iban) bankingForm.value.iban = formatIbanForDisplay(banking.iban)
+    if (banking.bic) bankingForm.value.bic = banking.bic
+  } catch {
+    /* error surfaced via store.error */
+  }
+}
+
+function resetBanking(): void {
+  const banking = store.config?.banking
+  bankingForm.value = {
+    iban: banking?.iban ? formatIbanForDisplay(banking.iban) : '',
+    bic: banking?.bic ?? '',
+    bankName: banking?.bankName ?? '',
+    accountHolder: banking?.accountHolder ?? '',
+    paymentInstructions: banking?.paymentInstructions ?? '',
+  }
+  bankingErrors.value = {}
 }
 
 // ---------------------------------------------------------------------------
@@ -498,6 +763,97 @@ async function confirmCancelInvitation(id: string, email: string): Promise<void>
     await store.cancelInvitationAction(id)
   } catch {
     /* surfaced */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Manage roles dialog (admin team) — gestion cumulative des rôles app sur
+// un user existant. `admin` est forcé présent (la révocation passe par
+// "Retirer", qui appellera la callable dédiée à terme).
+//
+// Rôles app gérables ici (cf. docs/firebase.md /users.roles) :
+//   - `admin`      : accès complet admin (immuable depuis cette UI)
+//   - `coach`      : scope coach via /users.teamIds
+//   - `official`   : capacité officiel (lié à /members.officialLevel côté métier)
+//   - `treasurer`  : marque les cotisations comme payées (callable serveur
+//                    `markDuePaid` ; wrapper TS : `markCotisationPaid`) ET
+//                    peut enregistrer un montant partiel (arrangement comité
+//                    in extremis) — capability réservée à `rootAdmin` /
+//                    `treasurer`, cf. `assertCanRecordPartial` côté Function.
+//
+// Volontairement absents : `player`, `parent` — gérés par d'autres flows
+// (création membre, ajout tuteur).
+// ---------------------------------------------------------------------------
+
+interface RolesDialogState {
+  uid: string
+  displayName: string
+  email: string
+  admin: boolean
+  coach: boolean
+  official: boolean
+  treasurer: boolean
+  /** Autres rôles préservés à la sauvegarde (ex. `'parent'`, `'player'`). */
+  preservedRoles: string[]
+}
+
+const rolesDialogOpen = ref(false)
+const rolesDialogTarget = ref<RolesDialogState | null>(null)
+const rolesDialogError = ref<string | null>(null)
+
+const MANAGED_ROLES = ['admin', 'coach', 'official', 'treasurer'] as const
+type ManagedRole = typeof MANAGED_ROLES[number]
+
+function openRolesDialog(admin: {
+  id: string
+  displayName: string
+  email: string
+  roles: string[]
+}): void {
+  const has = (r: ManagedRole): boolean => admin.roles.includes(r)
+  const preserved = admin.roles.filter(
+    (r) => !MANAGED_ROLES.includes(r as ManagedRole),
+  )
+  rolesDialogTarget.value = {
+    uid: admin.id,
+    displayName: admin.displayName,
+    email: admin.email,
+    admin: true, // toujours forcé true depuis cette UI
+    coach: has('coach'),
+    official: has('official'),
+    treasurer: has('treasurer'),
+    preservedRoles: preserved,
+  }
+  rolesDialogError.value = null
+  rolesDialogOpen.value = true
+}
+
+function closeRolesDialog(): void {
+  rolesDialogOpen.value = false
+  rolesDialogTarget.value = null
+  rolesDialogError.value = null
+}
+
+async function submitRolesDialog(): Promise<void> {
+  const target = rolesDialogTarget.value
+  if (!target) return
+  const next: string[] = []
+  // `admin` toujours présent — on ne propose pas la révocation via cette UI.
+  next.push('admin')
+  if (target.coach) next.push('coach')
+  if (target.official) next.push('official')
+  if (target.treasurer) next.push('treasurer')
+  // Préserve les rôles non gérés ici (parent, player, futurs ajouts).
+  for (const r of target.preservedRoles) {
+    if (!next.includes(r)) next.push(r)
+  }
+  rolesDialogError.value = null
+  try {
+    await store.updateAdminRoles(target.uid, next)
+    closeRolesDialog()
+  } catch (e: unknown) {
+    rolesDialogError.value =
+      e instanceof Error ? e.message : 'Erreur lors de la mise à jour des rôles'
   }
 }
 
@@ -955,6 +1311,726 @@ async function archiveFromDeleteTagDialog(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Types de cotisation — référentiel /cotisations (cf. docs/firebase.md +
+// docs/main.md). Pattern miroir de Tags : draft local, dialog d'édition,
+// archive vs delete avec usage count. Lazy-load à l'ouverture (cf. watcher
+// en bas du script).
+//
+// NB sémantique : la collection Firestore reste `'cotisations'` (string
+// inchangée), mais côté code on parle de `CotisationType` (template de
+// pricing) — le mot "cotisation" est réservé aux factures membres
+// (ex-`Due`, géré par un autre module).
+// ---------------------------------------------------------------------------
+
+const cotisationTypesStore = useCotisationTypesStore()
+
+const showArchivedCotisations = ref(false)
+
+const visibleCotisations = computed<CotisationType[]>(() => {
+  if (showArchivedCotisations.value) return cotisationTypesStore.cotisationTypes
+  return cotisationTypesStore.cotisationTypes.filter((c) => c.active)
+})
+
+const archivedCotisationsCount = computed<number>(() => {
+  return cotisationTypesStore.cotisationTypes.filter((c) => !c.active).length
+})
+
+interface CotisationTypeDraft {
+  name: string
+  description: string
+  price: number
+  /** Vide → auto-assign en queue côté repo. */
+  displayOrder: number | null
+}
+
+function emptyCotisationTypeDraft(): CotisationTypeDraft {
+  return {
+    name: '',
+    description: '',
+    price: 0,
+    displayOrder: null,
+  }
+}
+
+const isAddingCotisationType = ref(false)
+const editingCotisationId = ref<string | null>(null)
+const cotisationDraft = ref<CotisationTypeDraft>(emptyCotisationTypeDraft())
+const cotisationError = ref<string | null>(null)
+
+const cotisationFlash = ref<
+  'created' | 'updated' | 'archived' | 'unarchived' | 'deleted' | null
+>(null)
+
+function setCotisationFlash(kind: NonNullable<typeof cotisationFlash.value>): void {
+  cotisationFlash.value = kind
+  window.setTimeout(() => {
+    if (cotisationFlash.value === kind) cotisationFlash.value = null
+  }, 3000)
+}
+
+const cotisationFlashMessage = computed<string | null>(() => {
+  switch (cotisationFlash.value) {
+    case 'created':
+      return 'Type de cotisation créé'
+    case 'updated':
+      return 'Type de cotisation mis à jour'
+    case 'archived':
+      return 'Type de cotisation archivé'
+    case 'unarchived':
+      return 'Type de cotisation réactivé'
+    case 'deleted':
+      return 'Type de cotisation supprimé'
+    default:
+      return null
+  }
+})
+
+const isCotisationTypeDialogOpen = computed<boolean>({
+  get: () => isAddingCotisationType.value || editingCotisationId.value !== null,
+  set: (v: boolean) => {
+    if (!v) cancelCotisationTypeEdit()
+  },
+})
+
+function startAddCotisationType(): void {
+  isAddingCotisationType.value = true
+  editingCotisationId.value = null
+  cotisationDraft.value = emptyCotisationTypeDraft()
+  cotisationError.value = null
+}
+
+function startEditCotisationType(c: CotisationType): void {
+  isAddingCotisationType.value = false
+  editingCotisationId.value = c.id
+  cotisationDraft.value = {
+    name: c.name,
+    description: c.description,
+    price: c.price,
+    displayOrder: c.displayOrder,
+  }
+  cotisationError.value = null
+}
+
+function cancelCotisationTypeEdit(): void {
+  isAddingCotisationType.value = false
+  editingCotisationId.value = null
+  cotisationError.value = null
+}
+
+function validateCotisationTypeDraft(): boolean {
+  const name = cotisationDraft.value.name.trim()
+  if (!name) {
+    cotisationError.value = 'Nom requis'
+    return false
+  }
+  if (cotisationDraft.value.price < 0) {
+    cotisationError.value = 'Le prix doit être >= 0'
+    return false
+  }
+  cotisationError.value = null
+  return true
+}
+
+async function commitCotisationType(): Promise<void> {
+  if (!validateCotisationTypeDraft()) return
+  const name = cotisationDraft.value.name.trim()
+  const description = cotisationDraft.value.description.trim()
+  const price = cotisationDraft.value.price
+  const orderRaw = cotisationDraft.value.displayOrder
+  if (isAddingCotisationType.value) {
+    const id = await cotisationTypesStore.create({
+      name,
+      description,
+      price,
+      ...(orderRaw !== null ? { displayOrder: orderRaw } : {}),
+    })
+    if (id !== null) {
+      cancelCotisationTypeEdit()
+      setCotisationFlash('created')
+    }
+  } else if (editingCotisationId.value) {
+    const ok = await cotisationTypesStore.update(editingCotisationId.value, {
+      name,
+      description,
+      price,
+      ...(orderRaw !== null ? { displayOrder: orderRaw } : {}),
+    })
+    if (ok) {
+      cancelCotisationTypeEdit()
+      setCotisationFlash('updated')
+    }
+  }
+}
+
+async function toggleCotisationTypeArchive(c: CotisationType): Promise<void> {
+  if (c.active) {
+    await cotisationTypesStore.archive(c.id)
+    if (cotisationTypesStore.error === null) setCotisationFlash('archived')
+  } else {
+    await cotisationTypesStore.unarchive(c.id)
+    if (cotisationTypesStore.error === null) setCotisationFlash('unarchived')
+  }
+}
+
+// --- Type-de-cotisation delete dialog ------------------------------------
+
+const deleteCotisationTypeDialogTarget = ref<CotisationType | null>(null)
+const deleteCotisationTypeDialogUsageCount = ref<number>(0)
+const deleteCotisationTypeDialogLoading = ref(false)
+
+const isDeleteCotisationTypeDialogOpen = computed<boolean>({
+  get: () => deleteCotisationTypeDialogTarget.value !== null,
+  set: (v: boolean) => {
+    if (!v) deleteCotisationTypeDialogTarget.value = null
+  },
+})
+
+async function openDeleteCotisationTypeDialog(c: CotisationType): Promise<void> {
+  deleteCotisationTypeDialogTarget.value = c
+  deleteCotisationTypeDialogLoading.value = true
+  try {
+    deleteCotisationTypeDialogUsageCount.value = await cotisationTypesStore.refreshUsageCount(c.id)
+  } catch {
+    // Si le count échoue, on assume "utilisée" pour ne pas autoriser une
+    // suppression sur la base d'un état inconnu.
+    deleteCotisationTypeDialogUsageCount.value = -1
+  } finally {
+    deleteCotisationTypeDialogLoading.value = false
+  }
+}
+
+function closeDeleteCotisationTypeDialog(): void {
+  deleteCotisationTypeDialogTarget.value = null
+}
+
+async function confirmDeleteCotisationType(): Promise<void> {
+  const target = deleteCotisationTypeDialogTarget.value
+  if (!target) return
+  if (deleteCotisationTypeDialogUsageCount.value !== 0) return
+  const ok = await cotisationTypesStore.remove(target.id)
+  if (ok) {
+    closeDeleteCotisationTypeDialog()
+    setCotisationFlash('deleted')
+  }
+}
+
+async function archiveFromDeleteCotisationTypeDialog(): Promise<void> {
+  const target = deleteCotisationTypeDialogTarget.value
+  if (!target) return
+  await cotisationTypesStore.archive(target.id)
+  if (cotisationTypesStore.error === null) {
+    closeDeleteCotisationTypeDialog()
+    setCotisationFlash('archived')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// License types — référentiel /licenseTypes (cf. docs/firebase.md +
+// docs/main.md "Licences"). Affichage groupé par rôle (4 fieldsets), même
+// dialog création/édition. Pattern miroir des types de cotisation. Lazy-load
+// à l'ouverture de la section (cf. watcher en bas du script).
+// ---------------------------------------------------------------------------
+
+const licenseTypesStore = useLicenseTypesStore()
+
+const showArchivedLicenseTypes = ref(false)
+
+const archivedLicenseTypesCount = computed<number>(() => {
+  return licenseTypesStore.licenseTypes.filter((t) => !t.active).length
+})
+
+/**
+ * Liste à afficher pour un rôle donné, filtrée selon le toggle "afficher
+ * archivées". Les fieldsets template appellent ce computed une fois par rôle.
+ */
+function visibleLicenseTypesFor(role: LicenseRole): LicenseType[] {
+  const all = licenseTypesStore.groupedByRole[role]
+  if (showArchivedLicenseTypes.value) return all
+  return all.filter((t) => t.active)
+}
+
+const LICENSE_ROLES: readonly LicenseRole[] = [
+  'player',
+  'official',
+  'coach',
+  'referee',
+]
+
+const LICENSE_ROLE_LABEL: Record<LicenseRole, string> = {
+  player: 'Joueur',
+  official: 'Officiel',
+  coach: 'Coach',
+  referee: 'Arbitre',
+}
+
+const LICENSE_ROLE_OPTIONS = LICENSE_ROLES.map((role) => ({
+  label: LICENSE_ROLE_LABEL[role],
+  value: role,
+}))
+
+interface LicenseTypeDraft {
+  role: LicenseRole
+  /**
+   * Niveau numérique pour les rôles avec niveau (official/coach/referee).
+   * Pour `player`, ce champ est ignoré et persisté à `null` — cf. règle
+   * docs/main.md "Licences" (seuls coach/officiel/arbitre ont un niveau).
+   */
+  level: number
+  name: string
+  fee: number
+  /** Vide → auto-assign en queue côté repo. */
+  displayOrder: number | null
+}
+
+function emptyLicenseTypeDraft(role: LicenseRole = 'player'): LicenseTypeDraft {
+  return {
+    role,
+    level: 1,
+    name: '',
+    fee: 0,
+    displayOrder: null,
+  }
+}
+
+/** Le rôle actuellement sélectionné dans la draft attend un niveau. */
+const draftRoleRequiresLevel = computed<boolean>(() => {
+  return licenseTypesStore.roleRequiresLevel(licenseTypeDraft.value.role)
+})
+
+const isAddingLicenseType = ref(false)
+const editingLicenseTypeId = ref<string | null>(null)
+const licenseTypeDraft = ref<LicenseTypeDraft>(emptyLicenseTypeDraft())
+const licenseTypeError = ref<string | null>(null)
+
+const licenseTypeFlash = ref<
+  'created' | 'updated' | 'archived' | 'unarchived' | 'deleted' | null
+>(null)
+
+function setLicenseTypeFlash(
+  kind: NonNullable<typeof licenseTypeFlash.value>,
+): void {
+  licenseTypeFlash.value = kind
+  window.setTimeout(() => {
+    if (licenseTypeFlash.value === kind) licenseTypeFlash.value = null
+  }, 3000)
+}
+
+const licenseTypeFlashMessage = computed<string | null>(() => {
+  switch (licenseTypeFlash.value) {
+    case 'created':
+      return 'Type de licence créé'
+    case 'updated':
+      return 'Type de licence mis à jour'
+    case 'archived':
+      return 'Type de licence archivé'
+    case 'unarchived':
+      return 'Type de licence réactivé'
+    case 'deleted':
+      return 'Type de licence supprimé'
+    default:
+      return null
+  }
+})
+
+const isLicenseTypeDialogOpen = computed<boolean>({
+  get: () => isAddingLicenseType.value || editingLicenseTypeId.value !== null,
+  set: (v: boolean) => {
+    if (!v) cancelLicenseTypeEdit()
+  },
+})
+
+function startAddLicenseType(role: LicenseRole = 'player'): void {
+  isAddingLicenseType.value = true
+  editingLicenseTypeId.value = null
+  licenseTypeDraft.value = emptyLicenseTypeDraft(role)
+  licenseTypeError.value = null
+}
+
+function startEditLicenseType(t: LicenseType): void {
+  isAddingLicenseType.value = false
+  editingLicenseTypeId.value = t.id
+  licenseTypeDraft.value = {
+    role: t.role,
+    level: t.level ?? 1,
+    name: t.name,
+    fee: t.fee,
+    displayOrder: t.displayOrder,
+  }
+  licenseTypeError.value = null
+}
+
+function cancelLicenseTypeEdit(): void {
+  isAddingLicenseType.value = false
+  editingLicenseTypeId.value = null
+  licenseTypeError.value = null
+}
+
+function validateLicenseTypeDraft(): boolean {
+  const name = licenseTypeDraft.value.name.trim()
+  if (!name) {
+    licenseTypeError.value = 'Nom requis'
+    return false
+  }
+  if (licenseTypeDraft.value.fee < 0) {
+    licenseTypeError.value = 'Le prix doit être >= 0'
+    return false
+  }
+  if (draftRoleRequiresLevel.value && licenseTypeDraft.value.level < 0) {
+    licenseTypeError.value = 'Le niveau doit être >= 0'
+    return false
+  }
+  // Unicité (role, level) pour les rôles à niveau — vérifiée côté store
+  // aussi, doublée ici pour un message d'erreur immédiat avant l'appel async.
+  const level = draftRoleRequiresLevel.value
+    ? licenseTypeDraft.value.level
+    : null
+  const conflictId = licenseTypesStore.findConflict(
+    licenseTypeDraft.value.role,
+    level,
+    editingLicenseTypeId.value ?? undefined,
+  )
+  if (conflictId !== null) {
+    licenseTypeError.value =
+      'Un type de licence existe déjà pour ce rôle et ce niveau.'
+    return false
+  }
+  licenseTypeError.value = null
+  return true
+}
+
+async function commitLicenseType(): Promise<void> {
+  if (!validateLicenseTypeDraft()) return
+  const name = licenseTypeDraft.value.name.trim()
+  const fee = licenseTypeDraft.value.fee
+  const level = draftRoleRequiresLevel.value
+    ? licenseTypeDraft.value.level
+    : null
+  const orderRaw = licenseTypeDraft.value.displayOrder
+  if (isAddingLicenseType.value) {
+    const id = await licenseTypesStore.create({
+      role: licenseTypeDraft.value.role,
+      level,
+      name,
+      fee,
+      ...(orderRaw !== null ? { displayOrder: orderRaw } : {}),
+    })
+    if (id !== null) {
+      cancelLicenseTypeEdit()
+      setLicenseTypeFlash('created')
+    } else if (licenseTypesStore.error) {
+      licenseTypeError.value = licenseTypesStore.error
+    }
+  } else if (editingLicenseTypeId.value) {
+    const ok = await licenseTypesStore.update(editingLicenseTypeId.value, {
+      role: licenseTypeDraft.value.role,
+      level,
+      name,
+      fee,
+      ...(orderRaw !== null ? { displayOrder: orderRaw } : {}),
+    })
+    if (ok) {
+      cancelLicenseTypeEdit()
+      setLicenseTypeFlash('updated')
+    } else if (licenseTypesStore.error) {
+      licenseTypeError.value = licenseTypesStore.error
+    }
+  }
+}
+
+async function toggleLicenseTypeArchive(t: LicenseType): Promise<void> {
+  if (t.active) {
+    await licenseTypesStore.archive(t.id)
+    if (licenseTypesStore.error === null) setLicenseTypeFlash('archived')
+  } else {
+    await licenseTypesStore.unarchive(t.id)
+    if (licenseTypesStore.error === null) setLicenseTypeFlash('unarchived')
+  }
+}
+
+// --- License type delete dialog ------------------------------------------
+
+const deleteLicenseTypeDialogTarget = ref<LicenseType | null>(null)
+
+const isDeleteLicenseTypeDialogOpen = computed<boolean>({
+  get: () => deleteLicenseTypeDialogTarget.value !== null,
+  set: (v: boolean) => {
+    if (!v) deleteLicenseTypeDialogTarget.value = null
+  },
+})
+
+function openDeleteLicenseTypeDialog(t: LicenseType): void {
+  deleteLicenseTypeDialogTarget.value = t
+}
+
+function closeDeleteLicenseTypeDialog(): void {
+  deleteLicenseTypeDialogTarget.value = null
+}
+
+async function confirmDeleteLicenseType(): Promise<void> {
+  const target = deleteLicenseTypeDialogTarget.value
+  if (!target) return
+  const ok = await licenseTypesStore.remove(target.id)
+  if (ok) {
+    closeDeleteLicenseTypeDialog()
+    setLicenseTypeFlash('deleted')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Match types — CRUD (Settings → Saison / Compétition → Match types)
+// ---------------------------------------------------------------------------
+//
+// Le référentiel `/matchTypes` est édité directement depuis Settings (la route
+// `/match-types` a été supprimée — cf. `apps/web/CLAUDE.md`). Les types
+// définissent les besoins officiels (`homeOfficialRequirements`) et la taille
+// de court requise pour chaque type de compétition (CSJC, AFBB, Amical…).
+//
+// Pattern aligné sur les sections Catégories / License types : dialog unique
+// `create | edit`, validation client minimale (regex hex pour la couleur,
+// `awayOfficialCount >= 0`), garde-fou sur la suppression (le repo refuse si
+// au moins un booking référence le type — l'UI suggère alors la désactivation).
+
+const matchTypesStore = useMatchTypesStore()
+
+const COURT_SIZE_OPTIONS: { value: CourtSize; label: string }[] = [
+  { value: 'small', label: 'Petit' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'large', label: 'Grand' },
+]
+
+const COURT_SIZE_LABEL: Record<CourtSize, string> = {
+  small: 'Petit',
+  normal: 'Normal',
+  large: 'Grand',
+}
+
+/**
+ * Mode du dialog Match type : `null` = fermé. Inline ici (pas de composant
+ * extrait) pour rester aligné sur le pattern des autres dialogs Settings —
+ * la logique fait <200 lignes au total.
+ */
+type MatchTypeDialogMode = 'create' | 'edit'
+
+interface MatchTypeDraft {
+  id: string | null
+  name: string
+  requiredCourtSize: CourtSize
+  homeOfficialRequirements: OfficialRequirement[]
+  awayOfficialCount: number
+  color: string
+  active: boolean
+}
+
+function emptyMatchTypeDraft(): MatchTypeDraft {
+  return {
+    id: null,
+    name: '',
+    requiredCourtSize: 'normal',
+    homeOfficialRequirements: [],
+    awayOfficialCount: 0,
+    color: '#10b981',
+    active: true,
+  }
+}
+
+const matchTypeDialogMode = ref<MatchTypeDialogMode | null>(null)
+const matchTypeDraft = ref<MatchTypeDraft>(emptyMatchTypeDraft())
+const matchTypeError = ref<string | null>(null)
+
+const isMatchTypeDialogOpen = computed<boolean>({
+  get: () => matchTypeDialogMode.value !== null,
+  set: (v: boolean) => {
+    if (!v) {
+      matchTypeDialogMode.value = null
+      matchTypeError.value = null
+    }
+  },
+})
+
+function openCreateMatchTypeDialog(): void {
+  matchTypeDraft.value = emptyMatchTypeDraft()
+  matchTypeError.value = null
+  matchTypeDialogMode.value = 'create'
+}
+
+function openEditMatchTypeDialog(mt: MatchType): void {
+  matchTypeDraft.value = {
+    id: mt.id,
+    name: mt.name,
+    requiredCourtSize: mt.requiredCourtSize,
+    // Copie défensive pour ne pas muter le state du store en cours d'édition.
+    homeOfficialRequirements: mt.homeOfficialRequirements.map((r) => ({
+      level: r.level,
+      count: r.count,
+    })),
+    awayOfficialCount: mt.awayOfficialCount,
+    color: mt.color,
+    active: mt.active,
+  }
+  matchTypeError.value = null
+  matchTypeDialogMode.value = 'edit'
+}
+
+function closeMatchTypeDialog(): void {
+  matchTypeDialogMode.value = null
+  matchTypeError.value = null
+}
+
+function addOfficialRequirement(): void {
+  matchTypeDraft.value.homeOfficialRequirements.push({ level: 1, count: 1 })
+}
+
+function removeOfficialRequirement(idx: number): void {
+  matchTypeDraft.value.homeOfficialRequirements.splice(idx, 1)
+}
+
+/** Hex `#RRGGBB` (case-insensitive). 3-digit form refusé pour rester strict. */
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/
+
+function validateMatchTypeDraft(d: MatchTypeDraft): string | null {
+  const name = d.name.trim()
+  if (!name) return 'Le nom est requis.'
+  if (!['small', 'normal', 'large'].includes(d.requiredCourtSize)) {
+    return 'Taille de court invalide.'
+  }
+  if (
+    typeof d.awayOfficialCount !== 'number'
+    || Number.isNaN(d.awayOfficialCount)
+    || d.awayOfficialCount < 0
+  ) {
+    return 'Le nombre d\'officiels away doit être >= 0.'
+  }
+  for (const r of d.homeOfficialRequirements) {
+    if (
+      typeof r.level !== 'number'
+      || Number.isNaN(r.level)
+      || r.level < 0
+    ) {
+      return 'Niveau d\'officiel invalide (doit être >= 0).'
+    }
+    if (
+      typeof r.count !== 'number'
+      || Number.isNaN(r.count)
+      || r.count < 1
+    ) {
+      return 'Quantité d\'officiels invalide (doit être >= 1).'
+    }
+  }
+  if (!HEX_COLOR_RE.test(d.color)) {
+    return 'Couleur invalide — format attendu #RRGGBB.'
+  }
+  return null
+}
+
+/**
+ * Formatte les exigences home pour l'affichage liste : `[{level:2,count:1},
+ * {level:1,count:2}]` → "1× N2 + 2× N1". Renvoie "—" si vide.
+ */
+function formatOfficialReqs(reqs: OfficialRequirement[]): string {
+  if (reqs.length === 0) return '—'
+  return reqs.map((r) => `${r.count}× N${r.level}`).join(' + ')
+}
+
+const matchTypeFlashMessage = ref<string | null>(null)
+
+function setMatchTypeFlash(
+  kind: 'created' | 'updated' | 'deleted' | 'activated' | 'deactivated',
+): void {
+  const labels: Record<typeof kind, string> = {
+    created: 'Type de match créé.',
+    updated: 'Type de match mis à jour.',
+    deleted: 'Type de match supprimé.',
+    activated: 'Type de match activé.',
+    deactivated: 'Type de match désactivé.',
+  }
+  matchTypeFlashMessage.value = labels[kind]
+  window.setTimeout(() => {
+    if (matchTypeFlashMessage.value === labels[kind]) {
+      matchTypeFlashMessage.value = null
+    }
+  }, 2500)
+}
+
+async function commitMatchType(): Promise<void> {
+  const draft = matchTypeDraft.value
+  const validationError = validateMatchTypeDraft(draft)
+  if (validationError) {
+    matchTypeError.value = validationError
+    return
+  }
+  const input: MatchTypeInput = {
+    name: draft.name.trim(),
+    requiredCourtSize: draft.requiredCourtSize,
+    homeOfficialRequirements: draft.homeOfficialRequirements.map((r) => ({
+      level: r.level,
+      count: r.count,
+    })),
+    awayOfficialCount: draft.awayOfficialCount,
+    color: draft.color,
+    active: draft.active,
+  }
+  if (matchTypeDialogMode.value === 'create') {
+    const id = await matchTypesStore.create(input)
+    if (id !== null) {
+      closeMatchTypeDialog()
+      setMatchTypeFlash('created')
+    } else if (matchTypesStore.error) {
+      matchTypeError.value = matchTypesStore.error
+    }
+  } else if (matchTypeDialogMode.value === 'edit' && draft.id) {
+    const ok = await matchTypesStore.update(draft.id, input)
+    if (ok) {
+      closeMatchTypeDialog()
+      setMatchTypeFlash('updated')
+    } else if (matchTypesStore.error) {
+      matchTypeError.value = matchTypesStore.error
+    }
+  }
+}
+
+async function toggleMatchTypeActive(mt: MatchType): Promise<void> {
+  const ok = await matchTypesStore.update(mt.id, { active: !mt.active })
+  if (ok) {
+    setMatchTypeFlash(mt.active ? 'deactivated' : 'activated')
+  }
+}
+
+// --- Match type delete dialog --------------------------------------------
+
+const deleteMatchTypeDialogTarget = ref<MatchType | null>(null)
+
+const isDeleteMatchTypeDialogOpen = computed<boolean>({
+  get: () => deleteMatchTypeDialogTarget.value !== null,
+  set: (v: boolean) => {
+    if (!v) deleteMatchTypeDialogTarget.value = null
+  },
+})
+
+function openDeleteMatchTypeDialog(mt: MatchType): void {
+  // Clear toute erreur précédente (ex. tentative de suppression d'un type
+  // référencé) pour que le dialog démarre propre.
+  matchTypesStore.error = null
+  deleteMatchTypeDialogTarget.value = mt
+}
+
+function closeDeleteMatchTypeDialog(): void {
+  deleteMatchTypeDialogTarget.value = null
+}
+
+async function confirmDeleteMatchType(): Promise<void> {
+  const target = deleteMatchTypeDialogTarget.value
+  if (!target) return
+  const ok = await matchTypesStore.remove(target.id)
+  if (ok) {
+    closeDeleteMatchTypeDialog()
+    setMatchTypeFlash('deleted')
+  }
+  // Si !ok : `matchTypesStore.error` contient le message ("matchType in use…")
+  // — le dialog reste ouvert et l'erreur s'affiche dans la card d'avertissement
+  // dédiée (cf. template).
+}
+
+// ---------------------------------------------------------------------------
 // Subscription card — display helpers
 // ---------------------------------------------------------------------------
 
@@ -1027,6 +2103,15 @@ watch(
     if (s === 'tags' && tagsStore.tags.length === 0) {
       void tagsStore.load()
     }
+    if (s === 'cotisations' && cotisationTypesStore.cotisationTypes.length === 0) {
+      void cotisationTypesStore.load()
+    }
+    if (s === 'licenses' && licenseTypesStore.licenseTypes.length === 0) {
+      void licenseTypesStore.load()
+    }
+    if (s === 'matchTypes' && matchTypesStore.matchTypes.length === 0) {
+      void matchTypesStore.load()
+    }
   },
   { immediate: true },
 )
@@ -1038,32 +2123,37 @@ watch(
       class="card overflow-hidden grid"
       style="grid-template-columns: 220px 1fr;"
     >
-      <!-- =================== Vertical tabs =================== -->
-      <aside class="border-r border-surface-200 p-3 bg-surface-50/40">
+      <!-- =================== Vertical tabs (grouped) =================== -->
+      <aside class="border-r border-surface-200 p-3 bg-surface-50/40 space-y-3">
         <div
-          class="text-[11px] uppercase tracking-wider text-surface-400 font-semibold px-2 pb-1.5"
+          v-for="group in NAV_GROUPS"
+          :key="group.label"
         >
-          Configuration
+          <div
+            class="text-[11px] uppercase tracking-wider text-surface-400 font-semibold px-2 pb-1.5"
+          >
+            {{ group.label }}
+          </div>
+          <button
+            v-for="item in group.items"
+            :key="item.id"
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 h-9 rounded-md text-[13px] text-left transition-colors"
+            :class="
+              activeSection === item.id
+                ? 'bg-emerald-50 text-emerald-700 font-medium'
+                : 'text-surface-600 hover:bg-surface-100'
+            "
+            @click="activeSection = item.id"
+          >
+            <component
+              :is="item.icon"
+              :size="14"
+              :stroke-width="2"
+            />
+            {{ item.label }}
+          </button>
         </div>
-        <button
-          v-for="item in NAV_ITEMS"
-          :key="item.id"
-          type="button"
-          class="w-full flex items-center gap-2.5 px-3 h-9 rounded-md text-[13px] text-left transition-colors"
-          :class="
-            activeSection === item.id
-              ? 'bg-emerald-50 text-emerald-700 font-medium'
-              : 'text-surface-600 hover:bg-surface-100'
-          "
-          @click="activeSection = item.id"
-        >
-          <component
-            :is="item.icon"
-            :size="14"
-            :stroke-width="2"
-          />
-          {{ item.label }}
-        </button>
       </aside>
 
       <!-- =================== Panel content =================== -->
@@ -1139,36 +2229,66 @@ watch(
             </label>
           </div>
 
-          <!-- Logo placeholder -->
+          <!-- Logo upload -->
           <div
             class="border border-surface-200 rounded-md p-4 bg-surface-50/40 flex items-center gap-4"
           >
             <div
-              class="w-14 h-14 rounded-md bg-emerald-600 text-white flex items-center justify-center"
+              class="w-14 h-14 rounded-md overflow-hidden flex items-center justify-center bg-surface-100"
+              :class="{ 'bg-emerald-600 text-white': !store.config?.logo }"
             >
+              <img
+                v-if="store.config?.logo"
+                :src="store.config.logo"
+                alt="Logo du club"
+                class="w-full h-full object-contain"
+              >
               <Dribbble
+                v-else
                 :size="28"
                 :stroke-width="2"
               />
             </div>
-            <div class="flex-1">
+            <div class="flex-1 min-w-0">
               <div class="font-medium text-[14px]">
                 Logo du club
               </div>
               <div class="text-[12px] text-surface-500">
-                PNG ou SVG · 512×512 recommandé
+                PNG, JPG, SVG ou WebP · max 2 MB · 512×512 recommandé
+              </div>
+              <div
+                v-if="logoError"
+                class="text-[11px] text-rose-600 mt-1"
+              >
+                {{ logoError }}
               </div>
             </div>
-            <!-- TODO(firestore): wire vers Firebase Storage `/club/logo.png` -->
+            <input
+              ref="logoInputRef"
+              type="file"
+              accept="image/png,image/jpeg,image/svg+xml,image/webp"
+              class="hidden"
+              @change="onLogoSelected"
+            >
             <button
               type="button"
               class="btn btn-secondary btn-sm"
+              :disabled="logoUploading"
+              @click="triggerLogoPicker"
             >
-              Remplacer
+              <template v-if="logoUploading">
+                Envoi…
+              </template>
+              <template v-else>
+                {{ store.config?.logo ? 'Remplacer' : 'Téléverser' }}
+              </template>
             </button>
             <button
+              v-if="store.config?.logo"
               type="button"
               class="btn btn-ghost btn-sm !text-rose-700"
+              :disabled="logoUploading"
+              @click="removeLogo"
             >
               Supprimer
             </button>
@@ -1263,6 +2383,161 @@ watch(
                 Sauvegarder
               </template>
             </button>
+          </div>
+
+          <!-- ============ Card: BANKING INFO (Infos bancaires) ============ -->
+          <div class="card p-5 space-y-4 mt-6">
+            <div class="flex items-start gap-3">
+              <span
+                class="w-9 h-9 rounded-md bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0"
+              >
+                <Banknote
+                  :size="16"
+                  :stroke-width="2"
+                />
+              </span>
+              <div class="flex-1 min-w-0">
+                <h2 class="text-[16px] font-semibold">
+                  Infos bancaires
+                </h2>
+                <p class="text-[13px] text-surface-500">
+                  Coordonnées bancaires utilisées pour les emails de demande
+                  de paiement (cotisations) et l'écran de paiement côté inscription.
+                  Tant que l'IBAN n'est pas saisi, ces messages omettront la
+                  section "comment payer".
+                </p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <label class="block col-span-2">
+                <span class="text-[12px] text-surface-600">IBAN</span>
+                <InputText
+                  v-model="bankingForm.iban"
+                  class="mt-1 w-full font-mono"
+                  placeholder="CH00 0000 0000 0000 0000 0"
+                  :invalid="!!bankingErrors.iban"
+                />
+                <span
+                  v-if="bankingErrors.iban"
+                  class="text-[11px] text-rose-600 mt-1 block"
+                >
+                  {{ bankingErrors.iban }}
+                </span>
+              </label>
+
+              <label class="block">
+                <span class="text-[12px] text-surface-600">BIC / SWIFT</span>
+                <InputText
+                  v-model="bankingForm.bic"
+                  class="mt-1 w-full font-mono"
+                  placeholder="UBSWCHZH80A"
+                  :invalid="!!bankingErrors.bic"
+                />
+                <span
+                  v-if="bankingErrors.bic"
+                  class="text-[11px] text-rose-600 mt-1 block"
+                >
+                  {{ bankingErrors.bic }}
+                </span>
+              </label>
+
+              <label class="block">
+                <span class="text-[12px] text-surface-600">Nom de la banque</span>
+                <InputText
+                  v-model="bankingForm.bankName"
+                  class="mt-1 w-full"
+                  placeholder="UBS Switzerland AG"
+                  :invalid="!!bankingErrors.bankName"
+                />
+                <span
+                  v-if="bankingErrors.bankName"
+                  class="text-[11px] text-rose-600 mt-1 block"
+                >
+                  {{ bankingErrors.bankName }}
+                </span>
+              </label>
+
+              <label class="block col-span-2">
+                <span class="text-[12px] text-surface-600">
+                  Titulaire du compte
+                  <span class="text-rose-600">*</span>
+                </span>
+                <InputText
+                  v-model="bankingForm.accountHolder"
+                  class="mt-1 w-full"
+                  placeholder="Nom de l'association"
+                  :invalid="!!bankingErrors.accountHolder"
+                />
+                <span
+                  v-if="bankingErrors.accountHolder"
+                  class="text-[11px] text-rose-600 mt-1 block"
+                >
+                  {{ bankingErrors.accountHolder }}
+                </span>
+              </label>
+
+              <label class="block col-span-2">
+                <span class="text-[12px] text-surface-600">Instructions de paiement</span>
+                <Textarea
+                  v-model="bankingForm.paymentInstructions"
+                  class="mt-1 w-full"
+                  rows="3"
+                  placeholder="Indiquer le prénom et le nom du joueur en référence du virement."
+                  :invalid="!!bankingErrors.paymentInstructions"
+                />
+                <span
+                  v-if="bankingErrors.paymentInstructions"
+                  class="text-[11px] text-rose-600 mt-1 block"
+                >
+                  {{ bankingErrors.paymentInstructions }}
+                </span>
+                <span
+                  v-else
+                  class="text-[11px] text-surface-500 mt-1 block"
+                >
+                  Texte libre concaténé après l'IBAN dans les emails / écran
+                  paiement.
+                </span>
+              </label>
+            </div>
+
+            <!-- Footer actions banking -->
+            <div
+              class="pt-4 border-t border-surface-200 flex items-center gap-2 justify-end"
+            >
+              <span
+                v-if="isSavedThis('banking')"
+                class="text-[12px] text-emerald-700 flex items-center gap-1 mr-auto"
+              >
+                <Check
+                  :size="14"
+                  :stroke-width="2"
+                />
+                Infos bancaires enregistrées
+              </span>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="isSavingThis('banking')"
+                @click="resetBanking"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary btn-sm"
+                :disabled="isSavingThis('banking')"
+                @click="saveBanking"
+              >
+                <template v-if="isSavingThis('banking')">
+                  Sauvegarde…
+                </template>
+                <template v-else>
+                  Sauvegarder
+                </template>
+              </button>
+            </div>
           </div>
         </template>
 
@@ -2368,6 +3643,436 @@ watch(
           </div>
         </template>
 
+        <!-- ============ Section: COTISATION TYPES ============ -->
+        <template v-else-if="activeSection === 'cotisations'">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-[16px] font-semibold">
+                Types de cotisation
+              </h2>
+              <p class="text-[13px] text-surface-500">
+                Référentiel des types de cotisation annuels (CHF/an/joueur).
+                Renommer ou repricer un type se reflète automatiquement sur
+                toutes les équipes qui le référencent. Pour retirer un type
+                utilisé, archive-le plutôt que le supprimer (cf.
+                <code class="font-mono text-[11px]">docs/main.md</code>).
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="isAddingCotisationType || cotisationTypesStore.loading"
+              @click="startAddCotisationType"
+            >
+              <Plus
+                :size="14"
+                :stroke-width="2"
+              />
+              Ajouter un type
+            </button>
+          </div>
+
+          <!-- Filtre archivées -->
+          <div class="flex items-center gap-2 text-[12px] text-surface-600">
+            <Checkbox
+              v-model="showArchivedCotisations"
+              input-id="show-archived-cotisations"
+              binary
+            />
+            <label
+              for="show-archived-cotisations"
+              class="cursor-pointer select-none"
+            >
+              Afficher les archivées
+              <span
+                v-if="archivedCotisationsCount > 0"
+                class="text-surface-400"
+              >
+                ({{ archivedCotisationsCount }})
+              </span>
+            </label>
+          </div>
+
+          <!-- Liste des types de cotisation -->
+          <div class="border border-surface-200 rounded-md divide-y divide-surface-200">
+            <div
+              v-for="c in visibleCotisations"
+              :key="c.id"
+              class="flex items-center gap-3 px-3 py-2.5"
+            >
+              <Banknote
+                :size="14"
+                :stroke-width="2"
+                class="text-surface-400 shrink-0"
+              />
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-medium text-[13px]">{{ c.name }}</span>
+                  <Pill variant="emerald">
+                    CHF {{ c.price }}
+                  </Pill>
+                  <span class="text-[11px] text-surface-400 font-mono">
+                    #{{ c.displayOrder }}
+                  </span>
+                  <Pill
+                    v-if="!c.active"
+                    variant="amber"
+                  >
+                    archivée
+                  </Pill>
+                </div>
+                <div
+                  v-if="c.description"
+                  class="text-[12px] text-surface-500 mt-0.5 truncate"
+                >
+                  {{ c.description }}
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  @click="startEditCotisationType(c)"
+                >
+                  Éditer
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  @click="toggleCotisationTypeArchive(c)"
+                >
+                  {{ c.active ? 'Archiver' : 'Désarchiver' }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm !text-rose-700"
+                  :disabled="(cotisationTypesStore.lastUsageCount[c.id] ?? 0) > 0"
+                  :title="
+                    (cotisationTypesStore.lastUsageCount[c.id] ?? 0) > 0
+                      ? `Utilisé par ${cotisationTypesStore.lastUsageCount[c.id]} équipe(s) — archivez-le plutôt`
+                      : undefined
+                  "
+                  @click="openDeleteCotisationTypeDialog(c)"
+                >
+                  <Trash2
+                    :size="14"
+                    :stroke-width="2"
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div
+              v-if="visibleCotisations.length === 0"
+              class="px-3 py-6 text-center text-[12px] text-surface-500"
+            >
+              <template v-if="cotisationTypesStore.loading">
+                Chargement…
+              </template>
+              <template v-else-if="!showArchivedCotisations && archivedCotisationsCount > 0">
+                Aucun type de cotisation actif.
+                <button
+                  type="button"
+                  class="text-emerald-700 underline ml-1"
+                  @click="showArchivedCotisations = true"
+                >
+                  Afficher les {{ archivedCotisationsCount }} archivé(s)
+                </button>
+              </template>
+              <template v-else>
+                Aucun type de cotisation configuré. Crée le premier pour
+                pouvoir l'attacher à une équipe.
+              </template>
+            </div>
+          </div>
+
+          <div
+            v-if="cotisationFlashMessage"
+            class="text-[12px] text-emerald-700 flex items-center gap-1"
+          >
+            <Check
+              :size="14"
+              :stroke-width="2"
+            />
+            {{ cotisationFlashMessage }}
+          </div>
+        </template>
+
+        <!-- ============ Section: LICENSE TYPES ============ -->
+        <template v-else-if="activeSection === 'licenses'">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-[16px] font-semibold">
+                Types de licence
+              </h2>
+              <p class="text-[13px] text-surface-500">
+                Grille tarifaire des licences fédérales, organisée par rôle et
+                par niveau. Le prix d'une licence émise sera capturé au moment
+                du paiement, donc une mise à jour ici n'affectera pas les
+                licences déjà émises. Voir
+                <code class="font-mono text-[11px]">docs/main.md</code>
+                (section Licences) pour le modèle complet.
+              </p>
+            </div>
+          </div>
+
+          <!-- Filtre archivés -->
+          <div class="flex items-center gap-2 text-[12px] text-surface-600">
+            <Checkbox
+              v-model="showArchivedLicenseTypes"
+              input-id="show-archived-license-types"
+              binary
+            />
+            <label
+              for="show-archived-license-types"
+              class="cursor-pointer select-none"
+            >
+              Afficher les archivés
+              <span
+                v-if="archivedLicenseTypesCount > 0"
+                class="text-surface-400"
+              >
+                ({{ archivedLicenseTypesCount }})
+              </span>
+            </label>
+          </div>
+
+          <!-- 4 fieldsets, un par rôle -->
+          <div class="space-y-4">
+            <div
+              v-for="role in LICENSE_ROLES"
+              :key="role"
+              class="border border-surface-200 rounded-md overflow-hidden"
+            >
+              <div
+                class="flex items-center justify-between gap-2 px-3 py-2 bg-surface-50 border-b border-surface-200"
+              >
+                <div class="flex items-center gap-2">
+                  <BadgeCheck
+                    :size="14"
+                    :stroke-width="2"
+                    class="text-surface-400"
+                  />
+                  <h3 class="text-[13px] font-semibold">
+                    {{ LICENSE_ROLE_LABEL[role] }}
+                  </h3>
+                  <span class="text-[11px] text-surface-400">
+                    {{ visibleLicenseTypesFor(role).length }} niveau{{
+                      visibleLicenseTypesFor(role).length > 1 ? 'x' : ''
+                    }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  :disabled="isAddingLicenseType || licenseTypesStore.loading"
+                  @click="startAddLicenseType(role)"
+                >
+                  <Plus
+                    :size="14"
+                    :stroke-width="2"
+                  />
+                  Ajouter
+                </button>
+              </div>
+
+              <div class="divide-y divide-surface-200">
+                <div
+                  v-for="t in visibleLicenseTypesFor(role)"
+                  :key="t.id"
+                  class="flex items-center gap-3 px-3 py-2.5"
+                >
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="font-medium text-[13px]">{{ t.name }}</span>
+                      <Pill
+                        v-if="t.level !== null"
+                        variant="sky"
+                      >
+                        Niveau {{ t.level }}
+                      </Pill>
+                      <Pill variant="emerald">
+                        CHF {{ t.fee }}
+                      </Pill>
+                      <span class="text-[11px] text-surface-400 font-mono">
+                        #{{ t.displayOrder }}
+                      </span>
+                      <Pill
+                        v-if="!t.active"
+                        variant="amber"
+                      >
+                        archivé
+                      </Pill>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm"
+                      @click="startEditLicenseType(t)"
+                    >
+                      Éditer
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm"
+                      @click="toggleLicenseTypeArchive(t)"
+                    >
+                      {{ t.active ? 'Archiver' : 'Désarchiver' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm !text-rose-700"
+                      @click="openDeleteLicenseTypeDialog(t)"
+                    >
+                      <Trash2
+                        :size="14"
+                        :stroke-width="2"
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  v-if="visibleLicenseTypesFor(role).length === 0"
+                  class="px-3 py-4 text-center text-[12px] text-surface-500"
+                >
+                  <template v-if="licenseTypesStore.loading">
+                    Chargement…
+                  </template>
+                  <template v-else>
+                    Aucun niveau configuré pour ce rôle.
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="licenseTypeFlashMessage"
+            class="text-[12px] text-emerald-700 flex items-center gap-1"
+          >
+            <Check
+              :size="14"
+              :stroke-width="2"
+            />
+            {{ licenseTypeFlashMessage }}
+          </div>
+        </template>
+
+        <!-- ============ Section: MATCH TYPES ============ -->
+        <template v-else-if="activeSection === 'matchTypes'">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-[16px] font-semibold">
+                Match types
+              </h2>
+              <p class="text-[13px] text-surface-500">
+                Référentiel des types de compétition (CSJC, AFBB, Amical, …).
+                Chaque type définit la taille de court requise et les officiels
+                à fournir à domicile et à l'extérieur. Désactive un type pour
+                le retirer des pickers de création de match sans perdre
+                l'historique.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="matchTypesStore.loading"
+              @click="openCreateMatchTypeDialog"
+            >
+              <Plus
+                :size="14"
+                :stroke-width="2"
+              />
+              Nouveau type
+            </button>
+          </div>
+
+          <!-- Match types list -->
+          <div class="border border-surface-200 rounded-md divide-y divide-surface-200">
+            <div
+              v-for="mt in matchTypesStore.matchTypes"
+              :key="mt.id"
+              class="flex items-center gap-3 px-3 py-2.5"
+            >
+              <span
+                class="inline-block h-3 w-3 rounded-full border border-surface-200 shrink-0"
+                :style="{ backgroundColor: mt.color }"
+              />
+              <span class="font-medium text-[13px]">{{ mt.name }}</span>
+              <Pill variant="slate">
+                {{ COURT_SIZE_LABEL[mt.requiredCourtSize] }}
+              </Pill>
+              <span class="text-[11px] text-surface-500">
+                Home : {{ formatOfficialReqs(mt.homeOfficialRequirements) }}
+              </span>
+              <span class="text-[11px] text-surface-500">
+                Away : {{ mt.awayOfficialCount }} officiel{{ mt.awayOfficialCount > 1 ? 's' : '' }}
+              </span>
+              <Pill
+                v-if="!mt.active"
+                variant="amber"
+              >
+                inactif
+              </Pill>
+              <span class="text-[11px] text-surface-400 font-mono ml-2">
+                /matchTypes/{{ mt.id }}
+              </span>
+              <div class="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  @click="openEditMatchTypeDialog(mt)"
+                >
+                  Éditer
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  @click="toggleMatchTypeActive(mt)"
+                >
+                  {{ mt.active ? 'Désactiver' : 'Activer' }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm !text-rose-700"
+                  @click="openDeleteMatchTypeDialog(mt)"
+                >
+                  <Trash2
+                    :size="14"
+                    :stroke-width="2"
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div
+              v-if="matchTypesStore.matchTypes.length === 0"
+              class="px-3 py-6 text-center text-[12px] text-surface-500"
+            >
+              <template v-if="matchTypesStore.loading">
+                Chargement…
+              </template>
+              <template v-else>
+                Aucun type de match configuré. Crée le premier pour pouvoir
+                l'utiliser depuis la création de match.
+              </template>
+            </div>
+          </div>
+
+          <div
+            v-if="matchTypeFlashMessage"
+            class="text-[12px] text-emerald-700 flex items-center gap-1"
+          >
+            <Check
+              :size="14"
+              :stroke-width="2"
+            />
+            {{ matchTypeFlashMessage }}
+          </div>
+        </template>
+
         <!-- ============ Section: CLOSURE PERIODS ============ -->
         <template v-else-if="activeSection === 'closurePeriods'">
           <div class="flex items-start justify-between gap-4">
@@ -2580,7 +4285,7 @@ watch(
                 :size="32"
               />
               <div class="flex flex-col min-w-0">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                   <span class="font-medium text-[13px] truncate">
                     {{ admin.displayName }}
                   </span>
@@ -2595,10 +4300,28 @@ watch(
                     rootAdmin
                   </Pill>
                   <Pill
-                    v-else
+                    v-if="admin.roles.includes('admin')"
                     variant="rose"
                   >
                     admin
+                  </Pill>
+                  <Pill
+                    v-if="admin.roles.includes('coach')"
+                    variant="sky"
+                  >
+                    coach
+                  </Pill>
+                  <Pill
+                    v-if="admin.roles.includes('official')"
+                    variant="emerald"
+                  >
+                    official
+                  </Pill>
+                  <Pill
+                    v-if="admin.roles.includes('treasurer')"
+                    variant="violet"
+                  >
+                    treasurer
                   </Pill>
                 </div>
                 <span class="text-[11px] text-surface-500 truncate">
@@ -2606,6 +4329,15 @@ watch(
                 </span>
               </div>
               <div class="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  :disabled="isSavingThis('adminTeam')"
+                  title="Gérer les rôles (admin / coach / official / treasurer)"
+                  @click="openRolesDialog(admin)"
+                >
+                  Rôles
+                </button>
                 <button
                   v-if="admin.isRootAdmin"
                   type="button"
@@ -2764,6 +4496,137 @@ watch(
           </template>
           <template v-else>
             Envoyer l'invitation
+          </template>
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- =================== Manage roles dialog =================== -->
+    <Dialog
+      v-model:visible="rolesDialogOpen"
+      modal
+      :draggable="false"
+      :style="{ width: '460px' }"
+      header="Gérer les rôles"
+    >
+      <div
+        v-if="rolesDialogTarget"
+        class="space-y-3 pt-1"
+      >
+        <div class="flex items-center gap-2 text-[13px]">
+          <Avatar
+            :name="rolesDialogTarget.displayName"
+            :size="28"
+          />
+          <div class="flex flex-col min-w-0">
+            <span class="font-medium truncate">
+              {{ rolesDialogTarget.displayName }}
+            </span>
+            <span class="text-[11px] text-surface-500 truncate">
+              {{ rolesDialogTarget.email }}
+            </span>
+          </div>
+        </div>
+
+        <p class="text-[12px] text-surface-500">
+          Les rôles sont cumulables (cf.
+          <code class="font-mono text-[11px]">/users.roles</code>). `admin`
+          est verrouillé ici — la révocation passe par "Retirer".
+        </p>
+
+        <div class="space-y-2">
+          <label class="flex items-start gap-2 text-[13px]">
+            <Checkbox
+              :model-value="true"
+              :binary="true"
+              disabled
+            />
+            <div class="flex-1">
+              <div class="font-medium">
+                admin
+              </div>
+              <div class="text-[11px] text-surface-500">
+                Accès complet à toute l'app (verrouillé depuis cette UI).
+              </div>
+            </div>
+          </label>
+          <label class="flex items-start gap-2 text-[13px]">
+            <Checkbox
+              v-model="rolesDialogTarget.coach"
+              :binary="true"
+            />
+            <div class="flex-1">
+              <div class="font-medium">
+                coach
+              </div>
+              <div class="text-[11px] text-surface-500">
+                Scope coach via <code class="font-mono text-[10px]">/users.teamIds</code>.
+              </div>
+            </div>
+          </label>
+          <label class="flex items-start gap-2 text-[13px]">
+            <Checkbox
+              v-model="rolesDialogTarget.official"
+              :binary="true"
+            />
+            <div class="flex-1">
+              <div class="font-medium">
+                official
+              </div>
+              <div class="text-[11px] text-surface-500">
+                Capacité officiel app (lié à <code class="font-mono text-[10px]">/members.officialLevel</code> côté métier).
+              </div>
+            </div>
+          </label>
+          <label class="flex items-start gap-2 text-[13px]">
+            <Checkbox
+              v-model="rolesDialogTarget.treasurer"
+              :binary="true"
+            />
+            <div class="flex-1">
+              <div class="font-medium">
+                treasurer
+              </div>
+              <div class="text-[11px] text-surface-500">
+                Marque les cotisations comme payées. <strong>Capability comité</strong>&nbsp;:
+                peut aussi enregistrer un <strong>montant partiel</strong>
+                (arrangement in extremis) — réservée à <code class="font-mono text-[10px]">rootAdmin</code>
+                et <code class="font-mono text-[10px]">treasurer</code>.
+              </div>
+            </div>
+          </label>
+        </div>
+
+        <div
+          v-if="rolesDialogError"
+          class="text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2.5 py-2 flex items-center gap-2"
+        >
+          <TriangleAlert
+            :size="13"
+            :stroke-width="2"
+          />
+          {{ rolesDialogError }}
+        </div>
+      </div>
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="closeRolesDialog"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          :disabled="isSavingThis('adminTeam')"
+          @click="submitRolesDialog"
+        >
+          <template v-if="isSavingThis('adminTeam')">
+            Sauvegarde…
+          </template>
+          <template v-else>
+            Enregistrer
           </template>
         </button>
       </template>
@@ -2930,6 +4793,558 @@ watch(
           type="button"
           class="btn btn-primary btn-sm !bg-rose-600 hover:!bg-rose-700"
           @click="confirmDeleteTag"
+        >
+          <Trash2
+            :size="14"
+            :stroke-width="2"
+          />
+          Supprimer définitivement
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- =================== CotisationType create / edit dialog =================== -->
+    <Dialog
+      v-model:visible="isCotisationTypeDialogOpen"
+      modal
+      :draggable="false"
+      :style="{ width: '520px' }"
+      :header="isAddingCotisationType ? 'Créer un type de cotisation' : 'Modifier le type de cotisation'"
+    >
+      <div class="space-y-3 pt-1">
+        <label class="block">
+          <span class="text-[12px] text-surface-600">Nom</span>
+          <InputText
+            v-model="cotisationDraft.name"
+            class="mt-1 w-full"
+            placeholder="Ex. Junior"
+          />
+        </label>
+
+        <label class="block">
+          <span class="text-[12px] text-surface-600">Description</span>
+          <Textarea
+            v-model="cotisationDraft.description"
+            rows="2"
+            auto-resize
+            class="mt-1 w-full"
+            placeholder="Périmètre, conditions, …"
+          />
+        </label>
+
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Prix (CHF / an / joueur)</span>
+            <InputNumber
+              v-model="cotisationDraft.price"
+              :min="0"
+              mode="currency"
+              currency="CHF"
+              locale="fr-CH"
+              input-class="!w-full"
+              class="mt-1 w-full"
+            />
+          </label>
+          <label class="block">
+            <span class="text-[12px] text-surface-600">
+              Ordre <span class="text-surface-400">(opt.)</span>
+            </span>
+            <InputNumber
+              v-model="cotisationDraft.displayOrder"
+              :min="0"
+              input-class="!w-full"
+              class="mt-1 w-full"
+            />
+          </label>
+        </div>
+
+        <p
+          v-if="cotisationError"
+          class="text-[11px] text-rose-600"
+        >
+          {{ cotisationError }}
+        </p>
+      </div>
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="cancelCotisationTypeEdit"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          @click="commitCotisationType"
+        >
+          {{ isAddingCotisationType ? 'Créer' : 'Sauvegarder' }}
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- =================== Delete cotisation type dialog =================== -->
+    <Dialog
+      v-model:visible="isDeleteCotisationTypeDialogOpen"
+      modal
+      :draggable="false"
+      :style="{ width: '460px' }"
+      header="Supprimer le type de cotisation"
+    >
+      <div
+        v-if="deleteCotisationTypeDialogTarget"
+        class="space-y-3 pt-1"
+      >
+        <div class="flex items-center gap-2 flex-wrap">
+          <Banknote
+            :size="14"
+            :stroke-width="2"
+            class="text-surface-400"
+          />
+          <span class="font-medium text-[13px]">
+            {{ deleteCotisationTypeDialogTarget.name }}
+          </span>
+          <Pill variant="emerald">
+            CHF {{ deleteCotisationTypeDialogTarget.price }}
+          </Pill>
+        </div>
+
+        <p
+          v-if="deleteCotisationTypeDialogLoading"
+          class="text-[12px] text-surface-500"
+        >
+          Vérification de l'usage…
+        </p>
+        <template v-else>
+          <p
+            v-if="deleteCotisationTypeDialogUsageCount > 0"
+            class="text-[13px] text-surface-700"
+          >
+            Ce type de cotisation est utilisé par
+            <strong>{{ deleteCotisationTypeDialogUsageCount }} équipe(s)</strong>.
+            Tu ne peux pas le supprimer ; archive-le plutôt.
+          </p>
+          <p
+            v-else-if="deleteCotisationTypeDialogUsageCount === 0"
+            class="text-[13px] text-surface-700"
+          >
+            Ce type de cotisation n'est référencé par aucune équipe. La
+            suppression est définitive.
+          </p>
+          <p
+            v-else
+            class="text-[13px] text-rose-700"
+          >
+            Impossible de vérifier l'usage. Réessaie ou archive plutôt.
+          </p>
+        </template>
+      </div>
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="closeDeleteCotisationTypeDialog"
+        >
+          {{ deleteCotisationTypeDialogUsageCount === 0 ? 'Annuler' : 'Fermer' }}
+        </button>
+        <button
+          v-if="deleteCotisationTypeDialogUsageCount > 0 && deleteCotisationTypeDialogTarget?.active"
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="archiveFromDeleteCotisationTypeDialog"
+        >
+          Archiver à la place
+        </button>
+        <button
+          v-if="deleteCotisationTypeDialogUsageCount === 0 && !deleteCotisationTypeDialogLoading"
+          type="button"
+          class="btn btn-primary btn-sm !bg-rose-600 hover:!bg-rose-700"
+          @click="confirmDeleteCotisationType"
+        >
+          <Trash2
+            :size="14"
+            :stroke-width="2"
+          />
+          Supprimer définitivement
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- =================== License type create / edit dialog =================== -->
+    <Dialog
+      v-model:visible="isLicenseTypeDialogOpen"
+      modal
+      :draggable="false"
+      :style="{ width: '560px' }"
+      :header="isAddingLicenseType ? 'Créer un type de licence' : 'Modifier le type de licence'"
+    >
+      <div class="space-y-3 pt-1">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Rôle</span>
+            <Select
+              v-model="licenseTypeDraft.role"
+              :options="LICENSE_ROLE_OPTIONS"
+              option-label="label"
+              option-value="value"
+              class="mt-1 w-full"
+            />
+          </label>
+          <label class="block">
+            <span class="text-[12px] text-surface-600">
+              Ordre <span class="text-surface-400">(opt.)</span>
+            </span>
+            <InputNumber
+              v-model="licenseTypeDraft.displayOrder"
+              :min="0"
+              input-class="!w-full"
+              class="mt-1 w-full"
+            />
+          </label>
+        </div>
+
+        <label class="block">
+          <span class="text-[12px] text-surface-600">Nom</span>
+          <InputText
+            v-model="licenseTypeDraft.name"
+            class="mt-1 w-full"
+            placeholder="Ex. Joueur Ligue A, Officiel J+S, …"
+          />
+        </label>
+
+        <div class="grid grid-cols-2 gap-3">
+          <label
+            v-if="draftRoleRequiresLevel"
+            class="block"
+          >
+            <span class="text-[12px] text-surface-600">Niveau</span>
+            <InputNumber
+              v-model="licenseTypeDraft.level"
+              :min="0"
+              input-class="!w-full"
+              class="mt-1 w-full"
+            />
+          </label>
+          <div
+            v-else
+            class="block text-[11px] text-surface-500 self-center"
+          >
+            Le rôle "Joueur" ne porte pas de niveau de licence ; les
+            différentes licences joueurs sont distinguées par leur nom.
+          </div>
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Prix (CHF)</span>
+            <InputNumber
+              v-model="licenseTypeDraft.fee"
+              :min="0"
+              mode="currency"
+              currency="CHF"
+              locale="fr-CH"
+              input-class="!w-full"
+              class="mt-1 w-full"
+            />
+          </label>
+        </div>
+
+        <p
+          v-if="licenseTypeError"
+          class="text-[11px] text-rose-600"
+        >
+          {{ licenseTypeError }}
+        </p>
+      </div>
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="cancelLicenseTypeEdit"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          @click="commitLicenseType"
+        >
+          {{ isAddingLicenseType ? 'Créer' : 'Sauvegarder' }}
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- =================== Delete license type dialog =================== -->
+    <Dialog
+      v-model:visible="isDeleteLicenseTypeDialogOpen"
+      modal
+      :draggable="false"
+      :style="{ width: '460px' }"
+      header="Supprimer le type de licence"
+    >
+      <div
+        v-if="deleteLicenseTypeDialogTarget"
+        class="space-y-3 pt-1"
+      >
+        <div class="flex items-center gap-2 flex-wrap">
+          <BadgeCheck
+            :size="14"
+            :stroke-width="2"
+            class="text-surface-400"
+          />
+          <span class="font-medium text-[13px]">
+            {{ LICENSE_ROLE_LABEL[deleteLicenseTypeDialogTarget.role] }}
+            — {{ deleteLicenseTypeDialogTarget.name }}
+          </span>
+          <Pill
+            v-if="deleteLicenseTypeDialogTarget.level !== null"
+            variant="sky"
+          >
+            Niveau {{ deleteLicenseTypeDialogTarget.level }}
+          </Pill>
+          <Pill variant="emerald">
+            CHF {{ deleteLicenseTypeDialogTarget.fee }}
+          </Pill>
+        </div>
+        <p class="text-[13px] text-surface-700">
+          La suppression est définitive. Si tu hésites, archive plutôt — le
+          type sera retiré des pickers de création de licence tout en restant
+          résolvable sur l'historique.
+        </p>
+      </div>
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="closeDeleteLicenseTypeDialog"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm !bg-rose-600 hover:!bg-rose-700"
+          @click="confirmDeleteLicenseType"
+        >
+          <Trash2
+            :size="14"
+            :stroke-width="2"
+          />
+          Supprimer définitivement
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- =================== Match type create/edit dialog =================== -->
+    <Dialog
+      v-model:visible="isMatchTypeDialogOpen"
+      modal
+      :draggable="false"
+      :style="{ width: '600px' }"
+      :header="matchTypeDialogMode === 'edit' ? 'Éditer un type de match' : 'Nouveau type de match'"
+    >
+      <div class="space-y-4 pt-1">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Nom</span>
+            <InputText
+              v-model="matchTypeDraft.name"
+              placeholder="Ex. CSJC, AFBB, Amical"
+              class="mt-1 w-full"
+            />
+          </label>
+          <label class="block">
+            <span class="text-[12px] text-surface-600">Court requis</span>
+            <Select
+              v-model="matchTypeDraft.requiredCourtSize"
+              :options="COURT_SIZE_OPTIONS"
+              option-label="label"
+              option-value="value"
+              class="mt-1 w-full"
+            />
+          </label>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[12px] text-surface-600">
+              Officiels away
+              <span class="text-surface-400">(nombre à fournir)</span>
+            </span>
+            <InputNumber
+              v-model="matchTypeDraft.awayOfficialCount"
+              :min="0"
+              input-class="!w-full"
+              class="mt-1 w-full"
+            />
+          </label>
+          <div class="block">
+            <span class="text-[12px] text-surface-600">Couleur (chip)</span>
+            <div class="mt-1 flex items-center gap-2">
+              <input
+                v-model="matchTypeDraft.color"
+                type="color"
+                class="h-9 w-12 rounded border border-surface-200 cursor-pointer"
+              >
+              <InputText
+                v-model="matchTypeDraft.color"
+                placeholder="#10b981"
+                class="flex-1"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Home official requirements editor -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <span class="text-[12px] text-surface-600 font-medium">
+                Officiels home
+              </span>
+              <p class="text-[11px] text-surface-400">
+                Une ligne par niveau requis. Ex. "1 arbitre N2 + 2 arbitres N1".
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              @click="addOfficialRequirement"
+            >
+              <Plus
+                :size="14"
+                :stroke-width="2"
+              />
+              Ajouter une exigence
+            </button>
+          </div>
+
+          <div
+            v-if="matchTypeDraft.homeOfficialRequirements.length === 0"
+            class="text-[11px] text-surface-400 px-2 py-2 border border-dashed border-surface-200 rounded"
+          >
+            Aucune exigence — ce type ne demande pas d'officiel à domicile.
+          </div>
+
+          <div
+            v-for="(req, idx) in matchTypeDraft.homeOfficialRequirements"
+            :key="idx"
+            class="flex items-center gap-2"
+          >
+            <label class="block">
+              <span class="text-[11px] text-surface-500">Niveau</span>
+              <InputNumber
+                v-model="req.level"
+                :min="0"
+                input-class="!w-20"
+                class="mt-0.5"
+              />
+            </label>
+            <label class="block">
+              <span class="text-[11px] text-surface-500">Quantité</span>
+              <InputNumber
+                v-model="req.count"
+                :min="1"
+                input-class="!w-20"
+                class="mt-0.5"
+              />
+            </label>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm !text-rose-700 self-end mb-0.5"
+              @click="removeOfficialRequirement(idx)"
+            >
+              <Trash2
+                :size="14"
+                :stroke-width="2"
+              />
+            </button>
+          </div>
+        </div>
+
+        <label class="flex items-center gap-2 cursor-pointer text-[12px]">
+          <Checkbox
+            v-model="matchTypeDraft.active"
+            binary
+            input-id="match-type-active"
+          />
+          <span>
+            Type actif
+            <span class="text-surface-400">
+              (sinon, retiré des pickers de création de match)
+            </span>
+          </span>
+        </label>
+
+        <div
+          v-if="matchTypeError"
+          class="text-[11px] text-rose-600"
+        >
+          {{ matchTypeError }}
+        </div>
+      </div>
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="closeMatchTypeDialog"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          @click="commitMatchType"
+        >
+          {{ matchTypeDialogMode === 'edit' ? 'Sauvegarder' : 'Créer' }}
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- =================== Delete match type dialog =================== -->
+    <Dialog
+      v-model:visible="isDeleteMatchTypeDialogOpen"
+      modal
+      :draggable="false"
+      :style="{ width: '460px' }"
+      header="Supprimer le type de match"
+    >
+      <div
+        v-if="deleteMatchTypeDialogTarget"
+        class="space-y-3 pt-1"
+      >
+        <div class="flex items-center gap-2 flex-wrap">
+          <span
+            class="inline-block h-3 w-3 rounded-full border border-surface-200 shrink-0"
+            :style="{ backgroundColor: deleteMatchTypeDialogTarget.color }"
+          />
+          <span class="font-medium text-[13px]">
+            {{ deleteMatchTypeDialogTarget.name }}
+          </span>
+          <Pill variant="slate">
+            {{ COURT_SIZE_LABEL[deleteMatchTypeDialogTarget.requiredCourtSize] }}
+          </Pill>
+        </div>
+        <p class="text-[13px] text-surface-700">
+          La suppression est définitive. Si ce type est déjà utilisé par un
+          ou plusieurs matchs, désactive-le plutôt — le type sera retiré des
+          pickers de création tout en restant résolvable sur l'historique.
+        </p>
+        <div
+          v-if="matchTypesStore.error"
+          class="text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1.5"
+        >
+          {{ matchTypesStore.error }}
+        </div>
+      </div>
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          @click="closeDeleteMatchTypeDialog"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm !bg-rose-600 hover:!bg-rose-700"
+          @click="confirmDeleteMatchType"
         >
           <Trash2
             :size="14"

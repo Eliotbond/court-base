@@ -140,8 +140,11 @@ function bookingsPerWeek(row: SeasonRow): string {
 
 // ---------------------------------------------------------------------------
 // Action helpers — chacune route vers le store (optimistic mutation).
-// L'activation réelle devrait passer par le dry-run preview (#7), pour
-// l'instant on fait un fast-path direct depuis la liste.
+//
+// Activation : flip direct du status `draft → active`. Pas de preview/dry-run :
+// les bookings ne sont plus générés automatiquement, ils sont ajoutés
+// manuellement via le wizard `/bookings` (option "Jusqu'à la fin de la
+// saison"). Voir docs/main.md → Season lifecycle.
 // ---------------------------------------------------------------------------
 
 function isPending(row: SeasonRow): boolean {
@@ -149,10 +152,7 @@ function isPending(row: SeasonRow): boolean {
 }
 
 function onActivate(row: SeasonRow): void {
-  // B2 (Eliot, 12 mai 2026) : l'activation doit TOUJOURS passer par le
-  // dry-run preview (#7 du design). Pas de fast-path direct depuis la liste —
-  // l'admin doit pouvoir review les bookings générés avant commit.
-  void router.push({ name: 'season-activate', params: { id: row.id } })
+  void store.activate(row.id)
 }
 
 function onArchive(row: SeasonRow): void {

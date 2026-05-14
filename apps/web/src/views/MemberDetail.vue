@@ -37,8 +37,8 @@ const { colorsFor, labelFor } = useRoleColors()
 const ProfileTab = defineAsyncComponent(
   () => import('@/components/member-detail/ProfileTab.vue'),
 )
-const DuesTab = defineAsyncComponent(
-  () => import('@/components/member-detail/DuesTab.vue'),
+const CotisationsTab = defineAsyncComponent(
+  () => import('@/components/member-detail/CotisationsTab.vue'),
 )
 const AttendanceTab = defineAsyncComponent(
   () => import('@/components/member-detail/AttendanceTab.vue'),
@@ -196,6 +196,19 @@ async function confirmArchiveOrReactivate(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function goBack(): void {
+  void router.push({ name: 'members' })
+}
+
+/**
+ * Handler post-suppression définitive — émis par `ProfileTab` (zone de
+ * danger). Le membre n'existe plus en base : on retourne sur la liste. Le
+ * store local (`members.deletePermanently`) a déjà retiré la ligne ; le store
+ * détail sera reset au unmount de la vue.
+ *
+ * Pas de ToastService global pour l'instant (cf. décisions Tier 1) — la
+ * navigation est suffisante comme confirmation visuelle.
+ */
+function onMemberDeleted(): void {
   void router.push({ name: 'members' })
 }
 
@@ -479,8 +492,9 @@ function tabProps() {
     <ProfileTab
       v-if="activeTab === 'profile'"
       v-bind="tabProps()"
+      @deleted="onMemberDeleted"
     />
-    <DuesTab
+    <CotisationsTab
       v-else-if="activeTab === 'dues'"
       v-bind="tabProps()"
     />

@@ -18,14 +18,17 @@ import {
 import { db } from '@/services/firebase'
 import type {
   Category,
+  CotisationType,
   Tag,
   TagColor,
   Team,
   TeamData,
   TeamGender,
+  TeamRegistrationStatus,
   TeamTagRef,
 } from '@club-app/shared-types'
 import { snapToCategory } from './categories.repo'
+import { snapToCotisationType } from './cotisationTypes.repo'
 import { snapToTag } from './tags.repo'
 
 /**
@@ -51,6 +54,7 @@ import { snapToTag } from './tags.repo'
 const TEAMS = 'teams'
 const MEMBERS = 'members'
 const CATEGORIES = 'categories'
+const COTISATIONS = 'cotisations'
 const TAGS = 'tags'
 
 // ---------------------------------------------------------------------------
@@ -89,6 +93,17 @@ export interface TeamCategoryRef {
 }
 
 /**
+ * Type de cotisation résolu pour affichage. Snapshot léger (id + nom + prix) :
+ * la source de vérité reste `/cotisations/{id}`. `null` quand
+ * `team.cotisationId` est absent ou ne pointe vers aucun doc existant.
+ */
+export interface TeamCotisationRef {
+  id: string
+  name: string
+  price: number
+}
+
+/**
  * Tag résolu pour affichage. Snapshot léger : la source de vérité reste
  * `/tags/{id}`. `display` provient du flag par-équipe stocké inline dans
  * `/teams.tags`. Les références orphelines (tag supprimé) sont silencieusement
@@ -111,6 +126,7 @@ export interface TeamRow extends Team {
   playerCount: number
   preferredSlotLabels: string[]
   category: TeamCategoryRef | null
+  cotisation: TeamCotisationRef | null
   ageRange: TeamAgeRange | null
   /**
    * Tags résolus (nom + couleur + display). Ordre préservé depuis
@@ -191,6 +207,22 @@ async function readCategoryMap(): Promise<Map<string, Category>> {
 }
 
 // ---------------------------------------------------------------------------
+// CotisationType resolution — join `team.cotisationId` → `/cotisations/{id}`.
+//
+// Référentiel petit (~dizaines d'entrées max), donc on lit la collection
+// entière en un seul `getDocs` puis on map en mémoire. Pas de N+1.
+// ---------------------------------------------------------------------------
+
+async function readCotisationTypeMap(): Promise<Map<string, CotisationType>> {
+  const snap = await getDocs(
+    query(collection(db, COTISATIONS), orderBy('displayOrder')),
+  )
+  const map = new Map<string, CotisationType>()
+  for (const d of snap.docs) map.set(d.id, snapToCotisationType(d))
+  return map
+}
+
+// ---------------------------------------------------------------------------
 // Tag resolution — join `team.tags[].tagId` → `/tags/{id}`.
 //
 // Référentiel petit (~dizaines d'entrées max), donc on lit la collection
@@ -211,6 +243,7 @@ function snapToRow(
   avatarMap: Map<string, TeamCoachAvatar>,
   categoryMap: Map<string, Category>,
   tagMap: Map<string, Tag>,
+  cotisationTypeMap: Map<string, CotisationType>,
 ): TeamRow {
   const data = snap.data() as TeamData
   const coachIds = data.coachIds ?? []
@@ -220,6 +253,12 @@ function snapToRow(
   const cat = data.categoryId ? categoryMap.get(data.categoryId) ?? null : null
   const category: TeamCategoryRef | null = cat
     ? { id: cat.id, name: cat.name, minAge: cat.minAge, maxAge: cat.maxAge }
+    : null
+  const cot = data.cotisationId
+    ? cotisationTypeMap.get(data.cotisationId) ?? null
+    : null
+  const cotisation: TeamCotisationRef | null = cot
+    ? { id: cot.id, name: cot.name, price: cot.price }
     : null
   const ageRange: TeamAgeRange | null = cat && cat.minAge !== null
     ? { min: cat.minAge, max: cat.maxAge }
@@ -251,6 +290,7 @@ function snapToRow(
     // TODO(firestore): dériver des `timeSlots` rattachés. Vide tant que /venues n'est pas branché.
     preferredSlotLabels: [],
     category,
+    cotisation,
     ageRange,
     tagRefs,
     // TODO(firestore): join `playerIds[]` → /members.firstName/lastName.
@@ -275,12 +315,15 @@ export async function listTeams(): Promise<TeamRow[]> {
     const data = d.data() as TeamData
     if (data.coachIds) allCoachIds.push(...data.coachIds)
   }
-  const [avatarMap, categoryMap, tagMap] = await Promise.all([
+  const [avatarMap, categoryMap, tagMap, cotisationTypeMap] = await Promise.all([
     readCoachAvatars(allCoachIds),
     readCategoryMap(),
     readTagMap(),
+    readCotisationTypeMap(),
   ])
-  return snap.docs.map((d) => snapToRow(d, avatarMap, categoryMap, tagMap))
+  return snap.docs.map((d) =>
+    snapToRow(d, avatarMap, categoryMap, tagMap, cotisationTypeMap),
+  )
 }
 
 /** Récupère une équipe par son id. */
@@ -288,12 +331,13 @@ export async function getTeamById(id: string): Promise<TeamRow | null> {
   const snap = await getDoc(doc(db, TEAMS, id))
   if (!snap.exists()) return null
   const data = snap.data() as TeamData
-  const [avatarMap, categoryMap, tagMap] = await Promise.all([
+  const [avatarMap, categoryMap, tagMap, cotisationTypeMap] = await Promise.all([
     readCoachAvatars(data.coachIds ?? []),
     readCategoryMap(),
     readTagMap(),
+    readCotisationTypeMap(),
   ])
-  return snapToRow(snap, avatarMap, categoryMap, tagMap)
+  return snapToRow(snap, avatarMap, categoryMap, tagMap, cotisationTypeMap)
 }
 
 // ---------------------------------------------------------------------------
@@ -304,11 +348,17 @@ export interface CreateTeamInput {
   name: string
   categoryId: string
   gender: TeamGender
-  duesAmount: number
+  /** Référence vers `/cotisations/{id}` (cf. docs/main.md → 'Cotisations'). */
+  cotisationId: string
   trainingsPerWeek: number
   anticipatedMatches: number
   /** Tags initiaux. Vide par défaut côté caller. */
   tags?: TeamTagRef[]
+  /**
+   * Statut d'ouverture aux inscriptions. Défaut `'closed'` (= "complète") :
+   * l'admin doit explicitement basculer en `'open'` ou `'conditional'`.
+   */
+  registrationStatus?: TeamRegistrationStatus
 }
 
 /**
@@ -323,7 +373,7 @@ export async function createTeam(input: CreateTeamInput): Promise<TeamRow> {
     coachIds: [],
     playerIds: [],
     activeSeasonIds: [],
-    duesAmount: input.duesAmount,
+    cotisationId: input.cotisationId,
     schedulingConstraints: {
       preferredDays: [],
       maxStartTime: '20:00',
@@ -333,6 +383,14 @@ export async function createTeam(input: CreateTeamInput): Promise<TeamRow> {
       coachAvailability: [],
     },
     tags: input.tags ?? [],
+    // Inscriptions self-service désactivées par défaut : l'admin/coach doit
+    // explicitement basculer en `open` ou `conditional` une fois la team prête.
+    registrationStatus: input.registrationStatus ?? 'closed',
+    openHandbook: '',
+    conditionalDescription: '',
+    conditionalCriteria: [],
+    publicTagline: null,
+    publicHeadCoachMemberId: null,
     active: true,
     createdAt: serverTimestamp(),
   })
@@ -347,11 +405,14 @@ export interface UpdateTeamInput {
   name?: string
   categoryId?: string
   gender?: TeamGender
-  duesAmount?: number
+  /** Référence vers `/cotisations/{id}`. */
+  cotisationId?: string
   trainingsPerWeek?: number
   anticipatedMatches?: number
   /** Remplace intégralement le tableau `tags` du doc. */
   tags?: TeamTagRef[]
+  /** Statut d'ouverture aux inscriptions (open/conditional/closed). */
+  registrationStatus?: TeamRegistrationStatus
 }
 
 /**
@@ -366,7 +427,7 @@ export async function updateTeam(
   if (patch.name !== undefined) update.name = patch.name
   if (patch.categoryId !== undefined) update.categoryId = patch.categoryId
   if (patch.gender !== undefined) update.gender = patch.gender
-  if (patch.duesAmount !== undefined) update.duesAmount = patch.duesAmount
+  if (patch.cotisationId !== undefined) update.cotisationId = patch.cotisationId
   if (patch.trainingsPerWeek !== undefined) {
     update['schedulingConstraints.trainingsPerWeek'] = patch.trainingsPerWeek
   }
@@ -374,6 +435,9 @@ export async function updateTeam(
     update['schedulingConstraints.anticipatedMatches'] = patch.anticipatedMatches
   }
   if (patch.tags !== undefined) update.tags = patch.tags
+  if (patch.registrationStatus !== undefined) {
+    update.registrationStatus = patch.registrationStatus
+  }
   if (Object.keys(update).length === 0) return getTeamById(id)
   await updateDoc(doc(db, TEAMS, id), update)
   return getTeamById(id)
@@ -426,11 +490,19 @@ export async function duplicateTeam(id: string): Promise<TeamRow | null> {
     coachIds: [],
     playerIds: [],
     activeSeasonIds: [],
-    duesAmount: data.duesAmount,
+    cotisationId: data.cotisationId,
     schedulingConstraints: data.schedulingConstraints,
     // Les tags sont sémantiquement liés à l'équipe (groupe A vs B, Compet…) :
     // on les conserve sur la copie, l'admin peut les ajuster ensuite.
     tags: data.tags ?? [],
+    // Reset les champs publics de l'app register : la copie démarre fermée,
+    // sans manuel ni accroche — l'admin/coach les ajuste avant de rouvrir.
+    registrationStatus: 'closed',
+    openHandbook: '',
+    conditionalDescription: '',
+    conditionalCriteria: [],
+    publicTagline: null,
+    publicHeadCoachMemberId: null,
     active: false,
     createdAt: serverTimestamp(),
   })

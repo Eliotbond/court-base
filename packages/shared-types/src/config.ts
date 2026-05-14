@@ -42,6 +42,28 @@ export interface ClubContact {
   phone: string
 }
 
+/**
+ * Coordonnées bancaires du club — utilisées pour générer les emails de
+ * demande de paiement (cotisations) et l'écran "Payer" côté
+ * `apps/courtbase-register`. Tous les champs sont `null` tant que l'admin
+ * n'a pas saisi l'info dans Settings → Cotisations / Banque.
+ *
+ * Sécurité : write admin-only (même frontière que le reste de `/config/club`).
+ * Le contenu est diffusé en clair dans les emails de demande de paiement —
+ * pas de PII tierce ici, c'est l'IBAN du club.
+ */
+export interface BankingInfo {
+  iban: string | null
+  bic: string | null
+  bankName: string | null
+  accountHolder: string | null
+  /**
+   * Texte libre affiché dans l'email/écran de paiement (ex. "Indiquer nom +
+   * prénom joueur en référence"). Concaténé après l'IBAN par les templates.
+   */
+  paymentInstructions: string | null
+}
+
 export interface ClubConfigData {
   name: string
   /**
@@ -52,6 +74,12 @@ export interface ClubConfigData {
   logo: string | null
   address: ClubAddress | null
   contact: ClubContact
+  /**
+   * Coordonnées bancaires (RIB/IBAN du club). `null` tant que pas saisi —
+   * dans ce cas les emails de demande de paiement omettent la section
+   * "comment payer" et l'UI register affiche un message d'attente.
+   */
+  banking: BankingInfo | null
   officialsConfig: OfficialsConfig
   duesConfig: DuesConfig
   createdAt: Timestamp
@@ -60,6 +88,25 @@ export interface ClubConfigData {
 }
 
 export type ClubConfig = ClubConfigData & { id: string }
+
+/**
+ * Payload accepté par `settings.repo.upsertClubConfig` côté web — tous les
+ * champs sont optionnels (merge partiel sur le doc singleton via `setDoc({
+ * merge: true })`). Voir `config_club_upsert_pattern` (mémoire).
+ *
+ * Garde ce type **synchrone** avec `ClubConfigData` : tout nouveau champ
+ * éditable depuis Settings doit apparaître ici aussi.
+ */
+export interface ClubConfigPatch {
+  name?: string
+  shortCode?: string
+  logo?: string | null
+  address?: ClubAddress | null
+  contact?: ClubContact
+  banking?: BankingInfo | null
+  officialsConfig?: OfficialsConfig
+  duesConfig?: DuesConfig
+}
 
 // ---------------------------------------------------------------------------
 // Types adjacents lus / écrits par l'écran Settings — collections séparées

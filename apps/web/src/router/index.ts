@@ -76,16 +76,16 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Nouvelle saison', allowedRoles: ADMIN_ONLY },
       },
       {
-        path: 'seasons/:id/activate',
-        name: 'season-activate',
-        component: () => import('@/views/SeasonActivate.vue'),
-        meta: { title: 'Activer la saison', allowedRoles: ADMIN_ONLY },
-      },
-      {
         path: 'bookings',
         name: 'bookings',
         component: () => import('@/views/Bookings.vue'),
         meta: { title: 'Bookings', allowedRoles: ALL_AUTHED },
+      },
+      {
+        path: 'registrations',
+        name: 'registrations',
+        component: () => import('@/views/Inscriptions.vue'),
+        meta: { title: 'Inscriptions', allowedRoles: ADMIN_COACH },
       },
       {
         path: 'officials',
@@ -94,10 +94,10 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Officials', allowedRoles: ADMIN_ONLY },
       },
       {
-        path: 'dues',
-        name: 'dues',
-        component: () => import('@/views/Dues.vue'),
-        meta: { title: 'Dues', allowedRoles: ADMIN_ONLY },
+        path: 'cotisations',
+        name: 'cotisations',
+        component: () => import('@/views/Cotisations.vue'),
+        meta: { title: 'Cotisations', allowedRoles: ADMIN_ONLY },
       },
       {
         path: 'licenses',
@@ -118,10 +118,10 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Attendance', allowedRoles: ADMIN_COACH },
       },
       {
-        path: 'match-types',
-        name: 'match-types',
-        component: placeholder,
-        meta: { title: 'Match types', allowedRoles: ADMIN_ONLY },
+        path: 'matches',
+        name: 'matches',
+        component: () => import('@/views/Matches.vue'),
+        meta: { title: 'Matches', allowedRoles: ADMIN_COACH },
       },
       {
         path: 'court-history',

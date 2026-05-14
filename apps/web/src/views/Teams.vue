@@ -34,11 +34,16 @@ import {
   type TeamStatusFilter,
 } from '@/stores/teams'
 import { useCategoriesStore } from '@/stores/categories'
+import { useCotisationTypesStore } from '@/stores/cotisationTypes'
 import { useTagsStore } from '@/stores/tags'
 import { useMembersStore } from '@/stores/members'
 import type { TeamRow, TeamCoachAvatar } from '@/repositories/teams.repo'
 import type { MemberRow } from '@/repositories/members.repo'
-import type { TeamGender, TeamTagRef } from '@club-app/shared-types'
+import type {
+  TeamGender,
+  TeamRegistrationStatus,
+  TeamTagRef,
+} from '@club-app/shared-types'
 import Avatar from '@/components/ui/Avatar.vue'
 import Chip from '@/components/ui/Chip.vue'
 import Pill from '@/components/ui/Pill.vue'
@@ -47,13 +52,16 @@ import Checkbox from 'primevue/checkbox'
 const router = useRouter()
 const store = useTeamsStore()
 const categoriesStore = useCategoriesStore()
+const cotisationTypesStore = useCotisationTypesStore()
 const tagsStore = useTagsStore()
 
 onMounted(() => {
-  // Loads indépendants — la résolution `categoryId → name` (resp. `tagId → name+color`)
-  // se fait à l'affichage côté stores catégories/tags, pas de dépendance d'ordre.
+  // Loads indépendants — la résolution `categoryId → name`,
+  // `cotisationId → name+price` (resp. `tagId → name+color`) se fait à
+  // l'affichage côté stores, pas de dépendance d'ordre.
   void store.load()
   void categoriesStore.loadActive()
+  void cotisationTypesStore.loadActive()
   void tagsStore.loadActive()
 })
 
@@ -173,6 +181,39 @@ function genderLabel(g: TeamGender): string {
     default:
       return 'Mixte'
   }
+}
+
+// ---------------------------------------------------------------------------
+// Registration status — état d'ouverture aux inscriptions (saison courante).
+//
+// `closed` est rendu comme "Complète" : sémantiquement c'est "pas de place" /
+// "pas d'inscription possible", ce qui correspond à la copie souhaitée par
+// l'utilisateur (cf. demande "complète, ouverte, sous condition").
+// ---------------------------------------------------------------------------
+
+interface RegistrationStatusOption {
+  value: TeamRegistrationStatus
+  label: string
+}
+
+const REGISTRATION_STATUS_OPTIONS: ReadonlyArray<RegistrationStatusOption> = [
+  { value: 'open', label: 'Ouverte' },
+  { value: 'conditional', label: 'Sous condition' },
+  { value: 'closed', label: 'Complète' },
+] as const
+
+function registrationStatusLabel(s: TeamRegistrationStatus): string {
+  return (
+    REGISTRATION_STATUS_OPTIONS.find((o) => o.value === s)?.label ?? 'Complète'
+  )
+}
+
+function registrationStatusVariant(
+  s: TeamRegistrationStatus,
+): 'emerald' | 'amber' | 'slate' {
+  if (s === 'open') return 'emerald'
+  if (s === 'conditional') return 'amber'
+  return 'slate'
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +396,7 @@ function archiveSelected(): void {
 
 // ---------------------------------------------------------------------------
 // Inline edit mode — bascule le body du drawer en mode édition. Couvre les
-// champs identité (`name`, `category`, `gender`), `duesAmount` et deux
+// champs identité (`name`, `category`, `gender`), `cotisationId` et deux
 // contraintes scheduling (`trainingsPerWeek`, `anticipatedMatches`). Les
 // coachs / joueurs / créneaux gardent leur flux dédié.
 // ---------------------------------------------------------------------------
@@ -364,7 +405,7 @@ interface EditTeamForm {
   name: string
   categoryId: string
   gender: TeamGender
-  duesAmount: number
+  cotisationId: string
   trainingsPerWeek: number
   anticipatedMatches: number
   /**
@@ -372,12 +413,14 @@ interface EditTeamForm {
    * Voir docs/main.md → "Tags d'équipes" pour le lifecycle.
    */
   tags: TeamTagRef[]
+  /** État d'inscription affiché à l'admin (et à terme dans l'app register). */
+  registrationStatus: TeamRegistrationStatus
 }
 
 interface EditTeamErrors {
   name: string | null
   categoryId: string | null
-  duesAmount: string | null
+  cotisationId: string | null
 }
 
 const isEditing = ref(false)
@@ -386,21 +429,22 @@ const editForm = reactive<EditTeamForm>({
   name: '',
   categoryId: '',
   gender: 'M',
-  duesAmount: 0,
+  cotisationId: '',
   trainingsPerWeek: 0,
   anticipatedMatches: 0,
   tags: [],
+  registrationStatus: 'closed',
 })
 const editErrors = reactive<EditTeamErrors>({
   name: null,
   categoryId: null,
-  duesAmount: null,
+  cotisationId: null,
 })
 
 function resetEditErrors(): void {
   editErrors.name = null
   editErrors.categoryId = null
-  editErrors.duesAmount = null
+  editErrors.cotisationId = null
 }
 
 function hydrateEditForm(team: TeamRow): void {
@@ -410,11 +454,14 @@ function hydrateEditForm(team: TeamRow): void {
   // n'apparaît plus dans `activeCategories`.
   editForm.categoryId = team.categoryId
   editForm.gender = team.gender
-  editForm.duesAmount = team.duesAmount
+  // Pré-rempli depuis la résolution UI : si la cotisation référencée est
+  // orpheline (supprimée), on retombe sur '' et l'admin doit en choisir une.
+  editForm.cotisationId = team.cotisation?.id ?? ''
   editForm.trainingsPerWeek = team.schedulingConstraints.trainingsPerWeek
   editForm.anticipatedMatches = team.schedulingConstraints.anticipatedMatches
   // Clone défensif : éviter la mutation directe du doc Pinia.
   editForm.tags = team.tags.map((r) => ({ ...r }))
+  editForm.registrationStatus = team.registrationStatus
   resetEditErrors()
 }
 
@@ -433,9 +480,8 @@ function cancelEdit(): void {
 function validateEditForm(): boolean {
   editErrors.name = editForm.name.trim() ? null : 'Nom requis'
   editErrors.categoryId = editForm.categoryId.trim() ? null : 'Catégorie requise'
-  editErrors.duesAmount =
-    editForm.duesAmount >= 0 ? null : 'Cotisation invalide'
-  return !editErrors.name && !editErrors.categoryId && !editErrors.duesAmount
+  editErrors.cotisationId = editForm.cotisationId ? null : 'Type de cotisation requis'
+  return !editErrors.name && !editErrors.categoryId && !editErrors.cotisationId
 }
 
 async function submitEdit(): Promise<void> {
@@ -448,10 +494,11 @@ async function submitEdit(): Promise<void> {
       name: editForm.name.trim(),
       categoryId: editForm.categoryId.trim(),
       gender: editForm.gender,
-      duesAmount: editForm.duesAmount,
+      cotisationId: editForm.cotisationId,
       trainingsPerWeek: editForm.trainingsPerWeek,
       anticipatedMatches: editForm.anticipatedMatches,
       tags: editForm.tags,
+      registrationStatus: editForm.registrationStatus,
     })
     if (ok) {
       isEditing.value = false
@@ -471,16 +518,18 @@ interface CreateTeamForm {
   name: string
   categoryId: string
   gender: TeamGender
-  duesAmount: number
+  cotisationId: string
   trainingsPerWeek: number
   anticipatedMatches: number
   tags: TeamTagRef[]
+  /** État d'inscription initial (défaut "Complète" = inscriptions fermées). */
+  registrationStatus: TeamRegistrationStatus
 }
 
 interface CreateTeamErrors {
   name: string | null
   categoryId: string | null
-  duesAmount: string | null
+  cotisationId: string | null
 }
 
 function makeEmptyForm(): CreateTeamForm {
@@ -488,10 +537,11 @@ function makeEmptyForm(): CreateTeamForm {
     name: '',
     categoryId: '',
     gender: 'M',
-    duesAmount: 350,
+    cotisationId: '',
     trainingsPerWeek: 1,
     anticipatedMatches: 0,
     tags: [],
+    registrationStatus: 'closed',
   }
 }
 
@@ -500,7 +550,7 @@ const createForm = reactive<CreateTeamForm>(makeEmptyForm())
 const createErrors = reactive<CreateTeamErrors>({
   name: null,
   categoryId: null,
-  duesAmount: null,
+  cotisationId: null,
 })
 const submitting = ref(false)
 
@@ -583,7 +633,7 @@ function openCreateDialog(): void {
   Object.assign(createForm, makeEmptyForm())
   createErrors.name = null
   createErrors.categoryId = null
-  createErrors.duesAmount = null
+  createErrors.cotisationId = null
   isCreateDialogOpen.value = true
 }
 
@@ -594,10 +644,9 @@ function closeCreateDialog(): void {
 function validateCreateForm(): boolean {
   createErrors.name = createForm.name.trim() ? null : 'Nom requis'
   createErrors.categoryId = createForm.categoryId.trim() ? null : 'Catégorie requise'
-  createErrors.duesAmount =
-    createForm.duesAmount >= 0 ? null : 'Cotisation invalide'
+  createErrors.cotisationId = createForm.cotisationId ? null : 'Type de cotisation requis'
   return (
-    !createErrors.name && !createErrors.categoryId && !createErrors.duesAmount
+    !createErrors.name && !createErrors.categoryId && !createErrors.cotisationId
   )
 }
 
@@ -609,10 +658,11 @@ async function submitCreate(): Promise<void> {
       name: createForm.name.trim(),
       categoryId: createForm.categoryId.trim(),
       gender: createForm.gender,
-      duesAmount: createForm.duesAmount,
+      cotisationId: createForm.cotisationId,
       trainingsPerWeek: createForm.trainingsPerWeek,
       anticipatedMatches: createForm.anticipatedMatches,
       tags: createForm.tags,
+      registrationStatus: createForm.registrationStatus,
     })
     if (newId) {
       closeCreateDialog()
@@ -956,7 +1006,12 @@ async function removeCoach(memberId: string): Promise<void> {
               Cotis. annuelle
             </div>
             <div class="num font-semibold mt-0.5">
-              CHF {{ team.duesAmount }}
+              <template v-if="team.cotisation">
+                CHF {{ team.cotisation.price }}
+              </template>
+              <template v-else>
+                <span class="text-surface-400">—</span>
+              </template>
             </div>
           </div>
           <div>
@@ -1162,20 +1217,45 @@ async function removeCoach(memberId: string): Promise<void> {
                 </div>
 
                 <label class="block">
-                  <span class="text-[12px] text-surface-600">Cotisation annuelle (CHF)</span>
-                  <InputNumber
-                    v-model="editForm.duesAmount"
-                    :min="0"
-                    :max-fraction-digits="0"
-                    input-class="!w-full"
+                  <span class="text-[12px] text-surface-600">Type de cotisation</span>
+                  <Select
+                    v-model="editForm.cotisationId"
+                    :options="cotisationTypesStore.activeCotisationTypes"
+                    option-label="name"
+                    option-value="id"
+                    placeholder="Sélectionner un type de cotisation…"
                     class="mt-1 w-full"
-                    :invalid="!!editErrors.duesAmount"
-                  />
+                    :invalid="!!editErrors.cotisationId"
+                    :empty-message="cotisationTypesStore.loading ? 'Chargement…' : 'Aucun type de cotisation actif'"
+                  >
+                    <template #option="{ option }">
+                      <div class="flex items-center justify-between gap-2 w-full">
+                        <span>{{ option.name }}</span>
+                        <span class="text-[11px] text-surface-500 num">CHF {{ option.price }}</span>
+                      </div>
+                    </template>
+                  </Select>
                   <span
-                    v-if="editErrors.duesAmount"
+                    v-if="editErrors.cotisationId"
                     class="text-[11px] text-rose-600 mt-1 block"
                   >
-                    {{ editErrors.duesAmount }}
+                    {{ editErrors.cotisationId }}
+                  </span>
+                </label>
+
+                <label class="block">
+                  <span class="text-[12px] text-surface-600">État de l'équipe</span>
+                  <Select
+                    v-model="editForm.registrationStatus"
+                    :options="[...REGISTRATION_STATUS_OPTIONS]"
+                    option-label="label"
+                    option-value="value"
+                    class="mt-1 w-full"
+                  />
+                  <span class="text-[11px] text-surface-500 mt-1 block">
+                    Affichage public dans l'app d'inscription : "Ouverte" =
+                    inscriptions libres, "Sous condition" = inscriptions soumises
+                    à validation, "Complète" = inscriptions fermées.
                   </span>
                 </label>
 
@@ -1300,6 +1380,12 @@ async function removeCoach(memberId: string): Promise<void> {
                     variant="slate"
                   >
                     {{ ageRangeLabel(selectedTeam) }}
+                  </Pill>
+                  <Pill
+                    :variant="registrationStatusVariant(selectedTeam.registrationStatus)"
+                    :title="`Inscriptions : ${registrationStatusLabel(selectedTeam.registrationStatus).toLowerCase()}`"
+                  >
+                    {{ registrationStatusLabel(selectedTeam.registrationStatus) }}
                   </Pill>
                   <Pill
                     v-for="tagRef in selectedTeam.tagRefs.filter((t) => t.display)"
@@ -1643,25 +1729,49 @@ async function removeCoach(memberId: string): Promise<void> {
           </label>
         </div>
 
-        <div class="grid grid-cols-3 gap-3">
-          <label class="block">
-            <span class="text-[12px] text-surface-600">Cotisation (CHF)</span>
-            <InputNumber
-              v-model="createForm.duesAmount"
-              :min="0"
-              :max-fraction-digits="0"
-              input-class="!w-full"
-              class="mt-1 w-full"
-              :invalid="!!createErrors.duesAmount"
-            />
-            <span
-              v-if="createErrors.duesAmount"
-              class="text-[11px] text-rose-600 mt-1 block"
-            >
-              {{ createErrors.duesAmount }}
-            </span>
-          </label>
+        <label class="block">
+          <span class="text-[12px] text-surface-600">Type de cotisation</span>
+          <Select
+            v-model="createForm.cotisationId"
+            :options="cotisationTypesStore.activeCotisationTypes"
+            option-label="name"
+            option-value="id"
+            placeholder="Sélectionner un type de cotisation…"
+            class="mt-1 w-full"
+            :invalid="!!createErrors.cotisationId"
+            :empty-message="cotisationTypesStore.loading ? 'Chargement…' : 'Aucun type de cotisation actif'"
+          >
+            <template #option="{ option }">
+              <div class="flex items-center justify-between gap-2 w-full">
+                <span>{{ option.name }}</span>
+                <span class="text-[11px] text-surface-500 num">CHF {{ option.price }}</span>
+              </div>
+            </template>
+          </Select>
+          <span
+            v-if="createErrors.cotisationId"
+            class="text-[11px] text-rose-600 mt-1 block"
+          >
+            {{ createErrors.cotisationId }}
+          </span>
+        </label>
 
+        <label class="block">
+          <span class="text-[12px] text-surface-600">État de l'équipe</span>
+          <Select
+            v-model="createForm.registrationStatus"
+            :options="[...REGISTRATION_STATUS_OPTIONS]"
+            option-label="label"
+            option-value="value"
+            class="mt-1 w-full"
+          />
+          <span class="text-[11px] text-surface-500 mt-1 block">
+            "Ouverte" = inscriptions libres, "Sous condition" = inscriptions
+            soumises à validation, "Complète" = inscriptions fermées.
+          </span>
+        </label>
+
+        <div class="grid grid-cols-2 gap-3">
           <label class="block">
             <span class="text-[12px] text-surface-600">Entr. / sem.</span>
             <InputNumber

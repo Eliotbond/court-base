@@ -50,13 +50,14 @@ Configs indépendantes des saisons, réutilisables.
 - **Venue / Court / Time Slot** — courts physiques + slots récurrents hebdo. `courtSize` (`small`/`normal`/`large`) **sans hiérarchie**. Courts combinés bloquent plusieurs courts physiques.
 - **Season** — `draft` → `active` → `archived`. L'activation déclenche la génération des bookings.
 - **Booking** — instance concrète d'un slot à une date. `scheduled` | `cancelled` | `freed`. `actionLog` append-only.
-- **MatchType** — type de compétition. Définit `requiredCourtSize`, `homeOfficialRequirements`, `awayOfficialCount`.
+- **MatchType** — type de compétition (CSJC, AFBB, Amical…). Définit `requiredCourtSize`, `homeOfficialRequirements`, `awayOfficialCount`, `color`, `active`. CRUD admin dans Settings → Saison / Compétition → Match types. Suppression refusée si au moins un booking le référence (désactiver via `active: false` à la place).
 - **Team** — persiste cross-saisons via `activeSeasonIds[]`. `schedulingConstraints` + `duesAmount` (CHF par joueur/an). Référence une `Category` (`categoryId`).
 - **Category** — référentiel club (U11, U14, Seniors, Loisirs…). Éditable par l'admin (Settings → Catégories). Porte `name`, `minAge`, `maxAge`, `displayOrder`, `active`. Cf. `firebase.md` (`/categories`).
 - **Closure Period** — manuelle, réutilisable.
 - **Dues** — cotisation joueur/saison. Lifecycle géré par Functions.
 - **Payment Exception Request** — coach demande override d'exclusion ; admin valide.
 - **License Request** — coach (mobile) demande licence joueur ; admin valide.
+- **License Type** — référentiel grille tarifaire (rôle × niveau, prix courant). Cf. section "Licences" ci-dessous.
 - **Attendance / Match Requests / Notifications / Official Assignments** — voir `firebase.md`.
 
 ## Root admin — deux niveaux
@@ -149,6 +150,165 @@ Sert à **différencier visuellement des équipes similaires** : deux U14M (grou
 
 Bornée aux 6 variants du composant `Pill` (cf. `apps/web/src/components/ui/Pill.vue`) — `emerald | sky | amber | rose | violet | slate`. Pas de hex libre pour préserver la cohérence design system. Une couleur peut être utilisée par plusieurs tags (pas de contrainte d'unicité).
 
+## Cotisations
+
+Référentiel éditable par l'admin (Settings → Cotisations). Schéma : voir `firebase.md` (`/cotisations`).
+
+Sert à **standardiser les montants** annuels appliqués aux équipes. Une équipe **référence** une cotisation (`team.cotisationId`) — pas de montant libre côté équipe, le prix vient du référentiel. Permet de renommer / repricer une cotisation à un seul endroit (les équipes reflètent automatiquement la modif).
+
+### Lifecycle
+
+1. **Création** — admin crée une cotisation depuis Settings : `name` (libellé court), `description` (texte libre), `price` (CHF/an/joueur). `active: true` par défaut, `displayOrder` auto-assigné en queue de liste.
+2. **Sélection à la création/édition d'équipe** — le dialog "Nouvelle équipe" et le mode édition du drawer Team listent les cotisations `active: true` via un Select **obligatoire** (équipe sans cotisation = bloquée). Le champ `team.cotisationId` stocke la référence.
+3. **Rename / reprice** — admin renomme ou modifie le prix d'une cotisation : la modif se reflète automatiquement sur toutes les équipes (référence, pas dénormalisation). **Important** : un changement de prix s'applique aux **nouveaux** dues émis (cf. Function `initiateDuesOnPlayerActivation`), pas rétroactivement aux dues déjà créés (le `due.amount` est figé à la création).
+4. **Archive** — admin toggle `active: false` : la cotisation disparaît du picker mais reste résolvable sur les équipes existantes (qui conservent leur `cotisationId`).
+5. **Suppression** — refusée tant qu'au moins une équipe référence la cotisation (le bouton "Supprimer" est désactivé avec tooltip explicatif). Sinon `deleteDoc` autorisé. En pratique, on encourage l'archive plutôt que la suppression.
+
+### Cas d'erreur
+
+- Cotisation référencée par une équipe mais introuvable (`/cotisations/{id}` absent, suppression directe en console Firestore) → la team garde la référence mais l'UI affiche `"Cotisation introuvable"` sur la card. Cas pathologique, pas de log particulier.
+- Pas de cotisations actives au moment de créer une équipe → le dialog "Nouvelle équipe" affiche un état vide avec CTA "Créer une cotisation" → ouvre Settings → Cotisations.
+
+## Mineurs, tuteurs & communications
+
+Les **mineurs** (membres dont `birthDate < now - 18ans`) voient leurs communications — facturation et notifications générales — routées vers leurs **tuteurs** plutôt que vers eux-mêmes. À la majorité, un workflow de transition permet de basculer le routage vers le membre, avec consentement explicite. Schéma : voir `firebase.md` (`/members/{memberId}.comms`, `guardianUserIds`, `birthDate`).
+
+### Définition mineur
+
+- **Mineur** : `birthDate < now - 18ans`.
+- **`birthDate == null`** : traité comme **adulte** pour les defaults. L'UI doit **avertir l'admin** que la date de naissance est absente (impact direct sur le routage des comms).
+- La bascule majeur/mineur est dérivée à la lecture (pas dénormalisée sur le membre) ; seul `comms.majorityTransition` matérialise le passage en base.
+
+### Rôle `parent`
+
+Rôle **additif** sur `/users.roles`, cumulable avec `admin`, `coach`, `official` (cf. mémoire `project_roles_additifs`). Il n'ouvre **pas** d'accès admin : un parent voit uniquement ses **pupilles** — les membres liés via `member.guardianUserIds`.
+
+### Lien tuteur ↔ pupille
+
+`/members/{memberId}.guardianUserIds: string[]` est la **source de vérité** du lien. Conventions :
+
+- Un user peut être tuteur de **N membres** (fratrie).
+- Un membre peut avoir **0..N tuteurs** (parents séparés, tuteur légal multiple, etc.).
+- `firestore.rules` étend la lecture du membre + de la sub `/members/{id}/private/contact` aux UIDs présents dans `guardianUserIds` (cf. `firebase.md`).
+
+### Lien membre ↔ compte d'inscription (`linkedUserId`)
+
+Distinct du lien tuteur : `member.linkedUserId` (et son miroir `user.memberId`) lie un membre à **son propre** compte Firebase Auth (typiquement créé via `apps/courtbase-register` pour un joueur majeur, ou attribué par un admin pour donner accès self-service à un coach/joueur existant).
+
+- **Source de vérité bidirectionnelle** : `member.linkedUserId` ↔ `user.memberId`. Les deux champs doivent rester en sync (un seul user lié par membre, un seul membre lié par user).
+- **Atomicité** : toute liaison/déliaison passe par `setLinkedUser(memberId, uid | null)` côté repo `apps/web/src/repositories/members.repo.ts` — `writeBatch` qui écrit les deux côtés en une seule transaction et nettoie les éventuels orphelins (ancien `linkedUserId` côté member, ancien `memberId` côté user).
+- **UI admin** : page détail membre → card "Compte Firebase Auth" → bouton "Lier un compte" (ouvre `ManageLinkedUserDialog`, recherche par email, validations qu'on ne lie pas un tuteur ni le compte déjà lié).
+- **Rules** : `/members.linkedUserId` est admin-write (rule globale `/members` write admin-only). `/users.memberId` est admin-write également (la rule self-update exclut explicitement ce champ). Pas de chemin client pour s'auto-attribuer un member.
+- **Affichage enrichi** : la card "Compte Firebase Auth" expose `displayName`, `email`, `phone`, `address` (formatée), rôles auth et état du profil (Pill "Profil complété" / "Profil incomplet" basé sur `profileCompletedAt`).
+
+### Defaults comms par âge
+
+Calculés à la création du membre (`createMember`) depuis `isMinor(birthDate)` :
+
+| Âge | `billingRecipients` | `generalRecipients` |
+|---|---|---|
+| Mineur | `['guardians']` | `['guardians']` |
+| Majeur | `['member']` | `['member']` |
+
+`billingRecipients` = factures et notifications de cotisations. `generalRecipients` = comms générales (assignations, planning, rappels, etc.).
+
+### Surcharges autorisées
+
+| Rôle | `billingRecipients` | `generalRecipients` |
+|---|---|---|
+| `admin` | tout (ajouter, retirer, remplacer) | tout |
+| `coach` d'une équipe du membre | aucun droit | peut ajouter `'member'` au tableau (utile pour qu'un mineur d'une équipe reçoive les comms générales en plus de ses tuteurs). Pas de droit de retirer `'guardians'`. |
+
+Toute autre écriture est refusée par les rules.
+
+### Transition à la majorité
+
+State machine portée par `member.comms.majorityTransition` (`null` tant que le membre n'a pas eu 18 ans). Trois étapes + résolution :
+
+1. **Détection (Cloud Function scheduled)** — `onMajorityReached` détecte les membres avec `birthDate + 18ans <= now` ET `majorityTransition == null`. Pour chaque match :
+   - Set `majorityTransition.triggeredAt = now`.
+   - Bascule **immédiate** `comms.billingRecipients = ['member']` (la facturation suit le majeur, indépendamment du flow de consentement).
+   - Écrit un mail aux guardians dans `/pendingEmails` (doc ID `{memberId}_majority_guardian_notify`).
+2. **Réponse guardian** — un tuteur répond via callable `respondGuardianConsent` → set `majorityTransition.guardiansResponse: { answer, respondedAt, respondedByUid }`.
+   - `answer: 'no'` → `comms.generalRecipients = ['member']`, `majorityTransition.resolvedAt = now`. **Fin du flow.**
+   - `answer: 'yes'` → écrit un mail au membre dans `/pendingEmails` (doc ID `{memberId}_majority_member_confirm`). Attente de l'étape 3.
+3. **Confirmation membre** — le membre répond via callable `respondMemberConsent` → set `majorityTransition.memberResponse`, applique :
+   - `answer: 'yes'` → `comms.generalRecipients = ['member', 'guardians']` (le membre confirme garder les tuteurs en copie).
+   - `answer: 'no'` → `comms.generalRecipients = ['member']`.
+   - Dans les deux cas : `majorityTransition.resolvedAt = now`. **Fin du flow.**
+
+Tant que `resolvedAt == null` : les defaults mineurs (`generalRecipients = ['guardians']`) restent appliqués pour les comms générales. Seul `billingRecipients` bascule dès `triggeredAt`.
+
+### Invitation parent (hors scope v1)
+
+Pour l'instant on **suppose que les tuteurs ont déjà un compte** Auth dans le projet. L'admin ajoute un tuteur à un membre via l'UI "Ajouter un tuteur" (recherche par email parmi les `/users` existants — `ManageGuardiansDialog.vue`).
+
+Deux chemins peuvent alimenter `/users` :
+1. **Self-registration via `apps/courtbase-register`** : un parent crée son compte via OAuth/email, complète son profil (`phone`, `address`), puis soumet une registration "pour un enfant". La callable `submitRegistration` ajoute `'parent'` à `user.roles` et — quand le coach valide la registration — lie le user au membre nouvellement créé via `guardianUserIds[]`.
+2. **Admin-driven** (cas existant) : l'admin recherche dans `/users` un compte déjà créé (typiquement parent d'un autre enfant déjà inscrit) et l'attache via `addGuardian()`.
+
+Prochaine itération : étendre `/invitations` pour supporter `role: 'parent'` — un admin enverra une invitation par email à un parent encore non-inscrit, puis lors du sign-in OAuth, `acceptInvitation` créera `/users/{uid}` avec `roles: ['parent']` et liera le user au membre cible. Cf. `admin_invitation_flow` (mémoire) pour le pattern.
+
+## Inscriptions
+
+**Portail public** séparé (`apps/courtbase-register`, hosting target distinct du même projet Firebase) où parents et joueurs créent des `/registrations` que coachs et admins voient dans l'app web. Pas d'auto-inscription dans l'app admin — c'est par cette app dédiée que de nouveaux dossiers entrent dans le club. Schéma complet : voir `firebase.md` (`/registrations`, `/teams/{}/refusalLogs`, extensions `/teams`, `/members`, `/users`).
+
+### Acteurs
+
+- **Visiteur** → sign-up (Google / Apple / email).
+- **User authentifié** → complète son profil (`phone`, `address`), crée des registrations pour lui-même (joueur majeur) ou pour un enfant/pupille (`relationship`).
+- **Parent** : rôle additif sur `/users.roles`, ajouté par la callable `submitRegistration` quand une registration "pour un enfant" est soumise. Lie le user au membre via `member.guardianUserIds`.
+- **Joueur majeur (self-registration)** : lié à un `/members/{id}` via `user.memberId` (et miroir `member.linkedUserId`) — pas de nouveau champ.
+
+### Statut d'ouverture d'équipe
+
+Pilote l'affichage du TeamPicker côté app register (`team.registrationStatus`) :
+
+| Statut | Effet UI |
+|---|---|
+| `open` | Pill verte, sélectionnable, affiche `team.openHandbook`. |
+| `conditional` | Pill ambre, sélectionnable, affiche `team.conditionalDescription` + critères. |
+| `closed` | Pill rouge, grisée, non-sélectionnable. |
+
+### Lifecycle d'une registration
+
+```
+draft → submitted → (open_pending_trial | conditional_pending_review → trial_in_progress → confirmed_pending_dues → active)
+                  ↘ refused (terminal, sauf auto-rerouting vers une autre équipe `open` de la même catégorie)
+```
+
+Toutes les transitions post-`submitted` passent par callables (`refuseRegistration`, `onRegistrationStatusChanged`, etc.) — pas d'écriture client directe sur le status. Détail produit complet + plan d'implémentation : `docs/chantier-registrations.md`.
+
+## Licences
+
+Une licence fédérale est une **ressource payée, active pour une saison**, attachée à un membre pour un rôle donné (`player` / `official` / `coach` / `referee`). Chaque rôle a **N niveaux** (selon le niveau de pratique : J+S, Ligue A, C+, etc.).
+
+Un membre qui a été licencié une fois conserve son **numéro de licence à vie** (`member.licenseNumber`), même si la licence n'est plus active.
+
+### Phase 1 — Configuration (livré)
+
+Référentiel `/licenseTypes` éditable par l'admin (Settings → Licences). Une entrée = un `(role, level, name, fee)`. Schéma : voir `firebase.md` (`/licenseTypes`).
+
+**Règle rôle/niveau** : seuls `official`, `coach` et `referee` portent un niveau de licence (numérique, requis). Le rôle `player` a toujours `level: null` — ses différentes licences (Junior, Senior, …) sont distinguées par leur `name`. Validé côté store (`validateRoleLevel`).
+
+**Unicité** : `(role, level)` enforced UI/store **uniquement pour les rôles avec niveau**. Pour les joueurs, plusieurs entrées sont autorisées et distinguées par le nom.
+
+**Prix** : `fee` est le prix **courant**. La grille a évolué historiquement (deux augmentations en 2 ans). Pas de versioning par saison côté config — l'historique vivra dans les transactions comptables (snapshot du prix à l'émission).
+
+**Ajout d'une nouvelle licence** (ex : ouverture de la Ligue A) : créer une entrée `/licenseTypes` à tout moment depuis Settings.
+
+### Phases futures (préparé, pas implémenté)
+
+1. **Entité `/licenses/{id}`** — instance concrète d'une licence émise pour un membre × saison × licenseType. Porte `feeSnapshot`, `issuedAt`, `paidAt`, `transactionId`, `invoiceId`.
+2. **Comptabilité** — chaque création de licence génère une **transaction identifiable**. Liste filtrable, lien vers une facture rattachable. Vue "licences sans facture" pour le suivi compta.
+3. **Refactor `member.licensed` / `officialLevel`** — deviendront dérivés des licences actives de la saison courante (cf. `project_members_creation_roadmap` memory). Aujourd'hui maintenus en l'état tant que la création de licence n'existe pas.
+4. **Workflow d'octroi** — `/licenseRequests` (déjà existant, mobile coach → admin web) restera le canal de demande. À l'approbation, le flow ouvrira la création d'une licence (au lieu de juste flipper `member.licensed = true` comme aujourd'hui).
+
+### Distinction avec les concepts voisins
+
+- **`/licenseRequests`** = workflow de demande mobile (coach demande à l'admin). Orthogonal à `/licenseTypes`. Voir section "License requests" plus bas.
+- **`config/club.officialsConfig.licenseFee`** (140 CHF flat) = legacy, héritage de l'époque où seul "officiel" avait une licence à 140 CHF. Sera supprimé une fois la création de licence active (les indicateurs de rentabilité officiels utiliseront la grille `/licenseTypes`).
+
 ## Venues & courts
 
 Le club gère **plusieurs salles** (`/venues`). Une salle contient **plusieurs courts physiques** (`/venues/{id}/courts`). Schéma complet : voir `firebase.md`.
@@ -186,8 +346,8 @@ Une salle porte aussi des **fermetures ponctuelles** (`customClosures` array inl
 ## Règles métier — synthèse
 
 ### Slot types
-- `match_home` → suspend les `training` de la même équipe ce jour-là ; trigger l'assignation officiels.
-- `match_away` → libère les `training` de l'équipe ce jour-là.
+- `match_home` → suspend les `training` de la même équipe ce jour-là ; trigger l'assignation officiels. Un booking `match_home` porte `opponentName` (équipe adverse, optionnel) + `matchTypeId` (obligatoire).
+- `match_away` → libère les `training` de l'équipe ce jour-là. Porte `opponentName` (obligatoire) + `awayAddress` (adresse du gymnase extérieur, obligatoire) + `matchTypeId`. `venueId`/`courtId` valent `''` (le match n'occupe pas de court interne).
 - `reserve` → libéré en premier en cas de conflit ; réservable ad-hoc par un coach.
 - `custom` → label seulement.
 
@@ -196,6 +356,82 @@ Une salle porte aussi des **fermetures ponctuelles** (`customClosures` array inl
 - **Jamais supprimés** : cancel = `status: "cancelled"`.
 - Ajout closure post-génération → cascading cancellation via Function.
 - Toutes les actions coach loggées dans `booking.actionLog` (append-only).
+
+### Réservations manuelles
+
+L'admin peut créer une réservation manuelle depuis `/bookings` (bouton "+ Nouvelle réservation"), en complément de la génération automatique à partir des `timeSlots`. Pattern d'édition Outlook-style (occurrence / futures / toute la série).
+
+Schéma : voir `docs/firebase.md` (sections `/bookingSeries` + champs `seriesId` / `originalDate` / `isManual` sur `/bookings`).
+
+#### Création
+- **One-shot** ou **récurrente** (toggle "Réservation récurrente").
+- Récurrence MVP : `weekly` (jour fixe dérivé de la date de début) ou `monthly` (`dayOfMonth` = même quantième, OU `nthWeekday` = même Nème jour de semaine). `interval = 1` toujours.
+- **Date de fin obligatoire** (pas de séries infinies).
+- Checkbox **"Considérer les fermetures de la salle" cochée par défaut** : les occurrences tombant pendant une closure du venue (`/closurePeriods` rattachés + `venue.customClosures` inline) sont **skippées à la création** — pas créées en `cancelled`, simplement omises.
+- **Validation conflits** : un booking `scheduled` existant qui chevauche (sur le même court + date) bloque la création. L'admin doit changer court/heure/date. Preview live dans le wizard ("X créées · Y skippées fermeture · Z conflits").
+- One-shot manuel : `seriesId = null`, `isManual = true`, pas de doc `/bookingSeries`.
+- Série : `addDoc('/bookingSeries')` + `writeBatch` chunké à 500 sur `/bookings` (un par occurrence retenue), chaque booking porte `seriesId` et `originalDate`.
+
+#### Édition — 3 scopes (modèle Outlook)
+- **Cette occurrence uniquement** (`occurrence`) — override : update du seul booking, sa `date`/heure peut diverger de `originalDate`.
+- **Cette occurrence et les suivantes** (`future`) — update tous les bookings de la série dont `date >= booking.date`, et update le doc `/bookingSeries` (réécrit `startDate` à la date courante). Pas de split en deux séries au MVP.
+- **Toute la série** (`all`) — update tous les bookings + `/bookingSeries`.
+
+Si le booking n'a pas de `seriesId` (one-shot manuel ou auto-généré sans série), seul `occurrence` est exposé.
+
+#### Garde-fou occurrences passées
+- Les bookings dont `date < startOfToday()` sont **immuables** sur `date`, `startTime`, `endTime`, `courtId`.
+- Sur scope `occurrence`, l'édition throw si on tente de modifier ces 4 champs.
+- Sur scope `future` / `all`, le repo **skip silencieusement** les bookings passés pour ces 4 champs ; les autres champs (`notes`, `teamId`, `status`, `cancelReason`) restent appliqués (utile pour rétro-saisie / annulation).
+- Le picker de scope (`BookingEditScopeDialog`) affiche un avertissement rose si la date sélectionnée est passée.
+
+#### Annulation & suppression
+- "Annuler le créneau" → `status: 'cancelled'`, `cancelReason: 'manual'` (ou `'series_edit'` si déclenché par un edit `future`/`all` qui retire des occurrences).
+- "Supprimer" : alias d'annulation pour le MVP (les bookings passés ne sont jamais supprimés physiquement, append-only). Le doc `/bookingSeries` est conservé tant qu'au moins un booking de la série existe.
+
+#### Audit
+- Toute mutation manuelle ajoute une entrée `actionLog` : `manual_create` à la création, `manual_edit` / `manual_cancel` aux mises à jour. `note` porte le scope (`occurrence`/`future`/`all`).
+
+#### Permissions
+- Création, édition, suppression : **admin / rootAdmin uniquement** (`/bookingSeries` rules + le path `/bookings` reste admin-only à la création). Le coach garde uniquement les droits déjà définis (`cancel` sur ses propres trainings, `matchRequest` pour move home).
+
+#### Limites MVP
+- Picker `teamId` non branché dans le wizard (Select disabled, défaut `null`).
+- Picker `matchTypeId` non branché (toujours `null`).
+- Combined courts non supportés pour les réservations manuelles (`linkedBookingIds: []`, `isCombinedCourtEvent: false`).
+- `createBookingSeries` n'est pas transactionnel doc-série + bookings : si un chunk plante mid-batch, le doc `/bookingSeries` reste avec moins d'occurrences que prévu. À monter en Cloud Function transactionnelle si nécessaire (cf. pattern `generateSeasonBookings`).
+- `future` n'effectue pas de split en deux séries — update en place.
+
+### Matches (page `/matches`)
+
+Page de gestion des matchs. Refonte 2026-05-15 : un match est désormais une **entité dédiée** dans la collection racine `/matches/{matchId}` (cf. `firebase.md` § `/matches`). Pour les matchs à domicile, un booking `slotType: 'match_home'` reste créé en parallèle (pour bloquer le court) et porte un `matchId` qui pointe vers le doc match — référence **bidirectionnelle** synchronisée via `writeBatch` atomique.
+
+#### Création
+
+L'admin crée un match depuis `/matches` (bouton "+ Nouveau match"). Deux flows :
+
+- **À domicile** : workflow en deux temps.
+  1. **Pré-réserver** un créneau via `/bookings` : créer un booking `slotType: 'match_home'` (typiquement 3h le soir), optionnellement avec `teamId` fixé. Tant qu'aucun match n'y est attaché, le booking reste `matchId === null` ET `matchTypeId === null` ("pending", rendu en orange dans le calendrier).
+  2. **Assigner** depuis `/matches` : le picker liste les bookings match_home pending. Cliquer en sélectionne un, le formulaire demande le type de match + adversaire. Submit déclenche `createHomeMatch` qui exécute un `writeBatch` atomique : `addDoc /matches` + `updateDoc /bookings/{id}` (set `matchId`, `matchTypeId`, `opponentName`). Puis libère les trainings conflictuels best-effort.
+
+- **À l'extérieur** : `createAwayMatch` crée un doc `/matches` seul (`bookingId: null`), avec date + heure de début + adresse + durée fixe 3h. Pas de booking côté away (le club ne réserve pas de court). Libère les trainings conflictuels best-effort.
+
+Champs requis dans les deux cas : `teamId` (équipe locale), `matchTypeId`. `opponentName` obligatoire pour Away, optionnel pour Home.
+
+#### Auto-libération des entraînements conflictuels
+
+À la création d'un match (home OU away) pour une équipe X, tout booking `training` ou `reserve` (status `scheduled`) de l'équipe X dont le créneau chevauche [startTime, endTime) le même jour passe automatiquement en `status: 'freed'` avec `cancelReason = 'match_home'` ou `'match_away'`. Le créneau libéré reste réservable par un autre. Logique implémentée côté repo (`freeConflictingTrainings`), best-effort (si le free trainings plante, le match reste créé — l'admin doit re-trigger manuellement).
+
+À distinguer du trigger Cloud Function `handleMatchSlotChange` qui gère le même cas mais pour les transitions de **timeSlots récurrents** (changement de slotType sur le template) — les deux paths sont nécessaires car le match créé via `/matches` n'a pas de timeSlot associé (`timeSlotId = ''`, one-shot manuel).
+
+#### Édition / suppression
+
+- **Suppression** depuis `/matches` (drawer du match) : `deleteMatch` exécute un `writeBatch` symétrique. Pour HOME : `delete /matches/{id}` + clear `matchId`/`matchTypeId`/`opponentName` sur le booking lié — le booking redevient pending et peut être réutilisé. Pour AWAY : simple `deleteDoc`.
+- **Édition** : pas de wizard d'édition côté `/matches` au MVP. Pour modifier date/court d'un match home, l'admin passe par `/bookings` (déplacer/modifier le booking, le `matchId` reste lié).
+
+#### Permissions
+
+Lecture : `admin` + `coach` (les coachs voient les matchs de leurs équipes, mais le scope n'est pas encore filtré — MVP : tous les matchs visibles à admin/coach). Création : admin uniquement (rules `/bookings` admin-only).
 
 ### Coach booking
 - Reserve ad-hoc un slot `freed`/`reserve` pour son équipe → **direct, pas de validation admin**.
@@ -260,6 +496,56 @@ Cotisation annuelle joueur, montant **par équipe**. Lifecycle auto, paiement ma
 Config (`config/club.duesConfig`) : `gracePeriodDays` (21), `paymentDueDays` (14). `amountByTeam` sur le team doc.
 
 **Paiement** : manuel uniquement pour le pilote. Admin coche "paid", méthode (cash/transfer/…) et date.
+
+### Cotisations — email "à payer", paiement, archive
+
+Couche email + paiement manuel ajoutée à la couche dues existante (cf. `firebase.md` → `/dues`, `/pendingEmails`, `/users.roles` `treasurer`).
+
+- **Email "à payer"** déclenché :
+  - à la transition `pending_grace → issued` (cas standard, `issueDuesScheduled` daily), OU
+  - immédiatement à la création du due si celui-ci naît déjà `issued` (cas `gracePeriodDays === 0`).
+  - Idempotence garantie par `due.emailedAt` (non-null ⇒ déjà envoyé, on skip).
+  - Destinataires : `member.comms.billingRecipients` (membre lui-même si majeur, tuteurs si mineur).
+  - Doc émis dans `/pendingEmails` avec `templateKey = 'dues_payment_request'`, contexte incluant `amount`, `paymentReference`, `banking` snapshotté depuis `/config/club.banking`.
+- **Marquer un due payé** : callable serveur `markDuePaid({ dueId, paidAmount, paymentMethod, paidAt? })`. Accessible aux rôles `admin` **ET** `treasurer` (cf. `project_roles_additifs`, rôles additifs). Pose `status='paid'`, `paidAt`, `paidAmount`, `paymentMethod`, `recordedBy = caller.uid`. Émet un doc `/pendingEmails` `dues_payment_confirmed` aux `billingRecipients`. Treasurer **n'a pas** d'écriture directe Firestore — la rule `/dues` reste serrée sur admin (filets de sécurité) + le canal callable garantit l'audit centralisé.
+
+- **Arrangement comité (montant partiel)** : par défaut `markDuePaid` enregistre le montant intégral (`paidAmount = due.amount`). Un montant partiel (`paidAmount < due.amount`) ne peut être posé que par un **rootAdmin** (claim Auth) ou un **treasurer** (rôle `/users.roles`). Le callable rejette tout admin standard qui tenterait un partial en `permission-denied` (helper `assertCanRecordPartial` dans `markDuePaid.ts`). Cas d'usage : arrangement in extremis pour débloquer une licence rapidement quand un joueur ne peut pas payer immédiatement le plein tarif. Le manque à gagner (`amount - paidAmount`) n'est pas comptabilisé séparément — la cotisation est simplement marquée `paid` avec le montant réellement reçu.
+
+- **Validation anticipée pendant grace period** : un due en `pending_grace` n'est normalement pas marquable — on attend la transition automatique `pending_grace → issued` à `J+gracePeriodDays`. **Exception comité** : rootAdmin / treasurer peuvent court-circuiter cette attente pour un paiement anticipé (typiquement couplé à l'arrangement custom amount ci-dessus). Côté UI, le bouton "Marquer payé" sur une ligne grace period n'est visible qu'au comité ; un admin standard ne le voit pas.
+
+- **Parcours UI où valider un paiement** :
+  - **Page `/cotisations` (liste globale)** : canal "quotidien" pour confirmer les paiements reçus. Le **montant est verrouillé** au tarif plein (`row.amount`) ; pas de champ saisissable. Pour un arrangement, il faut passer par la fiche membre.
+  - **Page `/members/{id}` → tab Cotisations** : canal "arrangement". Le dialog "Marquer payé" expose en haut un switch "Cotisation payée intégralement" (ON par défaut), **visible uniquement aux rootAdmin / treasurer**. OFF → un champ "Montant versé" apparaît, capé à `due.amount`. Admin standard : le switch est masqué, le dialog reste figé sur le plein tarif (cohérent avec la liste globale).
+- **Refus d'une registration → archive du member lié** : la callable `refuseRegistration` (Phase E du chantier inscriptions) consulte `registration.matchedMemberId` ; si présent **et** que le member a été créé via ce flow d'inscription (et non préexistant), elle pose `member.status = 'archived'`, `archivedAt`, `archivedReason` (motif du refus), `archivedByUid` (coach/admin). Cohérent avec le principe "pas de delete physique" (audit + reprise possible via `unarchiveMember` futur).
+
+Vue d'ensemble du déclenchement :
+
+```
+parent paie sur app register  ─┐
+                                ├──► confirmRegistration callable
+coach confirme essai           ─┘     │
+                                      ▼
+                            team.playerIds += memberId
+                                      │
+                                      ▼
+                        initiateDuesOnPlayerActivation
+                          (crée /dues, status=pending_grace)
+                                      │
+              ┌───────────── J+gracePeriodDays ─────────────┐
+              ▼                                              ▼
+       issueDuesScheduled                       (cas grace=0 → issued direct)
+       status=issued, dueAt+=N,
+       écrit /pendingEmails template
+       dues_payment_request, due.emailedAt=now
+                                      │
+                                      ▼
+                       admin/treasurer cliquent "Payer"
+                          → callable markDuePaid
+                          → status=paid, paidAt, paidAmount
+                          → /pendingEmails dues_payment_confirmed
+```
+
+Cf. `docs/chantier-registrations.md` (Phase E) pour le détail produit.
 
 ### License requests
 

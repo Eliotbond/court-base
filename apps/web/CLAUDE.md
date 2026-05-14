@@ -37,23 +37,28 @@ Tout raccourci = à refuser ou refactor.
 
 ## Cloud Functions — comment les appeler
 
-Le projet expose 17 Cloud Functions (cf. `functions/src/index.ts`). **La plupart sont des triggers** (Firestore writes ou scheduled) — elles tournent automatiquement, rien à faire côté web. **5 sont callables** (= invocables depuis le client) :
+Le projet expose 17 Cloud Functions (cf. `functions/src/index.ts`). **La plupart sont des triggers** (Firestore writes ou scheduled) — elles tournent automatiquement, rien à faire côté web. **4 sont callables** (= invocables depuis le client) :
 
 | Function | Auth requise | Quand |
 |---|---|---|
-| `previewSeasonBookings({ seasonId })` | admin / rootAdmin | Écran `/seasons/:id/activate` (dry-run avant activation) |
 | `runMigrations({ targetVersion? })` | admin / rootAdmin | Settings → ops (premier appel sur projet vierge crée `/_meta/schema`) |
 | `setRootAdminClaim({ email, value })` | **rootAdmin uniquement** | Settings → Admin team. Anti-self-revoke. |
 | `listRootAdminUids()` | admin / rootAdmin | Settings → Admin team : résout le badge `rootAdmin` (claim Auth, pas dans Firestore). |
 | `acceptInvitation()` | signed-in | Auto-appelée par `users.repo.ts` après une sign-in OAuth si `/users/{uid}` est absent. Cherche `/invitations` par email et provisionne le user. |
+| `refuseRegistration({ registrationId, reason })` | admin / coach (team scope) | Inscriptions → bouton "Refuser". Écrit `/teams/{id}/refusalLogs`. |
+| `cancelRegistration({ registrationId, note? })` | auteur uniquement | Inscriptions → cas dépannage admin. |
+| `markTrialInProgress({ registrationId })` | admin / coach (team scope) | Inscriptions → bouton "Planifier essai". Démarre compteur 14j. |
+| `confirmRegistration({ registrationId })` | admin / coach (team scope) | Inscriptions → bouton "Confirmer". Crée le member si nouveau, ajoute à `team.playerIds` (déclenche cotisation). |
+
+> `previewSeasonBookings` n'est plus appelée côté client (dry-run retiré 2026-05-14 — les bookings sont désormais créés manuellement via `/bookings`). La Cloud Function reste déployée mais sans wrapper TS ; à supprimer côté Functions quand on fera le nettoyage backend.
 
 **Toujours passer par les wrappers typés** dans `apps/web/src/services/cloudFunctions.ts` :
 
 ```ts
-import { previewSeasonBookings } from '@/services/cloudFunctions'
+import { runMigrations } from '@/services/cloudFunctions'
 
-const preview = await previewSeasonBookings({ seasonId: '2025-2026' })
-// preview.count, preview.byCourt, preview.byDayOfWeek
+const result = await runMigrations()
+// result.from, result.to, result.applied
 ```
 
 **Pourquoi les wrappers et pas `httpsCallable()` direct dans les composants :**
@@ -89,3 +94,144 @@ Chaque route a `meta.allowedRoles: string[]`. Guard global :
 - Mettre la logique métier dans un composant (la mettre dans store ou composable).
 - Importer du code depuis `apps/control-plane/` (deux apps distinctes).
 - Hardcoder l'ID du projet Firebase (toujours via `import.meta.env.VITE_FIREBASE_*`).
+
+## Catch enrichi obligatoire
+
+Cohérence avec `apps/courtbase-register` : dans tous les stores Pinia, tout `try/catch` autour d'un appel Firestore ou callable doit faire :
+
+```ts
+} catch (err) {
+  const code = err instanceof FirebaseError ? err.code : 'unknown'
+  console.error(`<actionName> failed [${code}]`, err)
+  // …
+}
+```
+
+Sans ça, les bugs disparaissent silencieusement (cas vécu côté register : index manquant → bandeau "Impossible de charger" persistant sans diagnostic). À appliquer en particulier aux stores qui chargent des collections : `members`, `teams`, `bookings`, `dues`, `licenses`, `registrations` (à venir Phase D).
+
+## Phase D du chantier registrations — état (2026-05-14)
+
+Voir `docs/registrations/phases.md` §"Phase D" pour le détail complet. Livré dans `apps/web` :
+
+- **Vue `/registrations`** (`src/views/Inscriptions.vue`) — table filtrable par statut (chips) + équipe (Select) + recherche, drawer détail in-page, action **refus motivé** branchée sur `refuseRegistration`. Scope auto par rôle (admin → toute la collection ; coach → ses `teamIds`).
+- **Repo + store** : `src/repositories/registrations.repo.ts` (read-only — toutes les transitions passent par callables) + `src/stores/registrations.ts` (auto-scope via `useAuthStore`).
+- **Wrappers callables** dans `src/services/cloudFunctions.ts` : `refuseRegistration`, `cancelRegistration` (les deux déjà déployées sur dev).
+- **Sidebar** : entrée "Inscriptions" dans Operations (icône `ClipboardList`).
+
+**Restant Phase D** :
+- Callables manquantes côté `functions/` : `acceptRegistration`, `markTrialInProgress`, `confirmRegistration`, `adminCancelRegistration`. Handlers UI déjà esquissés dans `Inscriptions.vue` (variables non-utilisées qui apparaissent au typecheck — branchement template à finaliser quand les callables seront en place).
+- Auto-rerouting via trigger Firestore `onRegistrationRefused`.
+- Admin UI pour poser `team.registrationStatus` sur les teams pré-existantes au chantier (cf. leçon Phase C).
+
+## Bookings — planning calendrier (livré 2026-05-14)
+
+L'écran `/bookings` consomme `useBookingsStore` qui expose `allBookings` (saison complète, single fetch) comme source unique. La grille Planning et l'onglet Liste lisent la même array — filtrage client-side, **0 re-fetch sur navigation semaine**.
+
+Composant : `vue-cal` v4 (MIT). Voir `docs/frontend-desktop.md` §Bookings calendar pour le rationale et les concepts (splits, événement → booking lookup, CSS overrides).
+
+**Règles spécifiques à respecter ici** :
+
+1. **Source unique** : tout consumer (grille, liste, drawer) lit `store.allBookings`. Ne JAMAIS rajouter une query Firestore par range ni un nouveau state local de bookings.
+2. **Après mutation** (`createManualBooking`/`createSeries`/`editBooking`/`deleteBooking`/`deleteSeries`/`hardDeleteBookingAction`) : le store appelle automatiquement `loadAllBookingsAndSeries()`. Le composant n'a rien à recharger — pas de `@created="store.loadXxx()"` côté vue.
+3. **Navigation** : `currentWeekStart` côté store n'est PAS lié à un fetch — c'est juste un pointeur utilisé par certains contextes (label "Semaine du …"). vue-cal a son propre `selectedDate` (state local de `Bookings.vue`).
+4. **Splits** : composite key `${venueId}__${courtId}` (séparateur `__` double underscore) — utilisé partout pour aligner events ↔ colonnes. Si tu changes, change aux deux endroits (`courtSplits` computed + `calendarEvents` computed).
+5. **Types vue-cal** : shim dans `src/types/vue-cal.d.ts`. Étendre ici plutôt que `// any:` à travers le code si tu actives drag/drop ou autres features.
+6. **Format de date des events** : `YYYY-MM-DD HH:MM` heure locale — cohérent avec le repo qui stocke via `Timestamp.fromDate(startOfLocalDay)`.
+7. **Couleurs par type** : classes CSS `vc-training` / `vc-match-home` / `vc-match-pending` / `vc-match-away` / `vc-reserve` / `vc-custom` + modifiers `vc-cancelled` / `vc-freed` dans `<style scoped>` de `Bookings.vue`. Si tu changes la palette tailwind globale, sync ici.
+
+## Liaison membre ↔ compte d'inscription (livré 2026-05-14)
+
+Quand un parent s'inscrit via `apps/courtbase-register`, un `/users/{uid}` est créé avec rôle `parent`. La page **détail membre** (`/members/:id` → ProfileTab) permet à l'admin de :
+
+1. **Voir les données enrichies des tuteurs** — `GuardianRef` enrichi avec `phone`, `address`, `profileCompletedAt`. Le bloc Tuteurs affiche email + téléphone + adresse formatée + Pill "Profil complété" / "Profil incomplet".
+2. **Lier un membre à un compte d'inscription** — card "Compte Firebase Auth" passe de read-only à actionnable. Bouton "Lier un compte" (si vide) ou "Modifier" (si lié) ouvre `ManageLinkedUserDialog.vue` (recherche par email, validations `alreadyLinked` / `isGuardian`).
+
+**Implémentation clé** : `setLinkedUser(memberId, uid | null)` dans `members.repo.ts` — `writeBatch` atomique bidirectionnel (`/members/{id}.linkedUserId` + `/users/{uid}.memberId`) avec nettoyage des deux types d'orphelins (ancien lien côté member + ancien lien côté user). Les rules existantes couvrent ce write (admin-only sur les deux champs — pas de modif `firestore.rules` nécessaire).
+
+## Cotisations — paiement & arrangement comité (livré 2026-05-15)
+
+Deux canaux UI pour marquer une cotisation payée — règles strictes côté frontend, doublées d'une garde serveur dans `markDuePaid`.
+
+### Page `/cotisations` (liste globale) — canal "quotidien"
+
+Le dialog "Marquer payé" **ne propose plus de champ montant** : affichage read-only du tarif plein (`row.amount`) avec mention "Validation au montant intégral. Un arrangement comité passe par la page Détail membre." Le `markPaidForm.amount` est pré-rempli à `row.amount` à l'ouverture (`openMarkPaidDialog`) et le submit l'envoie tel quel. C'est le flux pour confirmer un paiement reçu — pas pour négocier.
+
+### Page `/members/:id` → tab Cotisations — canal "arrangement"
+
+Le dialog "Enregistrer un paiement" expose **en haut un switch "Cotisation payée intégralement"** (ON par défaut), conditionné à `canAdjustAmount = auth.rootAdmin || auth.roles.includes('treasurer')`. Quand OFF, un champ "Montant versé (CHF)" apparaît, capé à `cotisation.amount`. Pour l'admin standard, le switch est invisible — il ne peut que valider au plein tarif (cohérent avec la liste globale).
+
+**Exception comité supplémentaire** : sur ce tab, le bouton "Marquer payé" est aussi exposé pour les cotisations en `pending_grace` (validation anticipée) si `canAdjustAmount` est vrai. Un admin standard ne voit pas le bouton sur grace period — il attend la transition `issued` automatique (cf. `docs/main.md` § Cotisations).
+
+### Pourquoi cette double règle
+
+- Le canal "liste globale" est utilisé en volume → on évite toute saisie qui prêterait à arrangement informel. Plein tarif, fin de l'histoire.
+- Le canal "fiche membre" est où l'on traite les cas individuels → c'est le bon endroit pour l'arrangement comité.
+- La garde côté serveur (`assertCanRecordPartial` dans `functions/src/dues/markDuePaid.ts`) ferme la porte au DOM-bypass : un admin standard qui appellerait le callable directement avec un `paidAmount < due.amount` reçoit `permission-denied`.
+
+### Pattern à respecter pour toute nouvelle UI de paiement
+
+Si tu ajoutes un autre endroit où marquer une cotisation payée (ex. mobile, vue récap), applique la même règle : montant verrouillé sauf comité (rootAdmin OU treasurer), et n'oublie pas que la garde serveur compte sur `paidAmount < due.amount` — un montant supérieur n'est PAS bloqué (overpayment hors scope, à traiter si besoin).
+
+## Matches — page liste + création (livré 2026-05-15)
+
+Page `/matches` (route `ADMIN_COACH`, entrée sidebar dans Operations). Un match **est** un booking avec `slotType in [match_home, match_away]` — pas d'entité dédiée.
+
+### Fichiers livrés
+
+- `src/views/Matches.vue` — DataTable filtrable (chips Tous / À venir / Passés / À domicile / À l'extérieur / Annulés) + recherche + drawer détail. Source : `useBookingsStore().allBookings` filtré côté JS.
+- `src/components/matches/MatchFormDialog.vue` — dialog création (Home / Away). Pour Home : intègre `MatchBookingPicker`. Pour Away : DatePicker + Select horaire (pas de 30 min entre 06:00 et 22:00) + adresse Textarea.
+- `src/components/matches/MatchBookingPicker.vue` — vue-cal v4 réutilisable, filtre période (Matin / Après-midi / **Soir par défaut**), navigation jour, splits courts. Émet `@select` avec `{ venueId, courtId, date, startTime, endTime }` après détection conflit côté JS.
+- `src/stores/matchTypes.ts` + `src/repositories/matchTypes.repo.ts` — store/repo minimal read-only (pas de CRUD pour MVP — la page `/match-types` reste un placeholder).
+
+### Schéma `/bookings` étendu
+
+Deux champs nullables ajoutés à `BookingData` (cf. `packages/shared-types/src/booking.ts`) :
+- `opponentName: string | null` — nom équipe adverse. Pertinent uniquement si `slotType in [match_home, match_away]`.
+- `awayAddress: string | null` — adresse du gymnase extérieur. Pertinent uniquement si `slotType = match_away`.
+
+**Pas de modif `firestore.rules`** : les nouveaux champs tombent sous la règle admin-only existante sur `/bookings`.
+
+### Création d'un match — auto-free trainings
+
+`createMatchBooking` dans `bookings.repo.ts` fait deux opérations :
+1. `addDoc('/bookings')` avec le nouveau booking match.
+2. Appelle `freeConflictingTrainings({ teamId, date, startTime, endTime, reason })` qui passe en `status: 'freed'` (avec `cancelReason = 'match_home'` ou `'match_away'`) tous les bookings `training` ou `reserve` (status `scheduled`) de la même équipe qui chevauchent le créneau.
+
+**Best-effort** : si le free trainings plante après l'addDoc, le match reste créé. Le rapport (`{ bookingId, freedBookingIds }`) est remonté à l'UI qui affiche une bannière info "X entraînement(s) automatiquement libéré(s)".
+
+À **distinguer** du trigger Cloud Function `handleMatchSlotChange` qui couvre les transitions de `timeSlots` récurrents (pas les one-shot manuels créés via `/matches`).
+
+### Match away — venueId/courtId vides
+
+Pour un `match_away`, `venueId = ''` et `courtId = ''` (le match n'occupe pas de court interne). Le calendrier `/bookings` filtre déjà via `splits` — un booking sans court ne s'affiche pas dans la grille. La page `/matches` les liste normalement avec `awayAddress` dans la colonne "Lieu".
+
+### Limites MVP
+
+- Pas d'édition / suppression depuis `/matches` (passe par `/bookings`).
+- Pas de scope coach (un coach voit tous les matchs, pas filtré par ses équipes — à raffiner si besoin).
+- Officials assignments non créées à la création d'un `match_home` côté repo. Si on a besoin de l'auto-création des `officialAssignments`, monter une Cloud Function ou étendre `createMatchBooking`.
+
+## Match types CRUD (livré 2026-05-15)
+
+Le référentiel `/matchTypes` est désormais entièrement éditable depuis Settings → Saison / Compétition → **Match types** (la route `/match-types` et l'entrée sidebar associée ont été supprimées — tout passe par Settings).
+
+### Fichiers livrés / étendus
+
+- `src/repositories/matchTypes.repo.ts` — étendu avec `createMatchType` / `updateMatchType` / `deleteMatchType` + `isMatchTypeUsed` (garde-fou anti-delete).
+- `src/stores/matchTypes.ts` — étendu avec actions `create` / `update` / `remove` (alignées sur le pattern `categories` / `licenseTypes` : upsert local, try/catch enrichi `FirebaseError`).
+- `src/views/Settings.vue` — section `matchTypes` avec list-view (DataTable inline), dialog création/édition unifié (mode `create | edit`), dialog confirmation suppression.
+- `src/stores/settings.ts` — type `SettingsSection` étendu avec `'matchTypes'`.
+
+### Garde-fou anti-delete
+
+`deleteMatchType(id)` interroge `/bookings where matchTypeId == id limit(1)` avant la suppression. Si au moins un booking le référence, throw `'matchType in use…'`. L'UI affiche le message dans le dialog de suppression et suggère la désactivation (`active: false`) à la place. Pas de soft-delete séparé — le flag `active` existant fait le job (les pickers de création de match consomment `activeMatchTypes` qui filtre les inactifs).
+
+### Helpers UI
+
+- `formatOfficialReqs(reqs)` — `[{level:2,count:1},{level:1,count:2}]` → `"1× N2 + 2× N1"`.
+- `HEX_COLOR_RE` — valide `#RRGGBB` strict (refuse les 3-digit forms).
+- Editor inline pour `homeOfficialRequirements` (ajout/suppression de lignes `{level, count}`).
+
+### Pas de modif rules
+
+La règle `/matchTypes` existait déjà (`isAdmin || isRootAdmin` pour write, `isSignedIn` pour read) — pas de modif `firestore.rules` nécessaire.

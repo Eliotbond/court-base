@@ -21,7 +21,7 @@
     "firebase-functions": "^6.0.0"
   },
   "devDependencies": {
-    "@club-app/shared-types": "file:./club-app-shared-types-0.1.0.tgz",
+    "@club-app/shared-types": "file:club-app-shared-types-0.1.0.tgz",
     "@types/node": "^20.0.0",
     "eslint": "^9.0.0",
     "tsx": "^4.0.0",

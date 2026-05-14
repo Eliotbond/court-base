@@ -34,6 +34,7 @@ export { initiateDuesOnPlayerActivation } from './dues/initiateDuesOnPlayerActiv
 export { issueDuesScheduled } from './dues/issueDuesScheduled'
 export { markOverdueScheduled } from './dues/markOverdueScheduled'
 export { syncMemberDuesStatus } from './dues/syncMemberDuesStatus'
+export { markDuePaid } from './dues/markDuePaid'
 
 // Exceptions / Licenses
 export {
@@ -42,6 +43,11 @@ export {
 } from './exceptions/applyPaymentException'
 export { applyLicenseRequest } from './licenses/applyLicenseRequest'
 
+// Majority transition
+export { onMajorityReached } from './majority/onMajorityReached'
+export { respondGuardianConsent } from './majority/respondGuardianConsent'
+export { respondMemberConsent } from './majority/respondMemberConsent'
+
 // Migrations
 export { runMigrations } from './migrations/runMigrations'
 
@@ -49,5 +55,16 @@ export { runMigrations } from './migrations/runMigrations'
 export { setRootAdminClaim } from './admin/setRootAdminClaim'
 export { listRootAdminUids } from './admin/listRootAdminUids'
 export { acceptInvitation } from './admin/acceptInvitation'
+
+// Members (operations admin sur /members)
+export { deleteMember } from './members/deleteMember'
+
+// Registrations (app courtbase-register)
+export { matchExistingMember } from './registrations/matchExistingMember'
+export { submitRegistration } from './registrations/submitRegistration'
+export { refuseRegistration } from './registrations/refuseRegistration'
+export { cancelRegistration } from './registrations/cancelRegistration'
+export { markTrialInProgress } from './registrations/markTrialInProgress'
+export { confirmRegistration } from './registrations/confirmRegistration'
 
 export const ping = () => 'pong'

@@ -20,7 +20,7 @@
  */
 import { onDocumentWritten } from 'firebase-functions/v2/firestore'
 import { logger } from 'firebase-functions/v2'
-import type { DueData, TeamData } from '@club-app/shared-types'
+import type { CotisationData, DueData, TeamData } from '@club-app/shared-types'
 import {
   Timestamp,
   addDaysToTimestamp,
@@ -28,6 +28,7 @@ import {
   db,
   serverTimestamp,
 } from './_helpers'
+import { buildPaymentReference } from './_emailEnqueue'
 
 interface ActiveSeasonLookup {
   seasonId: string | null
@@ -94,8 +95,17 @@ export async function createDuesIfMissing(args: {
     const memberRef = db().doc(`members/${memberId}`)
     const activatedAt = Timestamp.now()
     const issuedAt = addDaysToTimestamp(activatedAt, gracePeriodDays)
+    // Référence de paiement déterministe (utilisée dans l'email de demande).
+    // On la pose dès la création — la transition pending_grace → issued
+    // (issueDuesScheduled) la propage telle quelle dans le contexte email.
+    const paymentReference = buildPaymentReference(newDueRef.id)
 
-    const due: DueData = {
+    // NOTE typing : `DueData` n'inclut pas encore `paymentReference` /
+    // `emailedAt` dans certaines versions de shared-types (le subagent types
+    // les ajoute en parallèle). On les écrit ici via un cast élargi pour ne
+    // pas bloquer le build tant que la version embarquée des types n'a pas
+    // les nouveaux champs.
+    const due = {
       memberId,
       teamId,
       seasonId,
@@ -104,18 +114,21 @@ export async function createDuesIfMissing(args: {
       activatedAt,
       issuedAt,
       dueAt: null,
-      status: 'pending_grace',
+      status: 'pending_grace' as const,
       paidAt: null,
       paidAmount: null,
       paymentMethod: null,
       recordedBy: null,
       exceptionRequestId: null,
       notes: null,
+      // Nouveaux champs (shared-types subagent) — défensif si absent.
+      paymentReference,
+      emailedAt: null,
       // createdAt = server timestamp (recorded by Firestore on write).
       // Cast through unknown because DueData.createdAt is a Timestamp value but
       // we want the sentinel — same pattern Firestore docs recommend.
       createdAt: serverTimestamp() as unknown as DueData['createdAt'],
-    }
+    } as unknown as DueData
 
     tx.set(newDueRef, due)
     tx.update(memberRef, {
@@ -144,11 +157,28 @@ export const initiateDuesOnPlayerActivation = onDocumentWritten(
     if (newPlayerIds.length === 0) return
 
     const teamId = event.params.teamId
-    const duesAmount = afterData.duesAmount
+    const cotisationId = afterData.cotisationId
+    if (typeof cotisationId !== 'string' || cotisationId.length === 0) {
+      logger.error(
+        'initiateDuesOnPlayerActivation: team.cotisationId missing, skipping',
+        { teamId },
+      )
+      return
+    }
+    const cotisationSnap = await db().doc(`cotisations/${cotisationId}`).get()
+    if (!cotisationSnap.exists) {
+      logger.error(
+        'initiateDuesOnPlayerActivation: referenced cotisation not found, skipping',
+        { teamId, cotisationId },
+      )
+      return
+    }
+    const cotisation = cotisationSnap.data() as CotisationData
+    const duesAmount = cotisation.price
     if (typeof duesAmount !== 'number' || !Number.isFinite(duesAmount) || duesAmount < 0) {
       logger.error(
-        'initiateDuesOnPlayerActivation: team.duesAmount missing or invalid, skipping',
-        { teamId, duesAmount },
+        'initiateDuesOnPlayerActivation: cotisation.price missing or invalid, skipping',
+        { teamId, cotisationId, duesAmount },
       )
       return
     }

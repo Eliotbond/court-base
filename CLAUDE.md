@@ -9,6 +9,7 @@ Avant toute tâche, identifie où elle se passe et ouvre **uniquement** les fich
 | Tu travailles sur… | Lis d'abord |
 |---|---|
 | L'app web (Vue) | `apps/web/CLAUDE.md` + `docs/frontend-desktop.md` |
+| L'app d'inscription parents (Vue) | `apps/courtbase-register/CLAUDE.md` + `docs/chantier-registrations.md` + `docs/design-to-vue-register.md` |
 | L'app mobile (Flutter) | `apps/mobile/CLAUDE.md` + `docs/mobile-app.md` |
 | Le control-plane éditeur | `apps/control-plane/CLAUDE.md` + `docs/deployment.md` |
 | Cloud Functions | `functions/CLAUDE.md` + `docs/firebase.md` |
@@ -28,6 +29,32 @@ Avant toute tâche, identifie où elle se passe et ouvre **uniquement** les fich
 6. **Conventional Commits** : `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`. Scope optionnel : `feat(web): ...`.
 7. **Branches** : `feat/<slug>`, `fix/<slug>`, `chore/<slug>`, `docs/<slug>` — branchées sur `main`, mergées via PR.
 8. **Multi-tenant** : un projet Firebase par client. **Pas** de `clubId` dans les paths Firestore. Le projet *est* le club.
+9. **Try/catch défensif sur tout appel Firestore / callable.** Sans capture explicite du code d'erreur, les bugs disparaissent silencieusement (rules denied, index manquant, network…). Pattern obligatoire :
+
+   ```ts
+   import { FirebaseError } from 'firebase/app'
+
+   try {
+     await someCallableOrFirestoreOp()
+   } catch (err) {
+     const code = err instanceof FirebaseError ? err.code : 'unknown'
+     console.error(`<action> failed [${code}]`, err)
+     // remonte / toast / rethrow selon le besoin
+   }
+   ```
+
+   Vaut pour repos, stores, composants ; règle stricte sur les nouveaux modules.
+
+10. **Queries petit volume : simple query + tri JS, pas d'index composite.** Pour les lectures attendues `< ~100 docs` (ex. `listMyRegistrations` pour un user donné), préférer :
+
+    ```ts
+    const snap = await getDocs(query(coll, where('uid', '==', x)))
+    return snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => b.createdAt.seconds - a.createdAt.seconds)
+    ```
+
+    plutôt qu'un composite `(uid ASC, createdAt DESC)`. Avantages : pas d'index à déployer, tolère les docs avec `serverTimestamp` pas encore résolu (qui sont exclus d'un `orderBy` Firestore). Au-delà des dizaines/centaines de docs : repasser à un index composite.
 
 ## Mise à jour de la doc
 

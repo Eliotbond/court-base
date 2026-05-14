@@ -1,15 +1,19 @@
 import type { Timestamp } from './index'
 
 /**
- * Document `/dues/{dueId}` — cotisation joueur/saison/team.
- * Voir docs/firebase.md (section /dues) + main.md (lifecycle).
+ * **Cotisation membre** (facture annuelle) stockée dans
+ * `/dues/{cotisationId}`. La collection Firestore garde le nom `dues`
+ * (legacy — pas de migration data prévue) ; seul le namespace TypeScript
+ * est renommé `Cotisation` pour refléter la terminologie métier FR.
+ *
+ * Voir docs/firebase.md (section `/dues`) + docs/main.md (lifecycle).
  *
  * Lifecycle : `pending_grace` (J0) → `issued` (J+gracePeriodDays) →
- * `overdue` (J+gracePeriodDays+paymentDueDays). Payment manuel par admin.
+ * `overdue` (J+gracePeriodDays+paymentDueDays). Paiement manuel par admin.
  * Géré par Functions (`initiateDuesOnPlayerActivation`, `issueDuesScheduled`,
  * `markOverdueScheduled`, `syncMemberDuesStatus`).
  */
-export type DueStatus =
+export type CotisationStatus =
   | 'pending_grace'
   | 'issued'
   | 'paid'
@@ -17,9 +21,9 @@ export type DueStatus =
   | 'excepted'
   | 'cancelled'
 
-export type DuePaymentMethod = 'cash' | 'transfer' | 'other'
+export type CotisationPaymentMethod = 'cash' | 'transfer' | 'other'
 
-export interface DueData {
+export interface CotisationData {
   memberId: string
   teamId: string
   seasonId: string
@@ -37,18 +41,34 @@ export interface DueData {
   issuedAt: Timestamp | null
   /** `dueAt = issuedAt + paymentDueDays`. Posé par `issueDuesScheduled` à la transition `pending_grace → issued`. Null tant que `pending_grace`. */
   dueAt: Timestamp | null
-  status: DueStatus
+  status: CotisationStatus
   paidAt: Timestamp | null
   paidAmount: number | null
-  paymentMethod: DuePaymentMethod | null
+  paymentMethod: CotisationPaymentMethod | null
   /** uid admin qui a recorded le paiement. */
   recordedBy: string | null
   exceptionRequestId: string | null
   notes: string | null
+  /**
+   * Référence de virement déterministe (ex. `"DUE-{shortDueId}"`), affichée
+   * dans l'email de demande de paiement et attendue dans le champ
+   * "référence" du virement bancaire. Posée à la création de la cotisation
+   * par `initiateDuesOnPlayerActivation`. `null` pour les lignes legacy
+   * antérieures au chantier cotisation/email.
+   */
+  paymentReference: string | null
+  /**
+   * Marqueur d'idempotence pour l'email "à payer". Non-null ⇒ un mail
+   * `dues_payment_request` a déjà été écrit dans `/pendingEmails` pour cette
+   * cotisation — on ne re-déclenche pas. Posé par la fonction qui produit
+   * l'email (à l'émission `issued` ou immédiatement à la création si la
+   * cotisation naît déjà `issued` car `gracePeriodDays === 0`).
+   */
+  emailedAt: Timestamp | null
   createdAt: Timestamp
 }
 
-export type Due = DueData & { id: string }
+export type Cotisation = CotisationData & { id: string }
 
 /**
  * Document `/paymentExceptionRequests/{requestId}` — coach demande override
@@ -57,6 +77,11 @@ export type Due = DueData & { id: string }
 export type PaymentExceptionStatus = 'pending' | 'approved' | 'rejected'
 
 export interface PaymentExceptionRequestData {
+  /**
+   * Référence vers la cotisation visée. Nom du champ Firestore conservé
+   * (`dueId`) pour ne pas casser la collection `/paymentExceptionRequests`
+   * existante — la migration TypeScript-only ne touche pas le schéma data.
+   */
   dueId: string
   memberId: string
   teamId: string

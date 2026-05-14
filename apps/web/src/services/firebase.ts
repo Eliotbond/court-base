@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getFunctions } from 'firebase/functions'
+import { getStorage } from 'firebase/storage'
 
 /**
  * Firebase init — un seul projet par instance d'app (cf. modèle SAAS one-project-per-client).
@@ -24,3 +25,7 @@ export const db = getFirestore(firebaseApp)
 // dans `functions/src/index.ts`. Sans cette région, le SDK appelle un endpoint us-central1
 // qui n'existe pas → erreur "functions/internal" cryptique.
 export const functions = getFunctions(firebaseApp, 'europe-west6')
+
+// Storage : utilisé pour l'upload du logo club (cf. `storage.rules`
+// section `/club/logo/{file}`) et les pièces de licence/registration.
+export const storage = getStorage(firebaseApp)

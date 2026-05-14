@@ -9,33 +9,6 @@ import { functions } from './firebase'
 // =============================================================================
 
 // -----------------------------------------------------------------------------
-// previewSeasonBookings — dry-run de génération de bookings.
-// Côté functions : functions/src/bookings/previewSeasonBookings.ts
-// Auth : admin OU rootAdmin claim. UI : écran /seasons/:id/activate.
-// -----------------------------------------------------------------------------
-export interface PreviewSeasonBookingsInput {
-  seasonId: string
-}
-
-export interface PreviewSeasonBookingsOutput {
-  count: number
-  byCourt: Record<string, number>
-  /** Index 0 = Sunday, ..., 6 = Saturday. */
-  byDayOfWeek: number[]
-}
-
-export async function previewSeasonBookings(
-  input: PreviewSeasonBookingsInput,
-): Promise<PreviewSeasonBookingsOutput> {
-  const callable = httpsCallable<PreviewSeasonBookingsInput, PreviewSeasonBookingsOutput>(
-    functions,
-    'previewSeasonBookings',
-  )
-  const result: HttpsCallableResult<PreviewSeasonBookingsOutput> = await callable(input)
-  return result.data
-}
-
-// -----------------------------------------------------------------------------
 // runMigrations — applique les migrations Firestore jusqu'à `targetVersion`
 // (ou latest si omis). Idempotent.
 // Côté functions : functions/src/migrations/runMigrations.ts
@@ -139,5 +112,276 @@ export async function acceptInvitation(): Promise<AcceptInvitationOutput> {
     'acceptInvitation',
   )
   const result: HttpsCallableResult<AcceptInvitationOutput> = await callable()
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// refuseRegistration — passe une /registrations/{id} en `refused` et logge
+// /teams/{teamId}/refusalLogs.
+// Côté functions : functions/src/registrations/refuseRegistration.ts
+// Auth : signed-in. Le caller doit être admin OU coach de la team
+// (cf. assertCoachOrAdmin côté server). Codes d'erreur typiques :
+//   - permission-denied  → caller ni admin, ni coach de la team
+//   - failed-precondition → status non-refusable (terminal)
+//   - not-found          → registrationId inexistant
+//   - invalid-argument   → reason vide
+// -----------------------------------------------------------------------------
+export interface RefuseRegistrationInput {
+  registrationId: string
+  reason: string
+}
+
+export interface RefuseRegistrationOutput {
+  ok: true
+  registrationId: string
+  refusalLogId: string
+}
+
+export async function refuseRegistration(
+  input: RefuseRegistrationInput,
+): Promise<RefuseRegistrationOutput> {
+  const callable = httpsCallable<RefuseRegistrationInput, RefuseRegistrationOutput>(
+    functions,
+    'refuseRegistration',
+  )
+  const result: HttpsCallableResult<RefuseRegistrationOutput> = await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// cancelRegistration — l'auteur annule sa propre inscription.
+// Côté functions : functions/src/registrations/cancelRegistration.ts
+// Auth : signed-in + submittedByUid == caller. **Pas** utilisable par un
+// admin/coach pour annuler une inscription tierce — pour ce flow il faudra
+// une callable séparée (à venir). Cette app web ne l'expose donc qu'en
+// dépannage (ex. l'admin sait que l'auteur est ici).
+// -----------------------------------------------------------------------------
+export interface CancelRegistrationInput {
+  registrationId: string
+  note?: string | null
+}
+
+export interface CancelRegistrationOutput {
+  ok: true
+  registrationId: string
+  status: string
+}
+
+export async function cancelRegistration(
+  input: CancelRegistrationInput,
+): Promise<CancelRegistrationOutput> {
+  const callable = httpsCallable<CancelRegistrationInput, CancelRegistrationOutput>(
+    functions,
+    'cancelRegistration',
+  )
+  const result: HttpsCallableResult<CancelRegistrationOutput> = await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// markTrialInProgress — passe une registration en `trial_in_progress`, démarre
+// le compteur 14j (scheduled `onTrialExpired` à venir).
+// Côté functions : functions/src/registrations/markTrialInProgress.ts
+// Auth : signed-in. Caller doit être admin OU coach de la team. Codes typiques :
+//   - permission-denied   → ni admin, ni coach de la team
+//   - failed-precondition → status pas dans {open_pending_trial,
+//                            conditional_pending_review, conditional_pending_trial}
+//   - not-found           → registrationId inexistant
+// -----------------------------------------------------------------------------
+export interface MarkTrialInProgressInput {
+  registrationId: string
+}
+
+export interface MarkTrialInProgressOutput {
+  ok: true
+  registrationId: string
+  status: 'trial_in_progress'
+  trialStartedAt: { seconds: number; nanoseconds: number }
+}
+
+export async function markTrialInProgress(
+  input: MarkTrialInProgressInput,
+): Promise<MarkTrialInProgressOutput> {
+  const callable = httpsCallable<MarkTrialInProgressInput, MarkTrialInProgressOutput>(
+    functions,
+    'markTrialInProgress',
+  )
+  const result: HttpsCallableResult<MarkTrialInProgressOutput> = await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// confirmRegistration — interrompt la période d'essai en confirmant le joueur :
+// crée le `/members/{id}` (si `matchedMemberId === null`), ajoute le member au
+// `team.playerIds` (déclenche `initiateDuesOnPlayerActivation` → cotisation
+// émise), passe la registration en `confirmed_pending_dues`.
+// Côté functions : functions/src/registrations/confirmRegistration.ts
+// Auth : signed-in. Caller doit être admin OU coach de la team. Codes typiques :
+//   - permission-denied   → ni admin, ni coach de la team
+//   - failed-precondition → status != 'trial_in_progress'
+//   - not-found           → registrationId inexistant
+//   - internal            → team disparue (cohérence broken)
+// -----------------------------------------------------------------------------
+export interface ConfirmRegistrationInput {
+  registrationId: string
+}
+
+export interface ConfirmRegistrationOutput {
+  ok: true
+  registrationId: string
+  memberId: string
+  memberCreated: boolean
+  status: 'confirmed_pending_dues'
+}
+
+export async function confirmRegistration(
+  input: ConfirmRegistrationInput,
+): Promise<ConfirmRegistrationOutput> {
+  const callable = httpsCallable<ConfirmRegistrationInput, ConfirmRegistrationOutput>(
+    functions,
+    'confirmRegistration',
+  )
+  const result: HttpsCallableResult<ConfirmRegistrationOutput> = await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// markCotisationPaid (wrapper TS) — marque une cotisation comme payée côté
+// serveur. Le nom de la callable serveur reste `'markDuePaid'` (non renommée
+// pour ne pas casser le déploiement Firebase Functions existant). Côté wire,
+// les champs `dueId` (input/output) sont conservés ; le wrapper TS traduit
+// ces champs en `cotisationId` pour aligner l'API client sur la terminologie
+// "cotisation" (facture membre).
+//
+// Le serveur :
+//   - applique `status: 'paid'` + `paidAt` + `paidAmount` + `paymentMethod`
+//     (+ `notes` optionnel) sur `/dues/{dueId}` (transaction).
+//   - pose `recordedBy` à l'uid du caller (côté serveur, anti-spoof).
+//   - relit/synchronise `member.duesStatus` (via trigger ou inline).
+//   - peut être appelée par un admin OU un treasurer (cf. nouveau rôle).
+// Côté functions : functions/src/dues/markDuePaid.ts (subagent 2).
+// Auth : signed-in. Codes d'erreur typiques :
+//   - permission-denied   → caller ni admin, ni treasurer, ni rootAdmin
+//   - failed-precondition → cotisation déjà `paid` ou `cancelled`
+//   - not-found           → cotisationId inexistant
+//   - invalid-argument    → paidAmount négatif ou paymentMethod inconnu
+// -----------------------------------------------------------------------------
+export type MarkCotisationPaymentMethod = 'transfer' | 'cash' | 'card' | 'other'
+
+export interface MarkCotisationPaidInput {
+  cotisationId: string
+  /** Montant effectivement perçu (CHF). Si omis : le serveur utilise `cotisation.amount`. */
+  paidAmount?: number
+  paymentMethod: MarkCotisationPaymentMethod
+  /** Date de paiement (ISO 8601 ou epoch ms). Si omis : `now`. */
+  paidAt?: string | number | null
+  /** Note libre optionnelle (référence externe, commentaire). */
+  notes?: string | null
+}
+
+export interface MarkCotisationPaidOutput {
+  ok: true
+  cotisationId: string
+  status: 'paid'
+  paidAt: { seconds: number; nanoseconds: number }
+  paidAmount: number
+}
+
+/**
+ * Shape du payload côté wire (vers/depuis le callable serveur).
+ * Le serveur attend/renvoie `dueId` — on l'isole en interne pour ne pas
+ * polluer l'API client.
+ */
+interface WireMarkDuePaidInput {
+  dueId: string
+  paidAmount?: number
+  paymentMethod: MarkCotisationPaymentMethod
+  paidAt?: string | number | null
+  notes?: string | null
+}
+
+interface WireMarkDuePaidOutput {
+  ok: true
+  dueId: string
+  status: 'paid'
+  paidAt: { seconds: number; nanoseconds: number }
+  paidAmount: number
+}
+
+export async function markCotisationPaid(
+  input: MarkCotisationPaidInput,
+): Promise<MarkCotisationPaidOutput> {
+  const callable = httpsCallable<WireMarkDuePaidInput, WireMarkDuePaidOutput>(
+    functions,
+    'markDuePaid',
+  )
+  const wireInput: WireMarkDuePaidInput = {
+    dueId: input.cotisationId,
+    paymentMethod: input.paymentMethod,
+  }
+  if (input.paidAmount !== undefined) wireInput.paidAmount = input.paidAmount
+  if (input.paidAt !== undefined) wireInput.paidAt = input.paidAt
+  if (input.notes !== undefined) wireInput.notes = input.notes
+  const result: HttpsCallableResult<WireMarkDuePaidOutput> = await callable(wireInput)
+  return {
+    ok: result.data.ok,
+    cotisationId: result.data.dueId,
+    status: result.data.status,
+    paidAt: result.data.paidAt,
+    paidAmount: result.data.paidAmount,
+  }
+}
+
+// -----------------------------------------------------------------------------
+// deleteMember — suppression DÉFINITIVE d'un membre (correction d'erreur de
+// création). À distinguer de l'archive (`member.status = 'archived'`) qui est
+// le flow normal de fin d'adhésion et conserve l'historique comptable.
+//
+// Effets côté serveur :
+//   - delete /members/{memberId} + sub-collections (`private/contact`, etc.)
+//   - retire l'uid du member des `team.coachIds` / `team.playerIds`
+//   - met à `null` le `matchedMemberId` sur les `/registrations` historiques
+//   - supprime les `/dues` non payées (status != 'paid')
+//
+// Côté functions : functions/src/members/deleteMember.ts
+// Auth : admin uniquement (pas treasurer, pas coach). Codes d'erreur :
+//   - unauthenticated     → user pas signé
+//   - permission-denied   → user signé mais pas admin / rootAdmin
+//   - not-found           → memberId inexistant
+//   - invalid-argument    → confirmName ne correspond pas au "First Last" du
+//                            member (normalisation diacritiques côté serveur)
+//   - failed-precondition → au moins un /dues `status === 'paid'` existe — le
+//                            message serveur suggère d'utiliser l'archive
+//                            à la place pour préserver la compta.
+// -----------------------------------------------------------------------------
+export interface DeleteMemberInput {
+  memberId: string
+  /**
+   * Confirmation typée par l'admin : doit matcher `"<firstName> <lastName>"`
+   * du member (côté serveur : trim + lowercase + normalisation diacritiques
+   * avant comparaison). Sert de filet anti-clic-accidentel.
+   */
+  confirmName: string
+}
+
+export interface DeleteMemberOutput {
+  ok: true
+  memberId: string
+  /** Nombre d'équipes (coach ou player) dont le member a été retiré. */
+  removedFromTeamsCount: number
+  /** Nombre de /registrations dont le `matchedMemberId` a été nullifié. */
+  unlinkedRegistrationsCount: number
+  /** Nombre de /dues non payées supprimées. */
+  deletedDuesCount: number
+}
+
+export async function deleteMember(
+  input: DeleteMemberInput,
+): Promise<DeleteMemberOutput> {
+  const callable = httpsCallable<DeleteMemberInput, DeleteMemberOutput>(
+    functions,
+    'deleteMember',
+  )
+  const result: HttpsCallableResult<DeleteMemberOutput> = await callable(input)
   return result.data
 }

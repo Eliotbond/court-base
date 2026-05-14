@@ -5,8 +5,8 @@ import type { TeamTagRef } from './tag'
  * Document `/teams/{teamId}` — équipe du club.
  * Voir docs/firebase.md (section /teams/{teamId}).
  *
- * Les teams persistent cross-saisons via `activeSeasonIds[]`. Le montant des
- * cotisations est par-équipe (`duesAmount`, CHF/joueur/an).
+ * Les teams persistent cross-saisons via `activeSeasonIds[]`. La cotisation
+ * de l'équipe est référencée via `cotisationId` (cf. /cotisations).
  *
  * Note: pour l'instant seuls les champs nécessaires au Dashboard sont
  * exposés strictement (`id`, `name`, `categoryId`). Les autres seront ajoutés
@@ -17,6 +17,8 @@ import type { TeamTagRef } from './tag'
  * lecture côté repo — pas de dénormalisation.
  */
 export type TeamGender = 'M' | 'F' | 'mixed'
+
+export type TeamRegistrationStatus = 'open' | 'conditional' | 'closed'
 
 export interface TeamSchedulingPreferredDay {
   dayOfWeek: number
@@ -50,14 +52,46 @@ export interface TeamData {
   /** memberIds des joueurs. */
   playerIds: string[]
   activeSeasonIds: string[]
-  /** Cotisation annuelle CHF/joueur. */
-  duesAmount: number
+  /**
+   * Référence vers `/cotisations/{id}` — montant et description résolus à la
+   * lecture (pas dénormalisé). Cf. docs/main.md → 'Cotisations'.
+   */
+  cotisationId: string
   schedulingConstraints: TeamSchedulingConstraints
   /**
    * Tags attachés à l'équipe (référence + flag d'affichage par-équipe).
    * Cf. /tags référentiel et docs/main.md ("Tags d'équipes").
    */
   tags: TeamTagRef[]
+  /**
+   * Statut d'ouverture aux nouvelles inscriptions (saison courante).
+   * Affiché publiquement dans l'app register (TeamPicker §4.5 du brief).
+   */
+  registrationStatus: TeamRegistrationStatus
+  /**
+   * Manuel d'inscription affiché en branche "équipe ouverte" (markdown court).
+   * Écrit par le coach ou l'admin depuis l'app web.
+   */
+  openHandbook: string
+  /**
+   * Description des conditions affichée en branche "équipe sous conditions"
+   * (markdown court).
+   */
+  conditionalDescription: string
+  /**
+   * Liste de critères tagués pour les équipes sous conditions (chips d'affichage).
+   */
+  conditionalCriteria: string[]
+  /**
+   * Accroche courte affichée sur la fiche publique de l'équipe (app register).
+   * `null` = pas d'accroche, on affiche le nom de l'équipe seul.
+   */
+  publicTagline: string | null
+  /**
+   * memberId du coach affiché comme "head coach" sur la fiche publique
+   * (quand `coachIds` en contient plusieurs). `null` = premier de la liste utilisé.
+   */
+  publicHeadCoachMemberId: string | null
   active: boolean
   createdAt: Timestamp
 }

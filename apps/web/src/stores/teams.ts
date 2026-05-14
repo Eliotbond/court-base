@@ -276,7 +276,7 @@ export const useTeamsStore = defineStore('teams', () => {
       totalArchived: all.filter((t) => !t.active).length,
       totalDuesIssued: all
         .filter((t) => t.active)
-        .reduce((sum, t) => sum + t.duesAmount * t.playerCount, 0),
+        .reduce((sum, t) => sum + (t.cotisation?.price ?? 0) * t.playerCount, 0),
     }
   })
 

@@ -110,7 +110,31 @@ Web = surtout admin + coach. Les officiels bossent mobile, mais le web doit supp
 
 ## UI library — PrimeVue
 
-Formulaires, tables, dialogs, calendriers, menus. Le vue saison (grille hebdo des slots/bookings) est complexe — considérer `FullCalendar` PrimeVue ou grille custom sur primitives.
+Formulaires, tables, dialogs, menus. Pas de composant calendrier-scheduler côté PrimeVue (`Timeline` ≠ scheduler ; `DatePicker` = date picker only). Pour le planning bookings on utilise **vue-cal v4 MIT** (cf. §Bookings ci-dessous).
+
+## Bookings calendar — vue-cal v4 (MIT)
+
+**Choix arbitré 2026-05-14.** Alternatives écartées :
+- **PrimeVue** : aucun composant scheduler dispo.
+- **Schedule-X** : la `Time grid resource view` (courts en colonnes = notre besoin) est en **premium payant** (~500€/an).
+- **FullCalendar** : core MIT mais `@fullcalendar/resource-timegrid` aussi payant (~480€/an).
+- **Grille custom** : option viable mais ~600 lignes à maintenir + pas de drag/drop/resize gratuits.
+
+vue-cal v4 (`vue-cal` sur npm) coche tout : MIT, Vue 3, feature `splits` = courts en colonnes dans la vue jour, drag/drop + resize disponibles via plugin (non activé pour MVP), thématisable via `:deep()` CSS pour matcher tailwind.
+
+**Concepts clés vue-cal** :
+- **`splits`** : array `{ id, label, class?, hide? }` — chaque entrée est une colonne dans la vue jour. On y mappe `${venueId}__${courtId}`. Les events portent le même composite dans leur prop `split` pour s'aligner.
+- **Vue active** : passée via `v-model:active-view` (`'day'` | `'week'` | `'month'`). Les splits ne s'appliquent **qu'en vue jour** — passer `:split-days="[]"` ailleurs.
+- **Events** : `{ start, end, title, class, split, … }`. `start`/`end` au format `YYYY-MM-DD HH:MM` (heure locale) ou `Date`. On porte le `bookingId` en clé custom pour retrouver le booking au clic.
+- **Pas de types TS** shipped par la lib — shim minimal dans `apps/web/src/types/vue-cal.d.ts`.
+- **CSS** : import unique `import 'vue-cal/dist/vuecal.css'` (dans `Bookings.vue` aujourd'hui). Overrides via `:deep(.vuecal__event.<class>)` — éviter `!important`.
+
+**Source unique des données** : `useBookingsStore().allBookings` (toute la saison, single fetch via `listAllBookingsForSeason`). vue-cal filtre client-side selon `selectedDate` + `activeView`. **Plus de query par range hebdomadaire** (`listBookingsInRange` supprimée 2026-05-14) — la navigation `<` `>` `Aujourd'hui` est purement client-side, aucun re-fetch.
+
+**Limitations connues / extensions possibles** :
+- Drag/drop + resize non branchés (importer `vue-cal/dist/drag-and-drop.es.js` + plugin si besoin).
+- Clic sur cellule vide n'ouvre pas le dialog création (event `cell-click` dispo, à brancher si voulu).
+- Pas de virtualisation — OK tant que `< ~1000 bookings/saison` (la query repo est documentée pour cette borne).
 
 ## Conventions
 

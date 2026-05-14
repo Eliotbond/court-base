@@ -20,6 +20,7 @@ import InputText from 'primevue/inputtext'
 import MultiSelect from 'primevue/multiselect'
 import Select from 'primevue/select'
 import InputSwitch from 'primevue/inputswitch'
+import DatePicker from 'primevue/datepicker'
 import { useMembersStore, type MemberQuickFilter } from '@/stores/members'
 import type { MemberRow } from '@/repositories/members.repo'
 import type { DuesStatus } from '@club-app/shared-types'
@@ -69,6 +70,9 @@ const CHIPS: readonly ChipDef[] = [
   { id: 'comite', label: 'Comité' },
   { id: 'unlicensed', label: 'Sans licence' },
   { id: 'duesOverdue', label: 'Cotisation en retard', badgeClass: 'text-rose-600' },
+  // Membres < 18 ans (cf. store : `isMinor(birthDate)` ; birthDate=null traité
+  // comme adulte). Utile pour repérer les comptes qui devraient avoir un tuteur.
+  { id: 'minors', label: 'Mineurs' },
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -140,6 +144,18 @@ function fullName(m: MemberRow): string {
   return `${m.firstName} ${m.lastName}`
 }
 
+/**
+ * Vrai si la `birthDate` du membre (Firestore Timestamp) tombe dans les 18
+ * dernières années. Aligné sur la logique du store (`isMinor`) — dupliqué
+ * localement pour éviter d'importer un helper interne.
+ */
+function isMinorRow(m: MemberRow): boolean {
+  if (!m.birthDate) return false
+  const cutoff = new Date()
+  cutoff.setFullYear(cutoff.getFullYear() - 18)
+  return m.birthDate.seconds * 1000 > cutoff.getTime()
+}
+
 // ---------------------------------------------------------------------------
 // Dialog — Créer un membre
 //
@@ -187,6 +203,14 @@ interface CreateMemberForm {
   officialLevel: number | null
   licensed: boolean
   active: boolean
+  /**
+   * Date de naissance (optionnelle). `null` = inconnue. Le repo gère le
+   * fallback en defaults `comms` adulte. Permet aussi de détecter "mineur"
+   * pour afficher le hint d'ajout de tuteur.
+   */
+  birthDate: Date | null
+  /** N° AVS au format `756.XXXX.XXXX.XX`. Vide = non renseigné. */
+  avs: string
 }
 
 interface CreateMemberErrors {
@@ -194,6 +218,7 @@ interface CreateMemberErrors {
   lastName: string | null
   email: string | null
   officialLevel: string | null
+  avs: string | null
 }
 
 function makeEmptyCreateForm(): CreateMemberForm {
@@ -207,7 +232,30 @@ function makeEmptyCreateForm(): CreateMemberForm {
     officialLevel: null,
     licensed: false,
     active: true,
+    birthDate: null,
+    avs: '',
   }
+}
+
+/**
+ * Format du n° AVS suisse : `756.XXXX.XXXX.XX` (13 chiffres groupés).
+ * Dupliqué dans `apps/courtbase-register/.../Step2Identity.vue` et
+ * `ProfileTab.vue` — règle légale stable, OK de dupliquer.
+ */
+const AVS_REGEX = /^756\.\d{4}\.\d{4}\.\d{2}$/
+
+/** Âge légal de majorité (CH) — aligné sur stores/members.ts. */
+const MAJORITY_AGE_YEARS = 18
+
+/**
+ * Vrai si la date saisie correspond à un mineur (< 18 ans). Sert uniquement
+ * à afficher un info chip dans le wizard.
+ */
+function isMinorDate(d: Date | null, now: number = Date.now()): boolean {
+  if (!d) return false
+  const cutoff = new Date(now)
+  cutoff.setFullYear(cutoff.getFullYear() - MAJORITY_AGE_YEARS)
+  return d.getTime() > cutoff.getTime()
 }
 
 const isCreateOpen = ref(false)
@@ -217,6 +265,7 @@ const createErrors = reactive<CreateMemberErrors>({
   lastName: null,
   email: null,
   officialLevel: null,
+  avs: null,
 })
 const submittingCreate = ref(false)
 
@@ -226,6 +275,7 @@ function openCreateDialog(): void {
   createErrors.lastName = null
   createErrors.email = null
   createErrors.officialLevel = null
+  createErrors.avs = null
   isCreateOpen.value = true
 }
 
@@ -257,11 +307,17 @@ function validateCreateForm(): boolean {
     createErrors.officialLevel = null
   }
 
+  // AVS optionnel mais si fourni doit matcher le format suisse.
+  const avs = createForm.avs.trim()
+  createErrors.avs =
+    !avs || AVS_REGEX.test(avs) ? null : 'Format attendu : 756.XXXX.XXXX.XX'
+
   return (
     !createErrors.firstName &&
     !createErrors.lastName &&
     !createErrors.email &&
-    !createErrors.officialLevel
+    !createErrors.officialLevel &&
+    !createErrors.avs
   )
 }
 
@@ -271,6 +327,7 @@ async function submitCreate(): Promise<void> {
   try {
     const email = createForm.email.trim()
     const phone = createForm.phone.trim()
+    const avs = createForm.avs.trim()
     const newId = await store.createMember({
       firstName: createForm.firstName.trim(),
       lastName: createForm.lastName.trim(),
@@ -281,6 +338,8 @@ async function submitCreate(): Promise<void> {
       active: createForm.active,
       email: email || undefined,
       phone: phone || undefined,
+      birthDate: createForm.birthDate,
+      avs: avs || null,
     })
     if (newId) {
       closeCreateDialog()
@@ -355,6 +414,35 @@ async function submitCreate(): Promise<void> {
           :class="chip.badgeClass"
         >{{ counts[chip.id] }}</span>
       </Chip>
+
+      <!-- ===== Status toggle (active / archived) ===== -->
+      <div class="ml-2 inline-flex border border-surface-200 rounded-md overflow-hidden text-[12px]">
+        <button
+          type="button"
+          class="px-2.5 py-1"
+          :class="{
+            'bg-surface-100 text-surface-900 font-medium': store.archivedView === 'active',
+            'text-surface-500': store.archivedView !== 'active',
+          }"
+          @click="store.setArchivedView('active')"
+        >
+          Actifs
+        </button>
+        <button
+          type="button"
+          class="px-2.5 py-1 border-l border-surface-200"
+          :class="{
+            'bg-surface-100 text-surface-900 font-medium': store.archivedView === 'archived',
+            'text-surface-500': store.archivedView !== 'archived',
+          }"
+          @click="store.setArchivedView('archived')"
+        >
+          Archivés
+          <span class="ml-1 text-[11px] num text-surface-500">
+            {{ counts.archived }}
+          </span>
+        </button>
+      </div>
 
       <div class="ml-auto flex items-center gap-2">
         <div class="input-wrap w-72">
@@ -480,10 +568,16 @@ async function submitCreate(): Promise<void> {
               />
               <div class="leading-tight">
                 <div
-                  class="font-medium"
+                  class="font-medium flex items-center gap-1.5"
                   :class="data.active ? '' : 'line-through text-surface-500'"
                 >
                   {{ fullName(data) }}
+                  <Pill
+                    v-if="isMinorRow(data)"
+                    variant="amber"
+                  >
+                    Mineur
+                  </Pill>
                 </div>
                 <div class="text-[11px] text-surface-500">
                   <template v-if="data.email">
@@ -715,6 +809,32 @@ async function submitCreate(): Promise<void> {
           </label>
         </div>
 
+        <!-- Date de naissance (optionnelle) -->
+        <label class="block">
+          <span class="text-[12px] text-surface-600">Date de naissance</span>
+          <DatePicker
+            v-model="createForm.birthDate"
+            date-format="dd/mm/yy"
+            show-icon
+            class="mt-1 w-full"
+            :max-date="new Date()"
+            placeholder="jj/mm/aaaa"
+          />
+          <span class="text-[11px] text-surface-500 mt-1 block">
+            Optionnel — pourra être renseignée plus tard.
+          </span>
+          <span
+            v-if="isMinorDate(createForm.birthDate)"
+            class="text-[11px] text-amber-700 mt-1 inline-flex items-center gap-1"
+          >
+            <TriangleAlert
+              :size="11"
+              :stroke-width="2"
+            />
+            Le membre est mineur — pensez à ajouter un tuteur après la création.
+          </span>
+        </label>
+
         <!-- Rôles -->
         <label class="block">
           <span class="text-[12px] text-surface-600">Rôles</span>
@@ -760,6 +880,29 @@ async function submitCreate(): Promise<void> {
             </span>
           </label>
         </div>
+
+        <!-- N° AVS (optionnel) -->
+        <label class="block">
+          <span class="text-[12px] text-surface-600">N° AVS</span>
+          <InputText
+            v-model="createForm.avs"
+            class="mt-1 w-full"
+            placeholder="756.XXXX.XXXX.XX"
+            :invalid="!!createErrors.avs"
+          />
+          <span
+            v-if="createErrors.avs"
+            class="text-[11px] text-rose-600 mt-1 block"
+          >
+            {{ createErrors.avs }}
+          </span>
+          <span
+            v-else
+            class="text-[11px] text-surface-500 mt-1 block"
+          >
+            Optionnel — format suisse 756.XXXX.XXXX.XX.
+          </span>
+        </label>
 
         <!-- Switches -->
         <div class="flex items-center justify-between py-2 border border-surface-100 rounded-lg px-3">

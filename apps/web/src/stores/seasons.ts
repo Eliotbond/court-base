@@ -127,7 +127,7 @@ export const useSeasonsStore = defineStore('seasons', () => {
    * Crée une nouvelle saison (B3 — wizard `Nouvelle saison`). On insère
    * immédiatement le row retourné dans le state pour que la liste reflète la
    * nouveauté sans nécessiter un `load()` global. Retourne l'id pour
-   * permettre à la vue de router vers la page détail / dry-run.
+   * permettre à la vue de router vers la page détail si besoin.
    */
   async function create(input: CreateSeasonInput): Promise<string | null> {
     error.value = null

@@ -1,10 +1,12 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
+import { FirebaseError } from 'firebase/app'
 import {
   cancelInvitation,
   createClosurePeriod,
   createRole,
   deleteClosurePeriod,
+  deleteClubLogoByUrl,
   deleteRole,
   getClubConfig,
   getSubscriptionInfo,
@@ -16,6 +18,8 @@ import {
   removeAdmin,
   updateClubConfig,
   updateRole,
+  updateUserRoles,
+  uploadClubLogo,
   type AdminInviteInput,
   type ClosurePeriodInput,
   type ClubAdmin,
@@ -23,6 +27,7 @@ import {
   type RoleInput,
 } from '@/repositories/settings.repo'
 import type {
+  BankingInfo,
   ClosurePeriod,
   ClubConfig,
   DuesConfig,
@@ -40,11 +45,15 @@ import type {
  */
 export type SettingsSection =
   | 'general'
+  | 'banking'
   | 'officials'
   | 'dues'
   | 'roles'
   | 'categories'
   | 'tags'
+  | 'cotisations'
+  | 'licenses'
+  | 'matchTypes'
   | 'closurePeriods'
   | 'adminTeam'
 
@@ -150,6 +159,65 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /**
+   * Upload un nouveau logo dans Storage puis persiste l'URL dans
+   * `/config/club.logo`. Si un logo existe déjà, l'ancien fichier est
+   * supprimé après le commit Firestore (best-effort — l'erreur de suppression
+   * n'invalide pas l'opération).
+   */
+  async function setLogo(file: File): Promise<void> {
+    if (!config.value) throw new Error('Settings non chargés')
+    savingSection.value = 'general'
+    const previousLogo = config.value.logo
+    try {
+      const url = await uploadClubLogo(file)
+      await updateClubConfig({ logo: url })
+      config.value.logo = url
+      // Best-effort cleanup de l'ancien logo (ne propage pas l'erreur).
+      if (previousLogo) {
+        deleteClubLogoByUrl(previousLogo).catch((err: unknown) => {
+          const code = err instanceof FirebaseError ? err.code : 'unknown'
+          console.warn(`cleanup previous logo failed [${code}]`, err)
+        })
+      }
+      markSaved('general')
+    } catch (e: unknown) {
+      const code = e instanceof FirebaseError ? e.code : 'unknown'
+      console.error(`setLogo failed [${code}]`, e)
+      setError(e instanceof Error ? e.message : "Erreur lors de l'upload du logo")
+      throw e
+    } finally {
+      savingSection.value = null
+    }
+  }
+
+  /**
+   * Supprime le logo : reset `/config/club.logo` à `null` puis efface le
+   * fichier dans Storage (best-effort).
+   */
+  async function removeLogo(): Promise<void> {
+    if (!config.value) throw new Error('Settings non chargés')
+    if (!config.value.logo) return
+    savingSection.value = 'general'
+    const previousLogo = config.value.logo
+    try {
+      await updateClubConfig({ logo: null })
+      config.value.logo = null
+      deleteClubLogoByUrl(previousLogo).catch((err: unknown) => {
+        const code = err instanceof FirebaseError ? err.code : 'unknown'
+        console.warn(`delete logo file failed [${code}]`, err)
+      })
+      markSaved('general')
+    } catch (e: unknown) {
+      const code = e instanceof FirebaseError ? e.code : 'unknown'
+      console.error(`removeLogo failed [${code}]`, e)
+      setError(e instanceof Error ? e.message : 'Erreur lors de la suppression du logo')
+      throw e
+    } finally {
+      savingSection.value = null
+    }
+  }
+
   // -----------------------------------------------------
   // Officials config
   // -----------------------------------------------------
@@ -186,6 +254,38 @@ export const useSettingsStore = defineStore('settings', () => {
     } catch (e: unknown) {
       config.value.duesConfig = snap
       setError(e instanceof Error ? e.message : 'Erreur lors de la sauvegarde')
+      throw e
+    } finally {
+      savingSection.value = null
+    }
+  }
+
+  // -----------------------------------------------------
+  // Banking (IBAN, BIC, instructions paiement) — `/config/club.banking`
+  // -----------------------------------------------------
+
+  /**
+   * Patch `banking` dans `/config/club`. Passe `null` pour effacer entièrement
+   * (ex. reset). Tous les champs internes (`iban`, `bic`, `bankName`,
+   * `accountHolder`, `paymentInstructions`) acceptent `null` (cf. shared-types
+   * `BankingInfo`).
+   *
+   * UX : optimistic apply + rollback sur erreur. La section "general" reste
+   * l'onglet visuel parent (Club info) mais on utilise une section dédiée
+   * `banking` pour le flag `savingSection` afin de ne pas griser le bouton
+   * "Sauvegarder" de la card identité club pendant un save banking.
+   */
+  async function saveBanking(banking: BankingInfo | null): Promise<void> {
+    if (!config.value) throw new Error('Settings non chargés')
+    savingSection.value = 'banking'
+    const snap = config.value.banking ? { ...config.value.banking } : null
+    config.value.banking = banking ? { ...banking } : null
+    try {
+      await updateClubConfig({ banking })
+      markSaved('banking')
+    } catch (e: unknown) {
+      config.value.banking = snap
+      setError(e instanceof Error ? e.message : 'Erreur lors de la sauvegarde des infos bancaires')
       throw e
     } finally {
       savingSection.value = null
@@ -372,6 +472,41 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /**
+   * Met à jour la liste complète des rôles app pour un user (admin team).
+   * Sécurité côté rules : `/users.roles` est admin-only-write.
+   *
+   * Le rôle `admin` doit rester présent — sinon le user disparaîtrait de la
+   * liste Admin team (la requête filtre par `roles array-contains 'admin'`).
+   * Pour révoquer le rôle admin, utiliser `removeAdminAction` (callable
+   * dédiée à terme).
+   *
+   * Optimistic apply + rollback en cas d'erreur Firestore.
+   */
+  async function updateAdminRoles(uid: string, roles: string[]): Promise<void> {
+    const idx = admins.value.findIndex((a) => a.id === uid)
+    if (idx === -1) return
+    const target = admins.value[idx]
+    if (!roles.includes('admin')) {
+      throw new Error(
+        "Le rôle 'admin' ne peut pas être retiré depuis cette UI — utilise 'Retirer'.",
+      )
+    }
+    savingSection.value = 'adminTeam'
+    const snapRoles = [...target.roles]
+    admins.value[idx] = { ...target, roles: [...roles] }
+    try {
+      await updateUserRoles(uid, roles)
+      markSaved('adminTeam')
+    } catch (e: unknown) {
+      admins.value[idx] = { ...target, roles: snapRoles }
+      setError(e instanceof Error ? e.message : 'Erreur lors de la mise à jour des rôles')
+      throw e
+    } finally {
+      savingSection.value = null
+    }
+  }
+
   return {
     // state
     config,
@@ -388,8 +523,11 @@ export const useSettingsStore = defineStore('settings', () => {
     // actions
     load,
     saveClubInfo,
+    setLogo,
+    removeLogo,
     saveOfficialsConfig,
     saveDuesConfig,
+    saveBanking,
     addCustomRole,
     editRole,
     removeRole,
@@ -398,5 +536,6 @@ export const useSettingsStore = defineStore('settings', () => {
     inviteAdminAction,
     cancelInvitationAction,
     removeAdminAction,
+    updateAdminRoles,
   }
 })

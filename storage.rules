@@ -1,0 +1,97 @@
+rules_version = '2';
+
+// =============================================================================
+// Firebase Storage Rules — Club Management App
+// =============================================================================
+// Modèle : un projet Firebase = un club. Pas de filtrage clubId.
+// Tous les paths sont gated. Read/write deny par défaut sauf indiqué.
+//
+// Source de vérité documentée : docs/chantier-registrations.md §4.9 et §5.
+//
+// CONVENTION DE PATH (à respecter dans le code de l'app register ET de l'app web) :
+//   - Uploads registration : `registrations/{uid}/{regId}/{filename}`
+//   - Uploads licence      : `licenseRequests/{uid}/{requestId}/{filename}`
+// Le segment {uid} est l'UID Firebase Auth de l'uploadeur — il permet la
+// validation d'ownership sans cross-document lookup (limitation Storage rules).
+// La callable uploadLicenseDocument (Admin SDK) valide que le uid est bien lié
+// au memberId de la licenseRequest avant d'accorder ou de signer une URL.
+// =============================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ------------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isRootAdmin() {
+      return isSignedIn() && request.auth.token.rootAdmin == true;
+    }
+    // Firestore Storage rules ne peuvent pas faire de get() cross-document
+    // (limitation Firebase). On scope donc par UID dans le path lui-même.
+
+    // ------------------------------------------------------------------------
+    // /registrations/{uid}/{regId}/{file}
+    // ------------------------------------------------------------------------
+    // Path préfixé par l'UID de l'auteur de la registration. Permet de valider
+    // l'ownership uniquement avec request.auth.uid (pas de cross-doc lookup).
+    // Côté app register : upload via `registrations/{uid}/{regId}/{filename}`.
+    // Côté coach/admin : ils peuvent lire mais pas écrire (l'app web n'upload pas
+    // pour le compte du parent ; si besoin, passer par callable).
+    match /registrations/{uid}/{registrationId}/{fileName} {
+      allow read: if isSignedIn();
+      // Auteur uniquement, taille < 10 MB, type image ou PDF.
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
+      allow update, delete: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ------------------------------------------------------------------------
+    // /club/logo/{file}
+    // ------------------------------------------------------------------------
+    // Logo du club affiché dans Settings → Club info + sidebar de l'app.
+    // Read : signed-in (logo affiché à tout user authentifié de l'app).
+    // Write : signed-in avec contrainte taille + type image. Le seul flow qui
+    //   écrit ici est Settings → Club info (admin-only via le routing UI). On
+    //   ne peut pas restreindre à `isAdmin()` au niveau Storage (pas de
+    //   cross-doc lookup) — la garde réelle est sur Firestore : si un user
+    //   non-admin uploade quand même, l'URL n'atterrit jamais dans
+    //   `/config/club.logo` (rule write admin-only).
+    match /club/logo/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ------------------------------------------------------------------------
+    // /licenseRequests/{uid}/{requestId}/{file}
+    // ------------------------------------------------------------------------
+    // Path préfixé par l'UID de l'uploader (le member linked OU un guardian).
+    // L'enforcement "ce UID est bien lié au memberId du licenseRequest" se fait
+    // côté callable d'upload (uploadLicenseDocument) — les rules valident juste
+    // l'auth + la taille + le type, le mapping uid ↔ licenseRequest passe par
+    // la callable qui lit Firestore avec l'Admin SDK.
+    match /licenseRequests/{uid}/{requestId}/{fileName} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
+      allow update, delete: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ------------------------------------------------------------------------
+    // Catch-all deny
+    // ------------------------------------------------------------------------
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

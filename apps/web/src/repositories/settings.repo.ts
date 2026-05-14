@@ -1,18 +1,29 @@
+import { FirebaseError } from 'firebase/app'
 import {
   addDoc,
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
+  updateDoc,
   where,
   type Timestamp as FirestoreTimestamp,
 } from 'firebase/firestore'
-import { auth, db } from '@/services/firebase'
+import {
+  deleteObject,
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytes,
+} from 'firebase/storage'
+import { auth, db, storage } from '@/services/firebase'
 import { listRootAdminUids } from '@/services/cloudFunctions'
 import type {
+  BankingInfo,
   ClosurePeriod,
   ClubConfig,
   ClubConfigData,
@@ -73,6 +84,7 @@ export type ClubConfigPatch = Partial<
     | 'logo'
     | 'address'
     | 'contact'
+    | 'banking'
     | 'officialsConfig'
     | 'duesConfig'
   >
@@ -112,6 +124,12 @@ export interface ClubAdmin {
    * résoudra via Admin SDK côté Function ou via un getter callable.
    */
   isRootAdmin: boolean
+  /**
+   * Rôles `/users/{uid}.roles` (admin, coach, official, treasurer, parent…).
+   * `admin` est toujours présent (listAdmins filtre dessus) mais on expose la
+   * liste complète pour la gestion par checkboxes côté UI.
+   */
+  roles: string[]
   /** ISO timestamp d'ajout — utilisé pour tri + affichage UI. */
   addedAt: { seconds: number; nanoseconds: number }
 }
@@ -155,6 +173,7 @@ const STATE: SettingsState = {
       email: 'contact@bcls.ch',
       phone: '+41 21 555 24 24',
     },
+    banking: null,
     officialsConfig: {
       licenseFee: 140,
       thresholdGreen: 6,
@@ -259,47 +278,148 @@ function clone<T>(value: T): T {
 // ---------------------------------------------------------------------------
 
 /**
- * Lit le doc singleton `/config/club`.
- *
- * TODO(firestore): remplacer par
- *   `doc('/config/club').get()` puis cast vers `ClubConfig`.
+ * Lit le doc singleton `/config/club`. Fallback sur le mock si le doc n'existe
+ * pas encore (projet vierge avant `runMigrations`) — l'écran Settings reste
+ * affichable et l'admin peut amorcer la config.
  */
 export async function getClubConfig(): Promise<ClubConfig> {
-  // TODO(firestore): replace with real /config/club read.
-  return delay(clone(STATE.config))
+  try {
+    const snap = await getDoc(doc(db, 'config', 'club'))
+    if (snap.exists()) {
+      return { id: snap.id, ...(snap.data() as Omit<ClubConfig, 'id'>) }
+    }
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`getClubConfig failed [${code}]`, err)
+    throw err
+  }
+  // Doc absent : fallback mock pour permettre l'amorçage UI sur projet neuf.
+  return clone(STATE.config)
 }
 
 /**
- * Patch le doc singleton `/config/club`. Optimistic — la vue update son
- * cache local immédiatement et appelle ce repo en background.
+ * Patch le doc singleton `/config/club`. Admin-only côté rules.
  *
- * `shortCode` et `contact` font partie du même doc (cf. `docs/firebase.md`),
- * édités d'un coup depuis Settings → General.
+ * Utilise `setDoc(..., { merge: true })` plutôt que `updateDoc` pour gérer
+ * l'amorçage : sur un projet vierge, le doc `/config/club` peut ne pas
+ * exister (pas créé par migration) — `updateDoc` planterait avec
+ * `not-found`, tandis que `setDoc` upsert proprement. Le merge profond
+ * Firestore préserve les sous-champs non-touchés (ex. un patch
+ * `contact.email` n'écrase pas `contact.phone`).
  *
- * TODO(firestore): remplacer par
- *   `doc('/config/club').update(patch)` (admin-only, cf. firestore.rules).
- *   Garder un merge profond sur `address` / `contact` / `officialsConfig` /
- *   `duesConfig` pour ne pas écraser les champs non-touchés.
+ * Si le doc n'existe pas encore, on seed d'abord la baseline complète
+ * (mock defaults + `createdAt` server-side + `createdBy` = uid courant)
+ * avant d'appliquer le patch, sinon le doc resterait amputé des champs
+ * required (le caller `getClubConfig` lit ensuite un doc incomplet et
+ * l'UI casse à `store.config.contact.email`).
  */
 export async function updateClubConfig(patch: ClubConfigPatch): Promise<void> {
-  // TODO(firestore): replace with real /config/club update.
-  if (patch.name !== undefined) STATE.config.name = patch.name
-  if (patch.shortCode !== undefined) STATE.config.shortCode = patch.shortCode
-  if (patch.logo !== undefined) STATE.config.logo = patch.logo
-  if (patch.address !== undefined) STATE.config.address = patch.address
-  if (patch.contact !== undefined) {
-    STATE.config.contact = { ...STATE.config.contact, ...patch.contact }
-  }
-  if (patch.officialsConfig !== undefined) {
-    STATE.config.officialsConfig = {
-      ...STATE.config.officialsConfig,
-      ...patch.officialsConfig,
+  if (Object.keys(patch).length === 0) return
+  const ref = doc(db, 'config', 'club')
+  try {
+    const snap = await getDoc(ref)
+    if (!snap.exists()) {
+      const uid = auth.currentUser?.uid ?? 'unknown'
+      const baseline: Omit<ClubConfigData, 'createdAt'> & { createdAt: unknown } = {
+        name: STATE.config.name,
+        shortCode: STATE.config.shortCode,
+        logo: null,
+        address: STATE.config.address,
+        contact: { ...STATE.config.contact },
+        // banking est `null` sur projet vierge — l'admin saisira l'IBAN
+        // via Settings → Club info → Infos bancaires. Tant que ce champ
+        // est `null`, les emails de demande de paiement omettent la
+        // section "comment payer" (cf. shared-types/config.ts).
+        banking: null,
+        officialsConfig: { ...STATE.config.officialsConfig },
+        duesConfig: { ...STATE.config.duesConfig },
+        createdAt: serverTimestamp(),
+        createdBy: uid,
+      }
+      await setDoc(ref, baseline)
     }
+    await setDoc(ref, patch, { merge: true })
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`updateClubConfig failed [${code}]`, err)
+    throw err
   }
-  if (patch.duesConfig !== undefined) {
-    STATE.config.duesConfig = { ...STATE.config.duesConfig, ...patch.duesConfig }
+}
+
+// ---------------------------------------------------------------------------
+// Public API — Club logo (Firebase Storage)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upload le logo du club dans Firebase Storage et retourne l'URL publique
+ * de download. L'appelant doit ensuite appeler `updateClubConfig({ logo })`
+ * pour persister cette URL dans `/config/club.logo`.
+ *
+ * Path : `club/logo/<timestamp>.<ext>`. Le timestamp évite la collision avec
+ * d'éventuels résidus d'un précédent logo (Firebase ne garantit pas la
+ * suppression atomique côté CDN — un nouveau path force le rafraîchissement
+ * client).
+ *
+ * Validation côté UI (taille / type) — les rules Storage redoublent (`< 2MB`,
+ * `image/*`) en garde-fou.
+ */
+export async function uploadClubLogo(file: File): Promise<string> {
+  const ext = inferImageExt(file)
+  const path = `club/logo/logo_${Date.now()}${ext}`
+  const fileRef = storageRef(storage, path)
+  try {
+    await uploadBytes(fileRef, file, { contentType: file.type })
+    return await getDownloadURL(fileRef)
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`uploadClubLogo failed [${code}]`, err)
+    throw err
   }
-  return delay(undefined)
+}
+
+/**
+ * Supprime un fichier de logo dans Storage à partir de son URL de download.
+ * Tolérant : `not-found` est ignoré (le fichier a peut-être déjà été nettoyé).
+ *
+ * L'appelant doit ensuite mettre à jour `/config/club.logo` à `null`.
+ */
+export async function deleteClubLogoByUrl(downloadUrl: string): Promise<void> {
+  const path = pathFromDownloadUrl(downloadUrl)
+  if (!path) return // URL externe ou format inattendu — on ne touche à rien.
+  const fileRef = storageRef(storage, path)
+  try {
+    await deleteObject(fileRef)
+  } catch (err) {
+    if (err instanceof FirebaseError && err.code === 'storage/object-not-found') {
+      return
+    }
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`deleteClubLogoByUrl failed [${code}]`, err)
+    throw err
+  }
+}
+
+/** `image/png` → `.png`, fallback sur l'extension du nom de fichier. */
+function inferImageExt(file: File): string {
+  if (file.type === 'image/png') return '.png'
+  if (file.type === 'image/jpeg') return '.jpg'
+  if (file.type === 'image/svg+xml') return '.svg'
+  if (file.type === 'image/webp') return '.webp'
+  const lastDot = file.name.lastIndexOf('.')
+  if (lastDot >= 0) return file.name.slice(lastDot).toLowerCase()
+  return ''
+}
+
+/**
+ * Extrait le path Storage (`club/logo/...`) à partir d'une download URL
+ * Firebase. Format attendu :
+ * `https://firebasestorage.googleapis.com/v0/b/<bucket>/o/<encoded-path>?alt=...`
+ * Renvoie `null` si l'URL ne matche pas (ex. logo hébergé ailleurs).
+ */
+function pathFromDownloadUrl(url: string): string | null {
+  const match = /\/o\/([^?]+)/.exec(url)
+  if (!match || !match[1]) return null
+  return decodeURIComponent(match[1])
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +611,7 @@ export async function listAdmins(): Promise<ClubAdmin[]> {
       displayName: data.displayName || data.email || d.id,
       email: data.email ?? '',
       isRootAdmin: rootAdminSet.has(d.id),
+      roles: Array.isArray(data.roles) ? [...data.roles] : [],
       addedAt: {
         seconds: createdAt?.seconds ?? 0,
         nanoseconds: createdAt?.nanoseconds ?? 0,
@@ -594,8 +715,34 @@ export async function removeAdmin(uid: string): Promise<void> {
   return delay(undefined)
 }
 
+/**
+ * Met à jour le tableau `/users/{uid}.roles`. Utilisé pour gérer les rôles
+ * cumulables côté Admin team (admin / coach / official / treasurer).
+ *
+ * Sécurité : write `/users.roles` est admin-only côté rules — un caller non
+ * admin recevra `permission-denied` (la callable côté serveur reste future
+ * pour valider last-admin / self-demote ; voir `removeAdmin` TODO).
+ *
+ * Le tableau est **remplacé intégralement** ; les rôles métier portés par
+ * `/members.roles` ne sont pas touchés (ils vivent dans une autre collection).
+ *
+ * @param uid     uid du user à modifier
+ * @param roles   nouvelle liste complète des rôles app (allowlist guards)
+ */
+export async function updateUserRoles(uid: string, roles: string[]): Promise<void> {
+  // Dédupe + ordre stable (cosmétique, et évite les doublons silencieux).
+  const unique = Array.from(new Set(roles))
+  try {
+    await updateDoc(doc(db, 'users', uid), { roles: unique })
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`updateUserRoles failed [${code}]`, err)
+    throw err
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers re-exposed for caller convenience (typing only)
 // ---------------------------------------------------------------------------
 
-export type { OfficialsConfig, DuesConfig, ClubContact }
+export type { BankingInfo, OfficialsConfig, DuesConfig, ClubContact }

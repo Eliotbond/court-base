@@ -17,8 +17,8 @@ import {
 import type {
   Booking,
   BookingData,
-  Due,
-  DueStatus,
+  Cotisation,
+  CotisationStatus,
   Member,
   MemberData,
   Season,
@@ -85,12 +85,13 @@ export interface BookingPickerRow {
 }
 
 /**
- * Status dues exposés côté ligne d'attendance. On expose le union complet
- * `DueStatus` (incl. `cancelled`) — la vue mappe vers une pill / décide si la
- * ligne doit être grisée. `pending_grace` reste affiché (joueur en période
- * de grâce, OK pour s'entraîner). `null` = pas de due record.
+ * Status cotisation exposés côté ligne d'attendance. On expose le union
+ * complet `CotisationStatus` (incl. `cancelled`) — la vue mappe vers une pill
+ * / décide si la ligne doit être grisée. `pending_grace` reste affiché
+ * (joueur en période de grâce, OK pour s'entraîner). `null` = pas de
+ * cotisation record.
  */
-export type AttendanceDueStatus = DueStatus | null
+export type AttendanceCotisationStatus = CotisationStatus | null
 
 /** Ligne d'attendance pour un joueur d'une équipe pointée. */
 export interface AttendanceLineRow {
@@ -99,7 +100,7 @@ export interface AttendanceLineRow {
   lastName: string
   /** Pas encore wiré (Storage non posé). `null` jusqu'au chantier media. */
   photoUrl: string | null
-  duesStatus: AttendanceDueStatus
+  duesStatus: AttendanceCotisationStatus
   /**
    * Vrai si le joueur est "exclu" pour la saison active.
    *
@@ -234,9 +235,10 @@ async function loadCourtLabel(venueId: string, courtId: string): Promise<string>
 }
 
 /**
- * Charge les dues actives sur saison `seasonId` pour la team `teamId`,
- * restreintes aux memberIds passés. Retourne une map memberId → Due (la
- * plus récente si plusieurs — cas pathologique, on prend le 1er rencontré).
+ * Charge les cotisations actives sur saison `seasonId` pour la team `teamId`,
+ * restreintes aux memberIds passés. Retourne une map memberId → Cotisation
+ * (la plus récente si plusieurs — cas pathologique, on prend le 1er
+ * rencontré).
  *
  * Chunké par 30 sur `memberId` (limite `in`). Filtre seasonId/teamId côté
  * server pour limiter le payload.
@@ -245,8 +247,8 @@ async function loadDuesByMember(
   memberIds: readonly string[],
   teamId: string,
   seasonId: string,
-): Promise<Map<string, Due>> {
-  const out = new Map<string, Due>()
+): Promise<Map<string, Cotisation>> {
+  const out = new Map<string, Cotisation>()
   const unique = Array.from(new Set(memberIds.filter((id) => id.length > 0)))
   if (unique.length === 0 || !teamId || !seasonId) return out
   for (const chunk of chunkArray(unique, IN_CHUNK)) {
@@ -258,8 +260,8 @@ async function loadDuesByMember(
     )
     const snap = await getDocs(q)
     for (const d of snap.docs) {
-      const data = d.data() as Omit<Due, 'id'>
-      // On garde la 1re occurrence rencontrée — schéma main.md = 1 due / member / saison / team.
+      const data = d.data() as Omit<Cotisation, 'id'>
+      // On garde la 1re occurrence rencontrée — schéma main.md = 1 cotisation / member / saison / team.
       if (!out.has(data.memberId)) {
         out.set(data.memberId, { id: d.id, ...data })
       }
@@ -446,10 +448,10 @@ export async function loadAttendanceLines(
       activeSeasonPromise,
     ])
 
-    // Dues : nécessite la saison active pour scoper le query.
-    const dues = activeSeason
+    // Cotisations : nécessite la saison active pour scoper le query.
+    const cotisations = activeSeason
       ? await loadDuesByMember(playerIds, teamId, activeSeason.id)
-      : new Map<string, Due>()
+      : new Map<string, Cotisation>()
 
     // Map existing attendance par memberId (= attendanceId par convention).
     type ExistingAttendance = {
@@ -476,16 +478,16 @@ export async function loadAttendanceLines(
     // Compose lignes — ordonne sur (lastName, firstName).
     const rows: AttendanceLineRow[] = playerIds.map((memberId) => {
       const m = members.get(memberId)
-      const due = dues.get(memberId) ?? null
+      const cotisation = cotisations.get(memberId) ?? null
       const ex = existing.get(memberId) ?? null
-      const isExcluded = due?.status === 'cancelled'
+      const isExcluded = cotisation?.status === 'cancelled'
       return {
         memberId,
         firstName: m?.firstName ?? '—',
         lastName: m?.lastName ?? '—',
         // TODO(media): wire photoUrl quand Storage upload landera.
         photoUrl: null,
-        duesStatus: due?.status ?? null,
+        duesStatus: cotisation?.status ?? null,
         isExcluded,
         existingStatus: ex?.status ?? null,
         existingNote: ex?.note ?? null,
