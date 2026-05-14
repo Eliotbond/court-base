@@ -60,7 +60,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'venues',
         name: 'venues',
-        component: placeholder,
+        component: () => import('@/views/Venues.vue'),
         meta: { title: 'Venues & courts', allowedRoles: ADMIN_ONLY },
       },
       {
