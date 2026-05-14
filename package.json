@@ -15,7 +15,12 @@
   ],
   "scripts": {
     "dev": "npm run dev -w apps/web",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:control-plane": "npm run dev -w apps/control-plane",
     "build": "npm run build --workspaces --if-present",
+    "build:web": "npm run build -w apps/web",
+    "build:functions": "npm run build -w functions",
+    "build:control-plane": "npm run build -w apps/control-plane",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
