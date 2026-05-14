@@ -84,19 +84,19 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'bookings',
         name: 'bookings',
-        component: placeholder,
+        component: () => import('@/views/Bookings.vue'),
         meta: { title: 'Bookings', allowedRoles: ALL_AUTHED },
       },
       {
         path: 'officials',
         name: 'officials',
-        component: placeholder,
+        component: () => import('@/views/Officials.vue'),
         meta: { title: 'Officials', allowedRoles: ADMIN_ONLY },
       },
       {
         path: 'dues',
         name: 'dues',
-        component: placeholder,
+        component: () => import('@/views/Dues.vue'),
         meta: { title: 'Dues', allowedRoles: ADMIN_ONLY },
       },
       {
@@ -114,7 +114,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'attendance',
         name: 'attendance',
-        component: placeholder,
+        component: () => import('@/views/Attendance.vue'),
         meta: { title: 'Attendance', allowedRoles: ADMIN_COACH },
       },
       {
