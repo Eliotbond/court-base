@@ -43,6 +43,7 @@ export type SettingsSection =
   | 'officials'
   | 'dues'
   | 'roles'
+  | 'categories'
   | 'closurePeriods'
   | 'adminTeam'
 
