@@ -8,6 +8,7 @@ import {
   Hourglass,
   Inbox,
   Loader2,
+  Pencil,
   Trash2,
   TriangleAlert,
   XCircle,
@@ -21,6 +22,7 @@ import Textarea from 'primevue/textarea'
 import Select from 'primevue/select'
 import DatePicker from 'primevue/datepicker'
 import Pill from '@/components/ui/Pill.vue'
+import EditCotisationDialog from '@/components/cotisations/EditCotisationDialog.vue'
 import { useMemberCotisations } from '@/composables/useMemberCotisations'
 import { useAuthStore } from '@/stores/auth'
 import { markCotisationPaid } from '@/repositories/cotisations.repo'
@@ -364,6 +366,34 @@ async function submitDelete(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Edit — modification d'une cotisation (dates, statut, notes — PAS le montant).
+//
+// Réservé au comité : `auth.hasAccess(['admin','treasurer'])`. Le dialog
+// `EditCotisationDialog` est autonome — il appelle lui-même la Cloud Function
+// de mise à jour, gère formulaire/validation/erreurs. On lui passe `visible` +
+// `cotisation` et on réagit à `@saved` en rechargeant les cotisations du
+// membre.
+// ---------------------------------------------------------------------------
+const canEditCotisation = computed<boolean>(() =>
+  auth.hasAccess(['admin', 'treasurer']),
+)
+
+const isEditDialogOpen = ref(false)
+const editTarget = ref<Cotisation | null>(null)
+
+function openEditDialog(cotisation: Cotisation): void {
+  if (!canEditCotisation.value) return
+  editTarget.value = cotisation
+  isEditDialogOpen.value = true
+}
+
+async function onCotisationSaved(): Promise<void> {
+  // Le dialog s'est déjà fermé (il émet `update:visible` false). On recharge
+  // les données du membre pour refléter dates/statut/notes mis à jour.
+  await load()
+}
+
+// ---------------------------------------------------------------------------
 // Empty state — explique d'où viennent les cotisations (Function).
 // ---------------------------------------------------------------------------
 const isEmpty = computed(
@@ -579,6 +609,19 @@ const isEmpty = computed(
               </div>
             </div>
             <div class="flex items-center gap-1.5 flex-wrap justify-end">
+              <button
+                v-if="canEditCotisation"
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="pendingActionFor === cotisation.id"
+                @click="openEditDialog(cotisation)"
+              >
+                <Pencil
+                  :size="13"
+                  :stroke-width="2"
+                />
+                Modifier
+              </button>
               <button
                 v-if="canMarkPaid(cotisation.status)"
                 type="button"
@@ -970,4 +1013,14 @@ const isEmpty = computed(
       </button>
     </template>
   </Dialog>
+
+  <!-- ============== Edit Dialog (comité — admin / treasurer) ============== -->
+  <!-- Composant autonome : il appelle lui-même la Cloud Function de mise à
+       jour, gère formulaire / validation / erreurs. On réagit à `@saved` en
+       rechargeant les cotisations du membre. -->
+  <EditCotisationDialog
+    v-model:visible="isEditDialogOpen"
+    :cotisation="editTarget"
+    @saved="onCotisationSaved"
+  />
 </template>

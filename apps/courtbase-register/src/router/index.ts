@@ -112,6 +112,21 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/PaymentInstructions.vue'),
     meta: { requiresAuth: true, requiresProfile: true },
   },
+  // Facture cotisation (Phase E) — document type facture, lecture seule,
+  // accessible à tout moment quel que soit le statut de paiement.
+  {
+    path: '/facture/:dueId',
+    name: 'facture',
+    component: () => import('@/views/Facture.vue'),
+    meta: { requiresAuth: true, requiresProfile: true },
+  },
+  // Liste de toutes les factures du parent — courantes ET passées (Phase E).
+  {
+    path: '/factures',
+    name: 'factures',
+    component: () => import('@/views/Factures.vue'),
+    meta: { requiresAuth: true, requiresProfile: true },
+  },
   {
     path: '/:pathMatch(.*)*',
     redirect: { name: 'landing' },

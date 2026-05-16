@@ -280,6 +280,25 @@ service cloud.firestore {
     match /matches/{matchId} {
       allow read: if isSignedIn();
       allow create, update, delete: if isRootAdmin() || isAdmin();
+
+      // Assignations d'officiels d'un match À L'EXTÉRIEUR (kind='away') — les
+      // matchs away n'ont pas de booking, on porte donc leurs assignations
+      // ici. Schéma + permissions identiques à
+      // /bookings/{}/officialAssignments (cf. docs/firebase.md).
+      match /officialAssignments/{assignmentId} {
+        allow read: if isSignedIn();
+        allow create: if isRootAdmin() || isAdmin() ||
+          // Self-register : l'official crée son propre assignment.
+          (isSignedIn() &&
+           request.resource.data.status == 'pending' &&
+           request.resource.data.memberId == userDoc().memberId);
+        allow update: if isRootAdmin() || isAdmin() ||
+          // L'official update status + respondedAt sur SA propre assignation.
+          (resource.data.memberId == userDoc().memberId &&
+           request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'respondedAt']));
+        allow delete: if isRootAdmin() || isAdmin();
+      }
     }
 
     // ========================================================================
@@ -363,6 +382,29 @@ service cloud.firestore {
       allow create: if isRootAdmin() || isAdmin() ||
         (isCoach() && request.resource.data.teamId in userDoc().teamIds);
       allow update, delete: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
+    // Module Comptabilité — /accounts, /accountingEntries, /invoices
+    // ========================================================================
+    // Accès STRICTEMENT réservé au trésorier (`treasurer`) et au `rootAdmin`.
+    // L'admin standard est EXCLU de ces collections — la compta est une
+    // frontière de sécurité distincte des droits admin généraux. Aucune rule
+    // wildcard `/{document=**}` n'ouvre ces paths : l'exclusion admin tient.
+    // Cf. docs/compta.md (section Sécurité).
+    match /accounts/{id} {
+      allow read, write: if isRootAdmin() || isTreasurer();
+    }
+    // Journal en partie double. Append-only : pas de delete — l'annulation
+    // d'une écriture passe par une contre-passation (écriture inverse,
+    // `reversed` + `reversalOfEntryId`). Cf. docs/compta.md.
+    match /accountingEntries/{id} {
+      allow read, create, update: if isRootAdmin() || isTreasurer();
+      allow delete: if false;
+    }
+    // Factures fournisseurs (saisie manuelle en v1, champs OCR réservés).
+    match /invoices/{id} {
+      allow read, write: if isRootAdmin() || isTreasurer();
     }
 
     // ========================================================================

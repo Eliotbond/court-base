@@ -13,6 +13,12 @@ const placeholder = () => import('@/views/PlaceholderView.vue')
 const ADMIN_COACH: readonly string[] = ['admin', 'coach']
 const ADMIN_ONLY: readonly string[] = ['admin']
 const ALL_AUTHED: readonly string[] = ['admin', 'coach', 'official']
+/**
+ * Module Comptabilité — accès réservé au trésorier (`treasurer`). Le rootAdmin
+ * est laissé passer globalement par le guard (court-circuit claim), pas besoin
+ * de l'ajouter ici. L'admin standard est exclu (cf. docs/compta.md §1).
+ */
+const TREASURER_ONLY: readonly string[] = ['treasurer']
 
 const routes: RouteRecordRaw[] = [
   {
@@ -134,6 +140,49 @@ const routes: RouteRecordRaw[] = [
         name: 'settings',
         component: () => import('@/views/Settings.vue'),
         meta: { title: 'Settings', allowedRoles: ADMIN_ONLY },
+      },
+      // --- Module Comptabilité (treasurer + rootAdmin) -----------------------
+      {
+        path: 'comptabilite',
+        name: 'accounting-home',
+        component: () => import('@/views/accounting/AccountingHome.vue'),
+        meta: { title: 'Comptabilité', allowedRoles: TREASURER_ONLY },
+      },
+      {
+        path: 'comptabilite/comptes',
+        name: 'accounting-accounts',
+        component: () => import('@/views/accounting/Accounts.vue'),
+        meta: { title: 'Plan comptable', allowedRoles: TREASURER_ONLY },
+      },
+      {
+        path: 'comptabilite/credits',
+        name: 'accounting-credits',
+        component: () => import('@/views/accounting/Credits.vue'),
+        meta: { title: 'Crédits', allowedRoles: TREASURER_ONLY },
+      },
+      {
+        path: 'comptabilite/factures',
+        name: 'accounting-invoices',
+        component: () => import('@/views/accounting/Invoices.vue'),
+        meta: { title: 'Factures', allowedRoles: TREASURER_ONLY },
+      },
+      {
+        path: 'comptabilite/journal',
+        name: 'accounting-journal',
+        component: () => import('@/views/accounting/Journal.vue'),
+        meta: { title: 'Journal', allowedRoles: TREASURER_ONLY },
+      },
+      {
+        path: 'comptabilite/bilan',
+        name: 'accounting-balance-sheet',
+        component: () => import('@/views/accounting/Bilan.vue'),
+        meta: { title: 'Bilan', allowedRoles: TREASURER_ONLY },
+      },
+      {
+        path: 'comptabilite/resultat',
+        name: 'accounting-income-statement',
+        component: () => import('@/views/accounting/IncomeStatement.vue'),
+        meta: { title: 'Compte de résultat', allowedRoles: TREASURER_ONLY },
       },
     ],
   },

@@ -62,7 +62,10 @@ export const MAX_BATCH_WRITES = 500
  *   - else if at least one due exists and all are paid/cancelled -> 'ok'
  *   - else (no dues at all) -> 'n/a'
  */
-import type { DueStatus, DuesStatus } from '@club-app/shared-types'
+import type {
+  CotisationStatus as DueStatus,
+  DuesStatus,
+} from '@club-app/shared-types'
 
 export function computeMemberDuesStatus(dueStatuses: readonly DueStatus[]): DuesStatus {
   if (dueStatuses.length === 0) return 'n/a'

@@ -16,11 +16,19 @@ import {
   History,
   Settings,
   Dribbble,
+  Wallet,
+  BookOpen,
+  PlusCircle,
+  FileText,
+  ScrollText,
+  Scale,
+  Calculator,
 } from 'lucide-vue-next'
 import { computed, onMounted, type Component } from 'vue'
 import Pill from '@/components/ui/Pill.vue'
 import { useMembersStore } from '@/stores/members'
 import { useSettingsStore } from '@/stores/settings'
+import { useAuthStore } from '@/stores/auth'
 
 type NavItem = {
   to: string
@@ -32,6 +40,7 @@ type NavItem = {
 
 const membersStore = useMembersStore()
 const settingsStore = useSettingsStore()
+const authStore = useAuthStore()
 
 onMounted(() => {
   // Sidebar globalement montée → charge la liste si pas encore en cache,
@@ -84,6 +93,25 @@ const operations: NavItem[] = [
 const details: NavItem[] = [
   { to: '/members/_preview', label: 'Member detail', icon: IdCard },
   { to: '/court-history', label: 'Court history', icon: History },
+]
+
+/**
+ * Section Comptabilité — visible uniquement pour le trésorier (rôle
+ * `treasurer`) ou le rootAdmin (claim Auth). L'admin standard est exclu du
+ * module (cf. docs/compta.md §1). Le guard router applique la même règle.
+ */
+const canSeeAccounting = computed(
+  () => authStore.rootAdmin || authStore.roles.includes('treasurer'),
+)
+
+const accounting: NavItem[] = [
+  { to: '/comptabilite', label: 'Comptabilité', icon: Wallet },
+  { to: '/comptabilite/comptes', label: 'Plan comptable', icon: BookOpen },
+  { to: '/comptabilite/credits', label: 'Crédits', icon: PlusCircle },
+  { to: '/comptabilite/factures', label: 'Factures', icon: FileText },
+  { to: '/comptabilite/journal', label: 'Journal', icon: ScrollText },
+  { to: '/comptabilite/bilan', label: 'Bilan', icon: Scale },
+  { to: '/comptabilite/resultat', label: 'Compte de résultat', icon: Calculator },
 ]
 
 const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }]
@@ -190,6 +218,28 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
         />
         <span>{{ item.label }}</span>
       </RouterLink>
+
+      <template v-if="canSeeAccounting">
+        <div
+          class="px-2 pt-4 pb-2 text-[10px] uppercase tracking-wider text-surface-400 font-semibold"
+        >
+          Comptabilité
+        </div>
+        <RouterLink
+          v-for="item in accounting"
+          :key="item.to"
+          :to="item.to"
+          class="nav-item flex items-center gap-2.5 px-3 h-9 rounded-md text-surface-600 hover:bg-surface-50 relative"
+          active-class="nav-item--active"
+        >
+          <component
+            :is="item.icon"
+            :size="16"
+            :stroke-width="2"
+          />
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </template>
 
       <div
         class="px-2 pt-4 pb-2 text-[10px] uppercase tracking-wider text-surface-400 font-semibold"

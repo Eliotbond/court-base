@@ -20,7 +20,11 @@
  */
 import { onDocumentWritten } from 'firebase-functions/v2/firestore'
 import { logger } from 'firebase-functions/v2'
-import type { CotisationData, DueData, TeamData } from '@club-app/shared-types'
+import type {
+  CotisationData as DueData,
+  CotisationTypeData,
+  TeamData,
+} from '@club-app/shared-types'
 import {
   Timestamp,
   addDaysToTimestamp,
@@ -173,7 +177,7 @@ export const initiateDuesOnPlayerActivation = onDocumentWritten(
       )
       return
     }
-    const cotisation = cotisationSnap.data() as CotisationData
+    const cotisation = cotisationSnap.data() as CotisationTypeData
     const duesAmount = cotisation.price
     if (typeof duesAmount !== 'number' || !Number.isFinite(duesAmount) || duesAmount < 0) {
       logger.error(

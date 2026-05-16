@@ -4,7 +4,6 @@ import {
   doc,
   getDoc,
   getDocs,
-  orderBy,
   query,
   where,
 } from 'firebase/firestore'
@@ -52,9 +51,20 @@ export async function getLinkedMember(memberId: string): Promise<Member | null> 
 
 /**
  * Liste les members dont `uid` est tuteur (via `array-contains` sur
- * `guardianUserIds`). Ordonné par `lastName`. Vide si aucun pupille.
+ * `guardianUserIds`). Trié `lastName` asc côté client. Vide si aucun pupille.
  *
- * Index requis (déjà posé) : `members (guardianUserIds CONTAINS, lastName ASC)`.
+ * Pattern simple query + tri JS (cf. `apps/courtbase-register/CLAUDE.md`
+ * §"Pattern simple query + JS sort", CLAUDE.md racine point 10) : le `orderBy`
+ * Firestore-side a été retiré. Raisons :
+ *  - **Robustesse** : Firestore exclut silencieusement de tout `orderBy` les
+ *    docs où le champ trié est absent. Un `/members` legacy ou créé
+ *    manuellement sans `lastName` disparaissait alors de cette query — donc le
+ *    pupille ET toutes ses cotisations s'évaporaient de l'écran `/factures`,
+ *    qui affichait à tort l'empty-state « Aucune facture ».
+ *  - **Pas d'index composite** : volume faible (< quelques pupilles / user).
+ *
+ * Le tri JS tolère les `lastName` absents (fallback chaîne vide) au lieu de
+ * les écarter du résultat.
  */
 export async function listMyDependents(uid: string): Promise<Member[]> {
   try {
@@ -62,10 +72,11 @@ export async function listMyDependents(uid: string): Promise<Member[]> {
       query(
         collection(db, MEMBERS),
         where('guardianUserIds', 'array-contains', uid),
-        orderBy('lastName'),
       ),
     )
-    return snap.docs.map(snapToMember)
+    return snap.docs
+      .map(snapToMember)
+      .sort((a, b) => (a.lastName ?? '').localeCompare(b.lastName ?? ''))
   } catch (err) {
     if (err instanceof FirestoreError && err.code === 'permission-denied') {
       return []

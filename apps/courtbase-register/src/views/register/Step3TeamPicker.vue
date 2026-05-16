@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { AlertCircle, Info, Loader2, Mail } from 'lucide-vue-next'
-import type { Timestamp } from '@club-app/shared-types'
+import type { TeamGender, Timestamp } from '@club-app/shared-types'
 import TeamCard from '@/components/wizard/TeamCard.vue'
 import WizardLayout from '@/components/wizard/WizardLayout.vue'
 import type { PublicTeam } from '@/repositories/teams.repo'
@@ -13,7 +13,8 @@ const router = useRouter()
 const registrations = useRegistrationsStore()
 const teams = useTeamsStore()
 
-const teamList = ref<PublicTeam[]>([])
+/** Liste brute renvoyée par le repo, avant filtrage par genre. */
+const allEligibleTeams = ref<PublicTeam[]>([])
 const loaded = ref(false)
 const error = ref<string | null>(null)
 const submitting = ref(false)
@@ -45,6 +46,41 @@ function isEpochZero(ts: Timestamp): boolean {
 const draft = computed(() => registrations.currentDraft)
 
 const firstName = computed(() => draft.value?.player.firstName?.trim() || '')
+
+/**
+ * Genre du joueur saisi à l'étape 2 (`'M' | 'F' | 'other' | null`).
+ * Lu en lecture seule depuis le draft courant — jamais écrit ici.
+ */
+const playerGender = computed<'M' | 'F' | 'other' | null>(
+  () => draft.value?.player.gender ?? null,
+)
+
+/**
+ * Genres d'équipe (`TeamGender`) compatibles avec le genre du joueur :
+ *  - joueur `'M'`    → équipes `M` ou `mixed`
+ *  - joueur `'F'`    → équipes `F` ou `mixed`
+ *  - joueur `'other'`/`null` → équipes `mixed` uniquement
+ */
+const allowedTeamGenders = computed<readonly TeamGender[]>(() => {
+  switch (playerGender.value) {
+    case 'M':
+      return ['M', 'mixed']
+    case 'F':
+      return ['F', 'mixed']
+    case 'other':
+    case null:
+      return ['mixed']
+  }
+})
+
+/**
+ * Équipes affichées : la liste éligible (âge) restreinte au genre du joueur.
+ * Filtre 100 % client-side — volume faible, pas de query Firestore dédiée
+ * (cf. CLAUDE.md racine, point 10).
+ */
+const teamList = computed<PublicTeam[]>(() =>
+  allEligibleTeams.value.filter((t) => allowedTeamGenders.value.includes(t.gender)),
+)
 
 const ageYears = computed<number | null>(() => {
   const bd = draft.value?.player.birthDate
@@ -84,7 +120,7 @@ onMounted(async () => {
   }
   try {
     const list = await teams.loadEligibleTeams(toDate(bd))
-    teamList.value = list
+    allEligibleTeams.value = list
   } catch (err) {
     error.value =
       err instanceof Error

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { AlertCircle, Banknote, CalendarClock, Hourglass } from 'lucide-vue-next'
+import { AlertCircle, Banknote, CalendarClock, FileText, Hourglass } from 'lucide-vue-next'
 import type { Cotisation, CotisationStatus } from '@club-app/shared-types'
 import { useDuesStore } from '@/stores/dues'
 
@@ -92,6 +92,10 @@ function memberName(d: Cotisation): string {
 function onOpen(d: Cotisation): void {
   void router.push({ name: 'payment-instructions', params: { dueId: d.id } })
 }
+
+function onOpenFacture(d: Cotisation): void {
+  void router.push({ name: 'facture', params: { dueId: d.id } })
+}
 </script>
 
 <template>
@@ -143,14 +147,30 @@ function onOpen(d: Cotisation): void {
         </div>
       </div>
 
-      <button
-        type="button"
-        class="btn btn-primary btn-sm btn-block cot__cta"
-        @click="onOpen(d)"
-      >
-        <Banknote :size="14" /> Voir les instructions de paiement
-      </button>
+      <div class="cot__actions">
+        <button
+          type="button"
+          class="btn btn-primary btn-sm cot__cta cot__cta--pay"
+          @click="onOpen(d)"
+        >
+          <Banknote :size="14" /> Instructions de paiement
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm cot__cta cot__cta--facture"
+          @click="onOpenFacture(d)"
+        >
+          <FileText :size="14" /> Voir la facture
+        </button>
+      </div>
     </div>
+    <button
+      type="button"
+      class="cot__all-link"
+      @click="() => void router.push({ name: 'factures' })"
+    >
+      Voir toutes mes factures →
+    </button>
   </div>
 </template>
 
@@ -252,7 +272,40 @@ function onOpen(d: Cotisation): void {
   color: #64748b;
 }
 
-.cot__cta {
+.cot__actions {
   margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+.cot__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.cot__cta--pay {
+  flex: 1 1 auto;
+}
+.cot__cta--facture {
+  flex: 0 0 auto;
+}
+
+/* Lien discret "Voir toutes mes factures →" en bas du panneau */
+.cot__all-link {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 6px 0 2px;
+  text-align: center;
+  font-size: 12px;
+  color: #64748b;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.01em;
+}
+.cot__all-link:hover {
+  color: #334155;
+  text-decoration: underline;
 }
 </style>

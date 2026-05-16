@@ -8,6 +8,7 @@ import {
   CalendarClock,
   CheckCircle2,
   CircleDashed,
+  FileText,
   Hourglass,
   Info,
   LogOut,
@@ -183,6 +184,21 @@ function onViewReceipt(reg: Registration): void {
   void router.push({ name: 'payment-instructions', params: { dueId: due.id } })
 }
 
+/**
+ * Retourne le due (actif en priorité, sinon payé) à utiliser pour le lien
+ * "Voir la facture". La facture est consultable à tout moment quel que soit
+ * le statut — on prend donc le due actif s'il existe, sinon le dernier payé.
+ */
+function factureDueFor(reg: Registration) {
+  return activeDueFor(reg) ?? paidDueFor(reg)
+}
+
+function onViewFacture(reg: Registration): void {
+  const due = factureDueFor(reg)
+  if (!due) return
+  void router.push({ name: 'facture', params: { dueId: due.id } })
+}
+
 const amountFmt = new Intl.NumberFormat('fr-CH', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -261,6 +277,13 @@ async function onSignOut() {
             {{ auth.userDoc?.email }}
           </div>
         </div>
+        <button
+          type="button"
+          class="header__menu-action header__menu-action--neutral"
+          @click="() => { menuOpen = false; void router.push({ name: 'factures' }) }"
+        >
+          <FileText :size="14" /> Mes factures
+        </button>
         <button
           type="button"
           class="header__menu-action"
@@ -486,14 +509,25 @@ async function onSignOut() {
               <CalendarClock :size="14" />
               <span>{{ formatDueLine(reg) }}</span>
             </div>
-            <button
+            <div
               v-if="activeDueFor(reg)"
-              type="button"
-              class="btn btn-primary btn-sm btn-block home__card-cta"
-              @click="onPayDue(reg)"
+              class="home__card-actions"
             >
-              <Banknote :size="14" /> Payer ma cotisation
-            </button>
+              <button
+                type="button"
+                class="btn btn-primary btn-sm home__card-cta home__card-cta--main"
+                @click="onPayDue(reg)"
+              >
+                <Banknote :size="14" /> Payer ma cotisation
+              </button>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm home__card-cta home__card-cta--facture"
+                @click="onViewFacture(reg)"
+              >
+                <FileText :size="14" /> Facture
+              </button>
+            </div>
           </template>
 
           <!-- Cotisation due alors que la registration n'est pas (plus)
@@ -512,13 +546,22 @@ async function onSignOut() {
               <CalendarClock :size="14" />
               <span>{{ formatDueLine(reg) }}</span>
             </div>
-            <button
-              type="button"
-              class="btn btn-primary btn-sm btn-block home__card-cta"
-              @click="onPayDue(reg)"
-            >
-              <Banknote :size="14" /> Payer ma cotisation
-            </button>
+            <div class="home__card-actions">
+              <button
+                type="button"
+                class="btn btn-primary btn-sm home__card-cta home__card-cta--main"
+                @click="onPayDue(reg)"
+              >
+                <Banknote :size="14" /> Payer ma cotisation
+              </button>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm home__card-cta home__card-cta--facture"
+                @click="onViewFacture(reg)"
+              >
+                <FileText :size="14" /> Facture
+              </button>
+            </div>
           </template>
 
           <!-- Cotisation déjà payée : reçu cliquable (mène vers
@@ -535,13 +578,22 @@ async function onSignOut() {
                 class="home__card-paid-meta"
               >· {{ formatPaidLine(reg) }}</span>
             </div>
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm btn-block home__card-cta"
-              @click="onViewReceipt(reg)"
-            >
-              Voir le reçu
-            </button>
+            <div class="home__card-actions">
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm home__card-cta home__card-cta--main"
+                @click="onViewReceipt(reg)"
+              >
+                Voir le reçu
+              </button>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm home__card-cta home__card-cta--facture"
+                @click="onViewFacture(reg)"
+              >
+                <FileText :size="14" /> Facture
+              </button>
+            </div>
           </template>
 
           <!-- Refused -->
@@ -586,10 +638,17 @@ async function onSignOut() {
       </template>
     </div>
 
-    <div class="m-bottom">
+    <div class="m-bottom home__bottom">
       <button
         type="button"
-        class="btn btn-primary btn-block"
+        class="btn btn-secondary home__bottom-btn"
+        @click="() => void router.push({ name: 'factures' })"
+      >
+        <FileText :size="14" /> Mes factures
+      </button>
+      <button
+        type="button"
+        class="btn btn-primary home__bottom-btn"
         @click="onStartNew"
       >
         <Plus :size="14" /> Nouvelle inscription
@@ -662,6 +721,12 @@ async function onSignOut() {
 }
 .header__menu-action:hover {
   background: #fff1f2;
+}
+.header__menu-action--neutral {
+  color: #334155;
+}
+.header__menu-action--neutral:hover {
+  background: #f1f5f9;
 }
 
 .home__title {
@@ -759,6 +824,24 @@ async function onSignOut() {
 }
 .home__card-cta {
   margin-top: 12px;
+}
+.home__card-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+.home__card-actions .home__card-cta {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.home__card-cta--main {
+  flex: 1 1 auto;
+}
+.home__card-cta--facture {
+  flex: 0 0 auto;
 }
 .home__card-draft-actions {
   margin-top: 12px;
@@ -866,6 +949,18 @@ async function onSignOut() {
   color: #64748b;
   margin: 6px 12px 0;
   line-height: 1.6;
+}
+
+.home__bottom {
+  display: flex;
+  gap: 8px;
+}
+.home__bottom-btn {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .h-3 {

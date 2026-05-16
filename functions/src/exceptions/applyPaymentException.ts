@@ -40,7 +40,10 @@
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore'
 import type { Timestamp as AdminTimestamp } from 'firebase-admin/firestore'
 import * as admin from 'firebase-admin'
-import type { DueData, PaymentExceptionRequestData } from '@club-app/shared-types'
+import type {
+  CotisationData as DueData,
+  PaymentExceptionRequestData,
+} from '@club-app/shared-types'
 import { db } from '../shared/firestore'
 import { logger } from '../shared/logger'
 

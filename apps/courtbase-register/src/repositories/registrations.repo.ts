@@ -330,6 +330,36 @@ export function isPendingForUser(status: RegistrationStatus): boolean {
 }
 
 /**
+ * Statuts terminaux d'une registration : une fois dans l'un de ces états, la
+ * registration est "close" et le user peut en démarrer une nouvelle pour la
+ * même personne (réinscription après annulation / refus).
+ *
+ * Exhaustif vis-à-vis de `RegistrationStatus` — tout autre statut
+ * (`draft`, `submitted`, `open_pending_trial`, `conditional_pending_review`,
+ * `conditional_pending_trial`, `trial_in_progress`, `confirmed_pending_dues`,
+ * `active`) est considéré "en cours" et donc bloquant.
+ */
+const TERMINAL_REGISTRATION_STATUSES: ReadonlySet<RegistrationStatus> = new Set<RegistrationStatus>([
+  'cancelled',
+  'refused',
+])
+
+/** True si le statut est terminal (`cancelled` ou `refused`). */
+export function isTerminalRegistrationStatus(status: RegistrationStatus): boolean {
+  return TERMINAL_REGISTRATION_STATUSES.has(status)
+}
+
+/**
+ * True si la registration est une inscription "pour soi-même" (`self`) encore
+ * en cours — c.-à-d. dont le statut n'est pas terminal. Une telle inscription
+ * est bloquante : le user ne doit pas pouvoir en démarrer une seconde pour
+ * lui-même tant que celle-ci n'est ni annulée ni refusée.
+ */
+export function isBlockingSelfRegistration(reg: Registration): boolean {
+  return reg.registrationFor === 'self' && !isTerminalRegistrationStatus(reg.status)
+}
+
+/**
  * Re-écriture explicite d'une registration en `draft` (utilisé par les tests
  * locaux ou un futur "remettre en draft" si jamais. Non exposé pour l'UI
  * publique pour l'instant.).

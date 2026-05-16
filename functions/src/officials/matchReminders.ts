@@ -212,6 +212,7 @@ export async function emitMatchReminderForBooking(
     sentBy: null,
     targetAudience: 'assigned_officials',
     relatedBookingId: bookingId,
+    relatedMatchId: booking.matchId ?? null,
     createdAt: serverTimestamp(),
     readBy: [],
   }

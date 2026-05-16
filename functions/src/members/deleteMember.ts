@@ -53,8 +53,8 @@ import { onCall, HttpsError, type CallableRequest } from 'firebase-functions/v2/
 import { logger } from 'firebase-functions/v2'
 import * as admin from 'firebase-admin'
 import type {
-  DueData,
-  DueStatus,
+  CotisationData as DueData,
+  CotisationStatus as DueStatus,
   MemberData,
   RegistrationActionLogEntry,
   RegistrationData,

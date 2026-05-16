@@ -9,7 +9,7 @@
  * We mock `./_helpers` to inject a fake firestore.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DueStatus } from '@club-app/shared-types'
+import type { CotisationStatus as DueStatus } from '@club-app/shared-types'
 
 interface FakeMemberSnap {
   exists: boolean

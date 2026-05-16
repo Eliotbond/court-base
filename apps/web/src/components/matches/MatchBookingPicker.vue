@@ -2,12 +2,17 @@
 /**
  * MatchBookingPicker — picker calendrier pour sélectionner un créneau match.
  *
- * Philosophie d'affichage (V3 2026-05-15)
+ * Philosophie d'affichage (V4 2026-05-15)
  * ---------------------------------------
  * Le picker affiche **uniquement** les bookings existants de type `match_home`
- * **en attente** (`matchTypeId === null`, `status === 'scheduled'`) — ce sont
- * les créneaux pré-réservés pour matchs à domicile que l'admin a posés via
- * `/bookings` mais qui n'ont pas encore d'adversaire / type de match attaché.
+ * **sans lien vers un match** (`matchId === null`, `status === 'scheduled'`) —
+ * ce sont les créneaux pré-réservés pour matchs à domicile que l'admin a posés
+ * via `/bookings` mais qui n'ont pas encore de doc `/matches` rattaché.
+ *
+ * `matchId` est le champ de lien canonique (relation bidirectionnelle avec
+ * `MatchData.bookingId`, cf. `createHomeMatch` / `deleteMatch`). On filtre
+ * dessus plutôt que sur `matchTypeId` : les deux sont posés ensemble à la
+ * création du match, mais `matchId` est la référence d'autorité.
  *
  * Cliquer sur un de ces "match_home pending" sélectionne le booking : le
  * dialog parent appelle ensuite `matchesStore.createHome({ bookingId, ... })`
@@ -267,7 +272,8 @@ const pendingMatchEvents = computed<PickerEvent[]>(() => {
   const out: PickerEvent[] = []
   for (const b of store.allBookings) {
     if (b.slotType !== 'match_home') continue
-    if (b.matchTypeId !== null) continue
+    // Lien canonique : un booking déjà rattaché à un /matches porte `matchId`.
+    if (b.matchId !== null) continue
     if (b.status !== 'scheduled') continue
     if (!venueIds.has(b.venueId)) continue
     const bDayMs = startOfLocalDay(new Date(bookingDateMillis(b))).getTime()
@@ -383,11 +389,16 @@ interface PeriodOption {
 const periodOptions: ReadonlyArray<PeriodOption> = [
   { value: 'all', label: 'Toute la journée', from: 6 * 60, to: 22 * 60 },
   { value: 'morning', label: 'Matin (06-12)', from: 6 * 60, to: 12 * 60 },
-  { value: 'afternoon', label: 'Après-midi (12-17)', from: 12 * 60, to: 17 * 60 },
-  { value: 'evening', label: 'Soir (17-22)', from: 17 * 60, to: 22 * 60 },
+  { value: 'afternoon', label: 'Après-midi (12-16)', from: 12 * 60, to: 16 * 60 },
+  { value: 'evening', label: 'Soir (16-22)', from: 16 * 60, to: 22 * 60 },
 ]
 
 const periodFilter = ref<'all' | 'morning' | 'afternoon' | 'evening'>('evening')
+
+/** Bascule rapide vers la vue journée complète (bouton de toolbar). */
+function showWholeDay(): void {
+  periodFilter.value = 'all'
+}
 
 const currentTimeFrom = computed<number>(() => {
   return (
@@ -489,6 +500,21 @@ watch([periodFilter, venueFilter, selectedDate, activeView], () => {
         size="small"
         class="!min-w-44"
       />
+
+      <!-- Bascule rapide : passe la période sur "Toute la journée" en un clic. -->
+      <Button
+        severity="secondary"
+        size="small"
+        :outlined="periodFilter !== 'all'"
+        aria-label="Voir toute la journée"
+        @click="showWholeDay"
+      >
+        <CalendarDays
+          :size="14"
+          :stroke-width="2"
+        />
+        <span class="ml-1">Toute la journée</span>
+      </Button>
 
       <div
         v-if="store.venues.length > 1"

@@ -49,6 +49,7 @@ Le projet expose 17 Cloud Functions (cf. `functions/src/index.ts`). **La plupart
 | `cancelRegistration({ registrationId, note? })` | auteur uniquement | Inscriptions → cas dépannage admin. |
 | `markTrialInProgress({ registrationId })` | admin / coach (team scope) | Inscriptions → bouton "Planifier essai". Démarre compteur 14j. |
 | `confirmRegistration({ registrationId })` | admin / coach (team scope) | Inscriptions → bouton "Confirmer". Crée le member si nouveau, ajoute à `team.playerIds` (déclenche cotisation). |
+| `updateCotisation({ cotisationId, activatedAt?, issuedAt?, dueAt?, status?, notes? })` | admin / treasurer / rootAdmin | Cotisations (liste) + Détail membre → "Modifier". Édite dates / statut / note. `status: 'paid'` refusé (flux `markCotisationPaid`). Wrappe la callable serveur `updateDue`. |
 
 > `previewSeasonBookings` n'est plus appelée côté client (dry-run retiré 2026-05-14 — les bookings sont désormais créés manuellement via `/bookings`). La Cloud Function reste déployée mais sans wrapper TS ; à supprimer côté Functions quand on fera le nettoyage backend.
 
@@ -235,3 +236,34 @@ Le référentiel `/matchTypes` est désormais entièrement éditable depuis Sett
 ### Pas de modif rules
 
 La règle `/matchTypes` existait déjà (`isAdmin || isRootAdmin` pour write, `isSignedIn` pour read) — pas de modif `firestore.rules` nécessaire.
+
+## Module Comptabilité (livré 2026-05-15)
+
+Module financier réservé au **trésorier + rootAdmin** (l'`admin` standard est exclu, y compris dans `firestore.rules`). Comptabilité en **partie double**. Source de vérité produit : `docs/compta.md`. Schéma : `docs/firebase.md` (`/accounts`, `/accountingEntries`, `/invoices`).
+
+### Routing & accès
+
+7 routes sous `/comptabilite` (`meta.allowedRoles: ['treasurer']`, le `rootAdmin` bypasse le guard) : `/comptabilite` (hub), `/comptes`, `/credits`, `/factures`, `/journal`, `/bilan`, `/resultat`. Section « Comptabilité » dans `AppSidebar.vue`, gatée `rootAdmin || roles.includes('treasurer')`.
+
+### Fichiers livrés
+
+- **Repos** : `accounts.repo.ts` (CRUD comptes + `seedDefaultAccounts` idempotent + garde-fou delete sur `isDefault`/compte utilisé), `accountingEntries.repo.ts` (moteur partie double), `invoices.repo.ts` (factures + upload Storage), `accountingReports.repo.ts` (lecture seule).
+- **Stores** : `accounts.ts`, `accountingEntries.ts`, `invoices.ts`, `accountingReports.ts`.
+- **Vues** : `src/views/accounting/` — `AccountingHome`, `Accounts`, `Credits`, `Invoices`, `Journal`, `Bilan`, `IncomeStatement`.
+- **Composants** : `src/components/accounting/` — `AccountFormDialog`, `AccountDeleteDialog`, `CreditFormDialog`, `InvoiceFormDialog`, `ManualEntryDialog`, `InvoiceBookDialog`, `ReportPeriodFilter`.
+
+### Moteur d'écritures — `accountingEntries.repo.ts`
+
+Toute écriture comptable passe par ce repo. `postEntry(input)` valide l'invariant `Σdebit === Σcredit` (tolérance arrondi CHF `0.005`, helper `validateEntryBalance` exporté) avant tout `addDoc`. Helpers métier : `postCredit` (saisie simplifiée d'un crédit → débit trésorerie / crédit compte), `reverseEntry` (annulation = contre-passation atomique `writeBatch`, jamais de delete physique). **Les autres features (factures via `bookInvoice`/`markInvoicePaid`, saisie manuelle) réutilisent `postEntry` — ne pas réimplémenter de moteur.**
+
+### Comptes par défaut
+
+10 comptes seedés via le CTA de la page Comptes quand `/accounts` est vide (`seedDefaultAccounts`, idempotent). Le compte « Créditeurs » est résolu par `number === '2000'` avec repli sur le premier compte actif de nature `passif`. Les comptes `isDefault` sont protégés en suppression.
+
+### Calculs de rapports
+
+Toute la logique de bilan/résultat/journal vit dans le store `accountingReports.ts` (getters `accountBalances`, `balanceSheet`, `incomeStatement`, `journalRows`), pas dans les vues. Solde orienté par nature (`actif`/`charge` → débit−crédit ; `passif`/`produit` → crédit−débit). Les contre-passations ne sont pas filtrées — elles se neutralisent naturellement avec leur écriture d'origine.
+
+### OCR différé
+
+L'import de factures est **manuel** en v1. Les champs `invoice.ocrStatus` / `ocrRawText` existent mais restent inertes (`'none'` / `null`). Fichiers uploadés dans Storage à `accounting/invoices/{invoiceId}/{file}`.

@@ -5,9 +5,11 @@ import {
   getDue,
   listActiveDuesForMembers,
   listPaidDuesForMembers,
+  listSettledDuesForMembers,
+  sortDuesByCotisationDateDesc,
   type DueRecord,
 } from '@/repositories/dues.repo'
-import { listAccessibleMembers } from '@/repositories/members.repo'
+import { getLinkedMember, listAccessibleMembers } from '@/repositories/members.repo'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -40,6 +42,13 @@ export const useDuesStore = defineStore('dues', () => {
   const byId = ref<Map<string, DueRecord>>(new Map())
   const myActiveDues = ref<DueRecord[]>([])
   const myPaidDues = ref<DueRecord[]>([])
+  /**
+   * Cotisations "passées / soldées" (`paid | cancelled | excepted`).
+   * Alimenté par `loadMyDues` → `listSettledDuesForMembers`. Tri desc par date
+   * (paidAt > dueAt > createdAt). Utilisé par le panneau "Historique" et
+   * la vue `MyCotisationsPanel`.
+   */
+  const myPastDues = ref<DueRecord[]>([])
   const memberNameById = ref<Map<string, string>>(new Map())
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -78,6 +87,7 @@ export const useDuesStore = defineStore('dues', () => {
       if (!uid) {
         myActiveDues.value = []
         myPaidDues.value = []
+        myPastDues.value = []
         return
       }
 
@@ -90,19 +100,23 @@ export const useDuesStore = defineStore('dues', () => {
       if (memberIds.length === 0) {
         myActiveDues.value = []
         myPaidDues.value = []
+        myPastDues.value = []
         return
       }
 
-      const [active, paid] = await Promise.all([
+      const [active, paid, past] = await Promise.all([
         listActiveDuesForMembers(memberIds),
         listPaidDuesForMembers(memberIds),
+        listSettledDuesForMembers(memberIds),
       ])
       myActiveDues.value = active
       myPaidDues.value = paid
+      myPastDues.value = past
 
       const next = new Map(byId.value)
       for (const due of active) next.set(due.id, due)
       for (const due of paid) next.set(due.id, due)
+      for (const due of past) next.set(due.id, due)
       byId.value = next
 
       // On a déjà les Member docs en main (`accessible`) — on peuple le cache
@@ -152,6 +166,45 @@ export const useDuesStore = defineStore('dues', () => {
   }
 
   /**
+   * Résout le nom complet du membre lié à une cotisation, avec fetch
+   * Firestore si le nom n'est pas déjà en cache.
+   *
+   * `memberNameForDue` (synchrone) ne fonctionne que si `loadMyDues` a déjà
+   * peuplé `memberNameById`. Sur un accès direct à `/facture/:dueId` (lien
+   * partagé, deep-link), ce cache est vide — d'où ce helper async qui :
+   *  1. tente le cache synchrone,
+   *  2. à défaut, lit le doc `/members/{memberId}` (lecture autorisée par les
+   *     rules au membre lié / tuteur — mêmes garanties que `/dues`),
+   *  3. met le résultat en cache pour les appels suivants.
+   *
+   * Retourne `null` si la cotisation est inconnue ou si le member n'est pas
+   * lisible (permission-denied dégradé en `null` par `getLinkedMember`).
+   */
+  async function loadMemberNameForDue(dueId: string): Promise<string | null> {
+    const cachedName = memberNameForDue(dueId)
+    if (cachedName) return cachedName
+
+    const d =
+      byId.value.get(dueId) ??
+      myActiveDues.value.find((x) => x.id === dueId) ??
+      myPaidDues.value.find((x) => x.id === dueId)
+    if (!d) return null
+
+    try {
+      const member = await getLinkedMember(d.memberId)
+      if (!member) return null
+      const name = `${member.firstName ?? ''} ${member.lastName ?? ''}`.trim()
+      if (!name) return null
+      memberNameById.value = new Map(memberNameById.value).set(d.memberId, name)
+      return name
+    } catch (err) {
+      const code = err instanceof FirebaseError ? err.code : 'unknown'
+      console.error(`[stores/dues] loadMemberNameForDue(${dueId}) failed [${code}]`, err)
+      return null
+    }
+  }
+
+  /**
    * Helper : retrouve le premier due actif pour un memberId donné (utilisé
    * par Home.vue pour câbler le CTA "Payer ma cotisation" à la route
    * `/payment/:dueId` à partir d'une registration).
@@ -174,23 +227,54 @@ export const useDuesStore = defineStore('dues', () => {
 
   const hasActiveDues = computed(() => myActiveDues.value.length > 0)
   const hasPaidDues = computed(() => myPaidDues.value.length > 0)
+  /** `true` si au moins une cotisation "passée / soldée" est disponible. */
+  const hasPastDues = computed(() => myPastDues.value.length > 0)
+
+  /**
+   * Liste unifiée de TOUTES les cotisations du user — actives ET soldées —
+   * triée par date de la cotisation décroissante (la plus récente en tête).
+   *
+   * Source : `myActiveDues` (`pending_grace | issued | overdue`) ∪
+   * `myPastDues` (`paid | cancelled | excepted`) → couvre les 6 statuts de
+   * `CotisationStatus`. Les deux listes sont disjointes par construction
+   * (`loadMyDues` les remplit via des filtres de statuts mutuellement
+   * exclusifs), donc pas de doublon possible.
+   *
+   * Le tri est délégué au repository (`sortDuesByCotisationDateDesc`) pour ne
+   * pas réimplémenter la logique de date dans la couche store. Utilisé par la
+   * vue `Factures.vue` qui affiche une seule liste plate.
+   */
+  const allMyDuesSorted = computed<DueRecord[]>(() =>
+    sortDuesByCotisationDateDesc([
+      ...myActiveDues.value,
+      ...myPastDues.value,
+    ]),
+  )
+
+  /** `true` si au moins une cotisation (active ou soldée) est disponible. */
+  const hasAnyDues = computed(() => allMyDuesSorted.value.length > 0)
 
   return {
     // State
     byId,
     myActiveDues,
     myPaidDues,
+    myPastDues,
     memberNameById,
     loading,
     error,
     // Computed
     hasActiveDues,
     hasPaidDues,
+    hasPastDues,
+    allMyDuesSorted,
+    hasAnyDues,
     // Actions
     loadMyDues,
     loadDue,
     findActiveDueForMember,
     findPaidDueForMember,
     memberNameForDue,
+    loadMemberNameForDue,
   }
 })

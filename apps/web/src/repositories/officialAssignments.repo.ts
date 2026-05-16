@@ -1,11 +1,15 @@
 import { FirebaseError } from 'firebase/app'
 import {
+  addDoc,
   collection,
   collectionGroup,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
   query,
+  serverTimestamp,
+  updateDoc,
   where,
   type Timestamp as FirestoreTimestamp,
 } from 'firebase/firestore'
@@ -62,9 +66,44 @@ import type {
  */
 
 const BOOKINGS = 'bookings'
+const MATCHES = 'matches'
 const TEAMS = 'teams'
 const CONFIG_COLL = 'config'
 const CONFIG_DOC = 'club'
+
+// ---------------------------------------------------------------------------
+// Parent d'une assignation — booking (match HOME) ou match (match AWAY)
+// ---------------------------------------------------------------------------
+
+/**
+ * Les `officialAssignments` vivent en sous-collection de deux parents :
+ *  - `/bookings/{id}/officialAssignments` pour un match À DOMICILE (le match
+ *    home référence un booking qui bloque le court).
+ *  - `/matches/{id}/officialAssignments` pour un match À L'EXTÉRIEUR (pas de
+ *    booking — le club ne réserve pas de court, cf. docs/firebase.md).
+ *
+ * Le `kind` discrimine le chemin Firestore. Les rules sont identiques sur
+ * les deux parents (cf. `firestore.rules`).
+ */
+export type AssignmentParentKind = 'booking' | 'match'
+
+export interface AssignmentParent {
+  kind: AssignmentParentKind
+  /** id du booking (kind='booking') ou du match (kind='match'). */
+  id: string
+}
+
+/** Collection `officialAssignments` du parent fourni. */
+function assignmentsColl(parent: AssignmentParent) {
+  const root = parent.kind === 'booking' ? BOOKINGS : MATCHES
+  return collection(db, root, parent.id, 'officialAssignments')
+}
+
+/** Doc d'une assignation précise du parent fourni. */
+function assignmentDoc(parent: AssignmentParent, assignmentId: string) {
+  const root = parent.kind === 'booking' ? BOOKINGS : MATCHES
+  return doc(db, root, parent.id, 'officialAssignments', assignmentId)
+}
 
 // ---------------------------------------------------------------------------
 // Types exposés pour le tab Officiel de la page Member detail
@@ -270,6 +309,12 @@ export async function listMemberOfficialAssignments(
     for (const d of snap.docs) {
       const parent = d.ref.parent.parent
       if (!parent) continue // sécurité — un doc collectionGroup a toujours un parent ici
+      // Le collectionGroup `officialAssignments` ratisse désormais DEUX
+      // parents : `/bookings/{}` (matchs HOME) et `/matches/{}` (matchs
+      // AWAY). Ce listing alimente le tab Officiel de la fiche membre, qui
+      // n'enrichit que le contexte booking — on ignore les assignations
+      // away ici (elles restent visibles dans la page Officials).
+      if (parent.parent.id !== BOOKINGS) continue
       assignmentDocs.push({
         id: d.id,
         bookingId: parent.id,
@@ -335,6 +380,122 @@ export async function listMemberOfficialAssignments(
   })
 
   return rows
+}
+
+// ---------------------------------------------------------------------------
+// CRUD assignations par match (HOME via booking, AWAY via match) — page Officials
+// ---------------------------------------------------------------------------
+
+/**
+ * Liste les `officialAssignments` d'UN parent donné (booking pour un match
+ * HOME, match pour un match AWAY).
+ *
+ * Requête sur la sous-collection directe, JAMAIS en `collectionGroup` — donc
+ * aucun index composite requis. Tri JS par `assignedAt` desc.
+ *
+ * Dégradation gracieuse sur `permission-denied` → `[]` (cohérent avec
+ * `listMemberOfficialAssignments`). Toute autre erreur SDK est relancée.
+ */
+export async function listAssignments(
+  parent: AssignmentParent,
+): Promise<OfficialAssignment[]> {
+  try {
+    const snap = await getDocs(assignmentsColl(parent))
+    const rows: OfficialAssignment[] = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as OfficialAssignmentData),
+    }))
+    rows.sort((a, b) => {
+      const aTs = (a.assignedAt as FirestoreTimestamp | undefined)?.seconds ?? 0
+      const bTs = (b.assignedAt as FirestoreTimestamp | undefined)?.seconds ?? 0
+      return bTs - aTs
+    })
+    return rows
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    if (code === 'permission-denied') {
+      console.warn(
+        `[officialAssignments.repo] listAssignments denied for ${parent.kind}/${parent.id} — dégradation en []`,
+      )
+      return []
+    }
+    console.error(`listAssignments failed [${code}]`, err)
+    throw err
+  }
+}
+
+/** Input d'assignation d'un officiel à un match. */
+export interface AssignOfficialInput {
+  memberId: string
+  /** Niveau snapshot au moment de l'assignation. */
+  officialLevel: number
+  /** uid de l'admin qui assigne. */
+  assignedBy: string
+}
+
+/**
+ * Assigne un officiel à un match : `addDoc` dans la sous-collection
+ * `officialAssignments` du parent (booking ou match) avec `status: 'pending'`,
+ * `assignedAt: serverTimestamp()`, `respondedAt: null`.
+ *
+ * @returns l'id de l'assignation créée.
+ */
+export async function assignOfficial(
+  parent: AssignmentParent,
+  input: AssignOfficialInput,
+): Promise<string> {
+  try {
+    const payload = {
+      memberId: input.memberId,
+      officialLevel: input.officialLevel,
+      status: 'pending' as OfficialAssignmentStatus,
+      assignedAt: serverTimestamp(),
+      assignedBy: input.assignedBy,
+      respondedAt: null,
+    }
+    const ref = await addDoc(assignmentsColl(parent), payload)
+    return ref.id
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`assignOfficial failed [${code}]`, err)
+    throw err
+  }
+}
+
+/**
+ * Change le statut d'une assignation. `respondedAt` est posé via
+ * `serverTimestamp()` quand le statut devient `confirmed` ou `declined`,
+ * remis à `null` si on repasse en `pending`.
+ */
+export async function setAssignmentStatus(
+  parent: AssignmentParent,
+  assignmentId: string,
+  status: OfficialAssignmentStatus,
+): Promise<void> {
+  try {
+    await updateDoc(assignmentDoc(parent, assignmentId), {
+      status,
+      respondedAt: status === 'pending' ? null : serverTimestamp(),
+    })
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`setAssignmentStatus failed [${code}]`, err)
+    throw err
+  }
+}
+
+/** Supprime définitivement une assignation. */
+export async function removeAssignment(
+  parent: AssignmentParent,
+  assignmentId: string,
+): Promise<void> {
+  try {
+    await deleteDoc(assignmentDoc(parent, assignmentId))
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`removeAssignment failed [${code}]`, err)
+    throw err
+  }
 }
 
 // Re-export pour permettre au composable / au composant de ne pas importer

@@ -52,14 +52,18 @@ interface MatchTypeDoc {
 
 const state: {
   bookingsSnap: FakeSnap
+  matchesSnap: FakeSnap
   matchTypeDocs: Map<string, MatchTypeDoc>
   assignmentsByBooking: Map<string, FakeSnap>
+  assignmentsByMatch: Map<string, FakeSnap>
   notificationsDedupeEmpty: boolean
   addCalls: unknown[]
 } = {
   bookingsSnap: { empty: true, size: 0, docs: [] },
+  matchesSnap: { empty: true, size: 0, docs: [] },
   matchTypeDocs: new Map(),
   assignmentsByBooking: new Map(),
+  assignmentsByMatch: new Map(),
   notificationsDedupeEmpty: true,
   addCalls: [],
 }
@@ -71,6 +75,18 @@ const bookingsCollection: FakeCollection = {
       where: () => q,
       limit: () => q,
       get: async () => state.bookingsSnap,
+    }
+    return q
+  },
+}
+
+const matchesCollection: FakeCollection = {
+  add: vi.fn(),
+  where(): FakeQuery {
+    const q: FakeQuery = {
+      where: () => q,
+      limit: () => q,
+      get: async () => state.matchesSnap,
     }
     return q
   },
@@ -122,14 +138,19 @@ vi.mock('./_helpers', async () => {
     db: () => fakeDb,
     col: (path: string) => {
       if (path === 'bookings') return bookingsCollection
+      if (path === 'matches') return matchesCollection
       if (path === 'notifications') return notificationsCollection
       return { add: vi.fn(), where: () => ({ get: async () => ({ empty: true, size: 0, docs: [] }) }) }
     },
     subcol: (parentPath: string, name: string) => {
-      const bookingId = parentPath.split('/').slice(-1)[0] ?? ''
+      const id = parentPath.split('/').slice(-1)[0] ?? ''
+      // Route by parent collection : `/matches/{}` vs `/bookings/{}`.
+      const store = parentPath.startsWith('matches/')
+        ? state.assignmentsByMatch
+        : state.assignmentsByBooking
       const snap =
         name === 'officialAssignments'
-          ? state.assignmentsByBooking.get(bookingId) ?? {
+          ? store.get(id) ?? {
               empty: true,
               size: 0,
               docs: [],
@@ -164,11 +185,14 @@ let mod: typeof import('./autoOfficialsNeeded')
 beforeEach(async () => {
   vi.clearAllMocks()
   state.bookingsSnap = { empty: true, size: 0, docs: [] }
+  state.matchesSnap = { empty: true, size: 0, docs: [] }
   state.matchTypeDocs = new Map()
   state.assignmentsByBooking = new Map()
+  state.assignmentsByMatch = new Map()
   state.notificationsDedupeEmpty = true
   state.addCalls = []
   bookingsCollection.add = vi.fn()
+  matchesCollection.add = vi.fn()
   notificationsCollection.add = vi.fn(async (payload: unknown) => {
     state.addCalls.push(payload)
     return { id: `notif-${state.addCalls.length}` }
@@ -211,6 +235,7 @@ function makeBookingDoc(opts: {
 function setMatchType(
   id: string,
   requirements: { level: number; count: number }[],
+  awayOfficialCount = 0,
 ): void {
   state.matchTypeDocs.set(id, {
     exists: true,
@@ -218,11 +243,64 @@ function setMatchType(
       name: 'Test Match',
       requiredCourtSize: 'normal',
       homeOfficialRequirements: requirements,
-      awayOfficialCount: 0,
+      awayOfficialCount,
       color: '#000',
       active: true,
       createdAt: ts(0),
     }),
+  })
+}
+
+function makeAwayMatchDoc(opts: {
+  id: string
+  matchTypeId: string | null
+  startTime?: string
+  kind?: 'home' | 'away'
+  status?: 'scheduled' | 'cancelled' | 'played'
+}): FakeDoc {
+  return {
+    id: opts.id,
+    ref: { id: opts.id, path: `matches/${opts.id}` },
+    data: () => ({
+      bookingId: null,
+      kind: opts.kind ?? 'away',
+      teamId: 'team-1',
+      matchTypeId: opts.matchTypeId,
+      opponentName: 'Adversaire FC',
+      awayAddress: 'Gymnase extérieur, Ville',
+      date: ts(2_000_000),
+      startTime: opts.startTime ?? '18:00',
+      endTime: '20:00',
+      status: opts.status ?? 'scheduled',
+      notes: null,
+      createdAt: ts(0),
+      createdBy: 'u1',
+    }),
+  }
+}
+
+function setAwayAssignments(
+  matchId: string,
+  statuses: ReadonlyArray<'pending' | 'confirmed' | 'declined'>,
+): void {
+  state.assignmentsByMatch.set(matchId, {
+    empty: statuses.length === 0,
+    size: statuses.length,
+    docs: statuses.map((s, idx) => ({
+      id: `a-${idx}`,
+      ref: {
+        id: `a-${idx}`,
+        path: `matches/${matchId}/officialAssignments/a-${idx}`,
+      },
+      data: () => ({
+        memberId: `m-${idx}`,
+        officialLevel: 1,
+        status: s,
+        assignedAt: ts(0),
+        assignedBy: 'u1',
+        respondedAt: null,
+      }),
+    })),
   })
 }
 
@@ -271,6 +349,23 @@ describe('computeRequiredOfficials', () => {
 
   it('returns 0 for empty input', () => {
     expect(mod.computeRequiredOfficials([])).toBe(0)
+  })
+})
+
+describe('computeRequiredAwayOfficials', () => {
+  it('returns the flat away count', () => {
+    expect(mod.computeRequiredAwayOfficials(2)).toBe(2)
+  })
+
+  it('floors fractional counts', () => {
+    expect(mod.computeRequiredAwayOfficials(2.9)).toBe(2)
+  })
+
+  it('clamps non-positive / invalid values to 0', () => {
+    expect(mod.computeRequiredAwayOfficials(0)).toBe(0)
+    expect(mod.computeRequiredAwayOfficials(-3)).toBe(0)
+    expect(mod.computeRequiredAwayOfficials(Number.NaN)).toBe(0)
+    expect(mod.computeRequiredAwayOfficials(undefined)).toBe(0)
   })
 })
 
@@ -373,6 +468,115 @@ describe('processBookingForOfficialsNeeded', () => {
   })
 })
 
+describe('processAwayMatchForOfficialsNeeded', () => {
+  const NOW = ts(1_000_000) as unknown as FirebaseFirestore.Timestamp
+
+  function awayMatch(matchTypeId: string | null) {
+    return makeAwayMatchDoc({
+      id: 'mt-away',
+      matchTypeId,
+    }).data() as unknown as import('@club-app/shared-types').MatchData
+  }
+
+  it('creates a notification when under-staffed and no recent notif', async () => {
+    setMatchType('mt-1', [], 2) // awayOfficialCount = 2
+    setAwayAssignments('match-1', ['confirmed']) // 1 filled, 2 required
+
+    const created = await mod.processAwayMatchForOfficialsNeeded(
+      'match-1',
+      awayMatch('mt-1'),
+      { now: NOW },
+    )
+
+    expect(created).toBe(true)
+    expect(state.addCalls).toHaveLength(1)
+    const payload = state.addCalls[0] as Record<string, unknown>
+    expect(payload).toMatchObject({
+      type: 'officials_needed',
+      targetAudience: 'unassigned_officials',
+      relatedBookingId: null,
+      relatedMatchId: 'match-1',
+      sentBy: null,
+      readBy: [],
+    })
+    expect(payload.body).toContain('away match')
+  })
+
+  it('counts both pending and confirmed toward filled', async () => {
+    setMatchType('mt-1', [], 2)
+    setAwayAssignments('match-1', ['pending', 'confirmed']) // 2 filled = required
+
+    const created = await mod.processAwayMatchForOfficialsNeeded(
+      'match-1',
+      awayMatch('mt-1'),
+      { now: NOW },
+    )
+
+    expect(created).toBe(false)
+    expect(state.addCalls).toHaveLength(0)
+  })
+
+  it('skips when fully staffed', async () => {
+    setMatchType('mt-1', [], 1)
+    setAwayAssignments('match-1', ['confirmed'])
+
+    const created = await mod.processAwayMatchForOfficialsNeeded(
+      'match-1',
+      awayMatch('mt-1'),
+      { now: NOW },
+    )
+
+    expect(created).toBe(false)
+  })
+
+  it('skips when a recent notification exists (dedupe)', async () => {
+    setMatchType('mt-1', [], 2)
+    setAwayAssignments('match-1', [])
+    state.notificationsDedupeEmpty = false
+
+    const created = await mod.processAwayMatchForOfficialsNeeded(
+      'match-1',
+      awayMatch('mt-1'),
+      { now: NOW },
+    )
+
+    expect(created).toBe(false)
+  })
+
+  it('skips when matchTypeId is null', async () => {
+    const created = await mod.processAwayMatchForOfficialsNeeded(
+      'match-1',
+      awayMatch(null),
+      { now: NOW },
+    )
+
+    expect(created).toBe(false)
+  })
+
+  it('skips when matchType doc is missing', async () => {
+    const created = await mod.processAwayMatchForOfficialsNeeded(
+      'match-1',
+      awayMatch('missing-mt'),
+      { now: NOW },
+    )
+
+    expect(created).toBe(false)
+  })
+
+  it('skips when awayOfficialCount is 0', async () => {
+    setMatchType('mt-1', [{ level: 1, count: 3 }], 0) // home reqs ignored
+    setAwayAssignments('match-1', [])
+
+    const created = await mod.processAwayMatchForOfficialsNeeded(
+      'match-1',
+      awayMatch('mt-1'),
+      { now: NOW },
+    )
+
+    expect(created).toBe(false)
+  })
+})
+
 describe('runAutoOfficialsNeeded', () => {
   it('returns zero counts when no bookings match', async () => {
     const out = await mod.runAutoOfficialsNeeded(
@@ -404,5 +608,63 @@ describe('runAutoOfficialsNeeded', () => {
     expect(state.addCalls).toHaveLength(1)
     const payload = state.addCalls[0] as Record<string, unknown>
     expect(payload.relatedBookingId).toBe('b-needs')
+  })
+
+  it('scans away matches, skipping non-away / non-scheduled ones', async () => {
+    setMatchType('mt-away', [], 2)
+    setAwayAssignments('m-away-needs', ['confirmed']) // 1/2 → under-staffed
+    state.matchesSnap = {
+      empty: false,
+      size: 3,
+      docs: [
+        makeAwayMatchDoc({ id: 'm-away-needs', matchTypeId: 'mt-away' }),
+        // kind='home' → ignored by the away scan.
+        makeAwayMatchDoc({
+          id: 'm-home',
+          matchTypeId: 'mt-away',
+          kind: 'home',
+        }),
+        // status='cancelled' → ignored.
+        makeAwayMatchDoc({
+          id: 'm-cancelled',
+          matchTypeId: 'mt-away',
+          status: 'cancelled',
+        }),
+      ],
+    }
+
+    const out = await mod.runAutoOfficialsNeeded(
+      ts(1_000_000) as unknown as FirebaseFirestore.Timestamp,
+    )
+
+    expect(out).toEqual({ scanned: 1, notified: 1 })
+    expect(state.addCalls).toHaveLength(1)
+    const payload = state.addCalls[0] as Record<string, unknown>
+    expect(payload.relatedMatchId).toBe('m-away-needs')
+    expect(payload.relatedBookingId).toBeNull()
+  })
+
+  it('aggregates home + away scan counts', async () => {
+    setMatchType('mt-home', [{ level: 1, count: 2 }])
+    setMatchType('mt-away', [], 2)
+    setAssignments('b-home', ['confirmed'])
+    setAwayAssignments('m-away', ['confirmed'])
+    state.bookingsSnap = {
+      empty: false,
+      size: 1,
+      docs: [makeBookingDoc({ id: 'b-home', matchTypeId: 'mt-home' })],
+    }
+    state.matchesSnap = {
+      empty: false,
+      size: 1,
+      docs: [makeAwayMatchDoc({ id: 'm-away', matchTypeId: 'mt-away' })],
+    }
+
+    const out = await mod.runAutoOfficialsNeeded(
+      ts(1_000_000) as unknown as FirebaseFirestore.Timestamp,
+    )
+
+    expect(out).toEqual({ scanned: 2, notified: 2 })
+    expect(state.addCalls).toHaveLength(2)
   })
 })

@@ -34,6 +34,9 @@
 /licenseTypes/{licenseTypeId}
 /licenseRequests/{requestId}
 /registrations/{registrationId}
+/accounts/{accountId}
+/accountingEntries/{entryId}
+/invoices/{invoiceId}
 /_meta/schema                         (version + migration log)
 ```
 
@@ -519,6 +522,25 @@ Modélise une **réservation manuelle récurrente** créée depuis l'écran `/bo
 
 **Rules** : `read` signed-in, `create/update/delete` admin uniquement.
 
+### `/matches/{matchId}/officialAssignments/{assignmentId}`
+
+```ts
+{
+  memberId: string
+  officialLevel: number              // snapshot au moment de l'assignation
+  status: "pending" | "confirmed" | "declined"
+  assignedAt: Timestamp
+  assignedBy: string
+  respondedAt: Timestamp | null
+}
+```
+
+Assignations d'officiels d'un match **à l'extérieur** (`kind='away'`). Schéma **identique** à `/bookings/{bookingId}/officialAssignments` — mais comme un match away n'a pas de booking, ses assignations sont portées directement par le doc match. Le besoin d'officiels vient de `matchType.awayOfficialCount` (total simple, pas de ventilation par niveau, contrairement à `homeOfficialRequirements`).
+
+**Rules** : identiques à la sous-collection des bookings — `read` signed-in ; `create` admin/rootAdmin ou self-register (`status=='pending'` + `memberId == userDoc().memberId`) ; `update` admin/rootAdmin ou l'official sur `status`/`respondedAt` de sa propre assignation ; `delete` admin/rootAdmin.
+
+Le type partagé `OfficialAssignment` (`packages/shared-types/src/booking.ts`) couvre les deux sous-collections.
+
 ### `/matchRequests/{requestId}`
 ```ts
 {
@@ -543,7 +565,8 @@ Modélise une **réservation manuelle récurrente** créée depuis l'écran `/bo
   title, body: string
   sentBy: string | null              // null si auto
   targetAudience: "all_officials" | "unassigned_officials" | "assigned_officials"
-  relatedBookingId: string | null
+  relatedBookingId: string | null    // booking lié — match à domicile uniquement ; null sinon
+  relatedMatchId: string | null      // /matches lié — renseigné pour les matchs à l'extérieur (pas de booking)
   createdAt: Timestamp
   readBy: string[]                   // uids
 }
@@ -651,7 +674,7 @@ Un `due` par joueur/saison/team. Switch d'équipe mid-saison : TBD (probablement
 | Rôle | Read | Write direct | Action via callable |
 |---|---|---|---|
 | `admin` / `rootAdmin` | tout | autorisé (filets de sécurité) | — |
-| `treasurer` | tout (vue globale paiements) | **refusé** par les rules | `markDuePaid` (pose `paid`, `paidAt`, `paidAmount`, `paymentMethod`, `recordedBy`) |
+| `treasurer` | tout (vue globale paiements) | **refusé** par les rules | `markDuePaid` (pose `paid`, `paidAt`, `paidAmount`, `paymentMethod`, `recordedBy`) ; `updateDue` (édite dates / statut / note) |
 | `coach` (scope team) | dues de ses teams | refusé | `paymentExceptionRequest` (cf. `/paymentExceptionRequests`) |
 | **Membre lié** (`linkedUserId`) | sa propre cotisation uniquement | refusé | — (paiement par virement externe, marquage par admin/treasurer) |
 | **Tuteurs** (`guardianUserIds`) | les cotisations des membres dont ils sont tuteurs | refusé | — |
@@ -659,6 +682,8 @@ Un `due` par joueur/saison/team. Switch d'équipe mid-saison : TBD (probablement
 Le treasurer n'écrit jamais directement dans `/dues` — toute action passe par la callable `markDuePaid` (Admin SDK, validation `treasurer || admin` côté serveur). Idem pour les transitions automatiques (`issueDuesScheduled`, `markOverdueScheduled`, `applyPaymentException`) qui restent dans les Functions.
 
 **Garde "montant partiel" (callable `markDuePaid`)** : la callable accepte n'importe quel `paidAmount` côté input, mais **rejette en `permission-denied`** tout caller qui tente `paidAmount < due.amount` sans avoir le claim `rootAdmin` OU le rôle `treasurer`. Un caller avec rôle `admin` seul ne peut donc poser que `paidAmount === due.amount` (ou laisser le champ vide → default au plein tarif). Le helper `assertCanRecordPartial` vit dans `functions/src/dues/markDuePaid.ts` ; la garde est posée **après** lecture transactionnelle de `due.amount` pour comparer au montant fourni. Cas d'usage : arrangement comité in extremis (cf. `docs/main.md` → Cotisations).
+
+**Édition d'une cotisation (callable `updateDue`)** : édite une cotisation hors flux paiement. Auth : signed-in + (claim `rootAdmin` OU rôle `admin` OU `treasurer`), sinon `permission-denied`. Input wire `{ dueId, activatedAt?, issuedAt?, dueAt?, status?, notes? }` — dates en epoch millis ; champ absent = inchangé ; `null` explicite efface `issuedAt` / `dueAt` / `notes` (`activatedAt` non nullable). **Le montant (`amount`) n'est pas éditable** ; **`status: 'paid'` est refusé** (`invalid-argument`) — le passage à payé passe par `markDuePaid`. L'`update` est fait via Admin SDK ; le trigger `syncMemberDuesStatus` recalcule `member.duesStatus`. Aucun champ `updatedBy` / `updatedAt` ajouté au schéma. Fichier : `functions/src/dues/updateDue.ts`. Wrapper web : `updateCotisation` dans `apps/web/src/services/cloudFunctions.ts`.
 
 **Note rules — lecture parent/membre.** La rule `read` exécute deux `get()` Firestore (`/members/{resource.data.memberId}`) pour vérifier `linkedUserId == auth.uid` puis `auth.uid in guardianUserIds`. Coût : 2 lectures supplémentaires par doc évalué — borné car l'app `courtbase-register` filtre toujours `where memberId in [...]` côté client (chunk ≤ 30 docs). Acceptable pour le volume attendu (1–3 cotisations actives par foyer). Pas de cache rule-side : si une cotisation référence un `memberId` qui n'existe plus, le `get()` échoue et la lecture est refusée — comportement souhaité (cohérence référentielle).
 
@@ -809,6 +834,67 @@ submitted → cancelled (par le user avant validation coach, terminal)
 - Update client : autorisé **uniquement** sur `status == "draft"` par l'auteur (autosave wizard). Toutes les autres transitions passent par les callables (`submitRegistration`, `refuseRegistration`, etc.) — garantit l'intégrité du lifecycle.
 - Delete : `false` (jamais).
 
+### `/accounts/{accountId}`
+```ts
+{
+  number: string                    // code comptable, unique (ex. "3000")
+  name: string
+  nature: "actif" | "passif" | "charge" | "produit"
+  isTreasury: boolean               // true = compte de trésorerie (Caisse/Banque)
+  description: string | null
+  isDefault: boolean                // true = compte seedé par défaut (protégé en suppression)
+  active: boolean
+  displayOrder: number              // tri stable
+  createdAt: Timestamp
+}
+```
+Plan comptable du module Comptabilité. Édité par le trésorier (Settings / Comptabilité). `nature` détermine le sens du solde (`actif`/`charge` → Σdébit−Σcrédit ; `passif`/`produit` → Σcrédit−Σdébit). `isTreasury` marque les comptes utilisables comme contrepartie automatique dans la saisie simplifiée. Comptes par défaut seedés au démarrage du module (`isDefault: true`) — voir `docs/compta.md` pour la table. Accès : `treasurer` + `rootAdmin` uniquement. Détail : `docs/compta.md`.
+
+### `/accountingEntries/{entryId}`
+```ts
+{
+  date: Timestamp
+  label: string
+  reference: string | null          // n° de pièce / libellé externe
+  source: "credit" | "invoice" | "manual"
+  invoiceId: string | null          // ref /invoices si source === 'invoice'
+  lines: AccountingEntryLine[]       // >= 2 lignes, équilibrées : Σ debit === Σ credit
+  reversed: boolean                  // true si contre-passée
+  reversalOfEntryId: string | null   // si cette écriture EST une contre-passation
+  createdBy: string                  // uid trésorier / rootAdmin
+  createdAt: Timestamp
+}
+
+interface AccountingEntryLine {
+  accountId: string
+  debit: number                     // >= 0
+  credit: number                    // >= 0 — exactement un des deux > 0, l'autre = 0
+}
+```
+Journal des écritures en partie double. **Append-only** : `allow delete: if false` — l'annulation d'une écriture passe par une contre-passation (écriture inverse, `reversed` + `reversalOfEntryId`). Invariant équilibre `Σ debit === Σ credit` validé côté applicatif. Accès : `treasurer` + `rootAdmin`. Détail : `docs/compta.md`.
+
+### `/invoices/{invoiceId}`
+```ts
+{
+  supplierName: string
+  invoiceNumber: string | null
+  issueDate: Timestamp
+  dueDate: Timestamp | null
+  amount: number                     // total, CHF
+  currency: string                   // 'CHF' par défaut
+  storagePath: string | null         // fichier uploadé (accounting/invoices/...)
+  status: "to_pay" | "paid" | "cancelled"
+  expenseAccountId: string | null    // compte de charge imputé
+  entryId: string | null             // écriture liée (null tant que pas comptabilisée)
+  ocrStatus: "none" | "pending" | "done" | "failed"   // 'none' en v1 (OCR différé)
+  ocrRawText: string | null
+  notes: string | null
+  createdBy: string                  // uid trésorier / rootAdmin
+  createdAt: Timestamp
+}
+```
+Factures fournisseurs du module Comptabilité. Saisie **manuelle** en v1 — les champs `ocrStatus` / `ocrRawText` sont réservés (OCR différé) et restent inertes (`ocrStatus: 'none'`). Comptabilisation : débit `expenseAccountId` / crédit `2000 Créditeurs`, l'écriture créée est référencée par `entryId`. Accès : `treasurer` + `rootAdmin`. Détail des flux : `docs/compta.md`.
+
 ### Activity feed — feed dashboard (TBD)
 
 Le Dashboard expose un feed "Activité récente" (cf. `apps/web/src/views/Dashboard.vue`).
@@ -856,6 +942,7 @@ Un projet = un club, donc pas de filtrage `clubId`.
 - **`/paymentExceptionRequests/`** : coach crée pour ses joueurs, lit les siens. Admin lit/écrit tout.
 - **`/licenseRequests/`** : idem. `member.licensed` écrit seulement par admin (ou Function sur approval).
 - **`/users/{uid}`** : self-create autorisé (par l'app register) avec contraintes whitelist — `request.auth.uid == uid`, `roles.size() == 0`, `memberId == null`, `teamIds.size() == 0`. Self-update sur les champs profil (`displayName`, `photoURL`, `phone`, `address`, `profileCompletedAt`) ; les champs `roles` / `memberId` / `teamIds` restent admin-only.
+- **Module Comptabilité** (`/accounts`, `/accountingEntries`, `/invoices`) : read/write réservés à `treasurer` + `rootAdmin`. L'`admin` standard est **explicitement exclu** (aucune rule ne mentionne `isAdmin()` sur ces collections, et aucun wildcard `/{document=**}` ne les couvre). `/accountingEntries` est append-only (`allow delete: if false` — annulation par contre-passation). Cf. `docs/compta.md`.
 - **`/registrations/`** : auth required (app register). Lecture par auteur (`submittedByUid`), tuteur du `matchedMemberId`, coach de la `teamId`, admin. Create par auteur uniquement. Update client seulement sur `status == "draft"` par auteur (autosave wizard) ; toutes autres transitions via callables.
 - **`/teams/{}/refusalLogs/`** : write `false` (callable `refuseRegistration` only, Admin SDK), read admin uniquement. CollectionGroup `refusalLogs` également admin-only (vue admin "tous les refus").
 - **Route guards** : **allowlist** des rôles par route. `rootAdmin` implicitement dans toutes.
@@ -870,6 +957,7 @@ Cf. `storage.rules`. Les seuls paths autorisés :
 | `/club/logo/{file}` | signed-in | signed-in (≤ 2 MB, `image/*`) | Logo du club. La garde admin réelle est sur `/config/club.logo` (Firestore rule write admin-only) — un non-admin peut uploader mais ne peut pas faire pointer la config vers le fichier. Le repo `settings.repo.ts` (`uploadClubLogo` / `deleteClubLogoByUrl`) gère le path `club/logo/logo_<timestamp><.ext>` pour cache-busting. |
 | `/registrations/{uid}/{regId}/{file}` | signed-in | auteur (≤ 10 MB, `image/*` ou PDF) | Pièces de registration (lettre de sortie). Cf. `docs/chantier-registrations.md` §12. |
 | `/licenseRequests/{uid}/{requestId}/{file}` | signed-in | auteur (≤ 10 MB, `image/*` ou PDF) | Pièces de demande de licence. Mapping uid ↔ memberId enforced côté callable, pas côté Storage rules (limitation cross-doc). |
+| `/accounting/invoices/{invoiceId}/{file}` | signed-in | signed-in (≤ 10 MB, `image/*` ou PDF) | Scans/PDF des factures fournisseurs (module Comptabilité). La garde treasurer/rootAdmin est sur la collection Firestore `/invoices` (write treasurer-only) qui porte le `storagePath` — Storage rules ne peuvent pas faire de cross-doc lookup. Cf. `docs/compta.md`. |
 
 Tout autre path est deny par défaut.
 
@@ -944,7 +1032,7 @@ Déployées sur **chaque projet client** via CI cross-projet (voir `deployment.m
 | `previewSeasonBookings` | Callable | Dry-run : retourne plan sans écrire. |
 | `applyClosurePeriod` | Closure ajouté à saison `active` | Cascading cancel (`cancelReason: "closure"`). |
 | `handleMatchSlotChange` | Slot devient `match_home`/`match_away` | Suspend ou libère `training` même équipe ce jour. |
-| `autoOfficialsNeededNotification` | Scheduled | Notif si `match_home` < 7j et pas full staff. |
+| `autoOfficialsNeededNotification` | Scheduled | Notif si un match (domicile **ou** extérieur) < 7j et pas full staff. |
 | `matchReminders` | Scheduled | J-1 (23:00) + H-2 aux officiels confirmés. |
 | `initiateDuesOnPlayerActivation` | `team.playerIds` augmenté | Crée `due` (`pending_grace`), set `member.duesStatus`. |
 | `issueDuesScheduled` | Daily ~06:00 | `pending_grace` + `issuedAt <= now()` → `issued`, set `dueAt`. |

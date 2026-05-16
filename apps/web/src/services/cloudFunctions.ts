@@ -1,4 +1,5 @@
 import { httpsCallable, type HttpsCallableResult } from 'firebase/functions'
+import type { CotisationStatus } from '@club-app/shared-types'
 import { functions } from './firebase'
 
 // =============================================================================
@@ -330,6 +331,77 @@ export async function markCotisationPaid(
     paidAt: result.data.paidAt,
     paidAmount: result.data.paidAmount,
   }
+}
+
+// -----------------------------------------------------------------------------
+// updateCotisation (wrapper TS) — modifie une cotisation hors du flux paiement
+// (dates, statut, note). Le nom de la callable serveur reste `'updateDue'` ;
+// côté wire les champs `dueId` et les dates en epoch millis sont utilisés. Le
+// wrapper traduit `cotisationId`→`dueId` et `Date`→epoch millis.
+//
+// Sémantique : un champ omis n'est PAS modifié côté serveur ; un `null`
+// explicite efface le champ (`issuedAt` / `dueAt` / `notes`). `activatedAt`
+// n'est pas nullable. Le statut `'paid'` est refusé (`invalid-argument`) — le
+// passage à payé passe par `markCotisationPaid`.
+//
+// Côté functions : functions/src/dues/updateDue.ts
+// Auth : signed-in. Le caller doit être rootAdmin OU admin OU treasurer.
+// Codes d'erreur typiques :
+//   - permission-denied → caller ni rootAdmin, ni admin, ni treasurer
+//   - not-found         → cotisationId inexistant
+//   - invalid-argument  → statut 'paid', statut inconnu, date mal formée, ou
+//                          aucun champ fourni
+// -----------------------------------------------------------------------------
+export interface UpdateCotisationInput {
+  cotisationId: string
+  /** Date d'activation (J0). `null` interdit — champ non nullable. Omis = inchangé. */
+  activatedAt?: Date | null
+  /** Date d'émission. `null` = effacer. Omis = inchangé. */
+  issuedAt?: Date | null
+  /** Date d'échéance. `null` = effacer. Omis = inchangé. */
+  dueAt?: Date | null
+  /** Statut. `'paid'` interdit (passer par markCotisationPaid). Omis = inchangé. */
+  status?: CotisationStatus
+  /** Note libre. `null` = effacer. Omis = inchangé. */
+  notes?: string | null
+}
+
+/**
+ * Shape du payload côté wire — le serveur attend `dueId` + dates en epoch ms.
+ */
+interface WireUpdateDueInput {
+  dueId: string
+  activatedAt?: number
+  issuedAt?: number | null
+  dueAt?: number | null
+  status?: CotisationStatus
+  notes?: string | null
+}
+
+interface WireUpdateDueOutput {
+  ok: true
+}
+
+export async function updateCotisation(input: UpdateCotisationInput): Promise<void> {
+  const callable = httpsCallable<WireUpdateDueInput, WireUpdateDueOutput>(
+    functions,
+    'updateDue',
+  )
+  const wireInput: WireUpdateDueInput = { dueId: input.cotisationId }
+  // `activatedAt` n'est pas nullable côté serveur — on n'envoie que les Date.
+  if (input.activatedAt !== undefined && input.activatedAt !== null) {
+    wireInput.activatedAt = input.activatedAt.getTime()
+  }
+  // `issuedAt` / `dueAt` : `null` explicite = effacer, Date = poser, omis = inchangé.
+  if (input.issuedAt !== undefined) {
+    wireInput.issuedAt = input.issuedAt === null ? null : input.issuedAt.getTime()
+  }
+  if (input.dueAt !== undefined) {
+    wireInput.dueAt = input.dueAt === null ? null : input.dueAt.getTime()
+  }
+  if (input.status !== undefined) wireInput.status = input.status
+  if (input.notes !== undefined) wireInput.notes = input.notes
+  await callable(wireInput)
 }
 
 // -----------------------------------------------------------------------------

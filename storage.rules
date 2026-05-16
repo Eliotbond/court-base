@@ -88,6 +88,25 @@ service firebase.storage {
     }
 
     // ------------------------------------------------------------------------
+    // /accounting/invoices/{invoiceId}/{file}
+    // ------------------------------------------------------------------------
+    // Pièces de factures fournisseurs du module Comptabilité (scan / PDF).
+    // Read : signed-in (l'enforcement fin treasurer/rootAdmin est sur la
+    //   collection Firestore `/invoices` qui porte le `storagePath` — un
+    //   non-trésorier ne connaît pas le path car il ne lit pas `/invoices`).
+    // Write : signed-in avec contrainte taille < 10 MB + type image ou PDF.
+    //   Storage rules ne peuvent pas faire de cross-doc lookup pour vérifier
+    //   le rôle ; la garde réelle est sur `/invoices` (write treasurer-only).
+    // Cf. docs/compta.md (section Sécurité).
+    match /accounting/invoices/{invoiceId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
+    }
+
+    // ------------------------------------------------------------------------
     // Catch-all deny
     // ------------------------------------------------------------------------
     match /{allPaths=**} {

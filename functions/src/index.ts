@@ -35,6 +35,7 @@ export { issueDuesScheduled } from './dues/issueDuesScheduled'
 export { markOverdueScheduled } from './dues/markOverdueScheduled'
 export { syncMemberDuesStatus } from './dues/syncMemberDuesStatus'
 export { markDuePaid } from './dues/markDuePaid'
+export { updateDue } from './dues/updateDue'
 
 // Exceptions / Licenses
 export {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { computeMemberDuesStatus } from './_helpers'
-import type { DueStatus } from '@club-app/shared-types'
+import type { CotisationStatus as DueStatus } from '@club-app/shared-types'
 
 describe('computeMemberDuesStatus', () => {
   it('returns "n/a" when no dues exist', () => {

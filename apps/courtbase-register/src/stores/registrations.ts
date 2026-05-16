@@ -7,6 +7,7 @@ import {
   createDraft,
   deleteDraft as deleteDraftRepo,
   getRegistrationById,
+  isBlockingSelfRegistration,
   isPendingForUser,
   listMyRegistrations,
   updateDraft,
@@ -89,6 +90,19 @@ export const useRegistrationsStore = defineStore('registrations', () => {
 
   const currentDraft = computed<Registration | null>(() =>
     currentDraftId.value ? byId.value.get(currentDraftId.value) ?? null : null,
+  )
+
+  /**
+   * True si le user courant a déjà une inscription "pour soi-même" (`self`)
+   * en cours — statut non terminal. Sert à Step1Whoami pour désactiver
+   * l'option "self" et empêcher une double inscription pour soi-même.
+   *
+   * Une inscription self `cancelled` ou `refused` ne bloque pas : la
+   * réinscription est autorisée. Basé sur `myList`, qui doit avoir été chargé
+   * via `loadMyRegistrations` au préalable.
+   */
+  const hasActiveSelfRegistration = computed<boolean>(() =>
+    myList.value.some(isBlockingSelfRegistration),
   )
 
   function upsertCache(reg: Registration): void {
@@ -251,6 +265,7 @@ export const useRegistrationsStore = defineStore('registrations', () => {
     error,
     currentDraftId,
     currentDraft,
+    hasActiveSelfRegistration,
     matches,
     matchLoading,
     // Helpers

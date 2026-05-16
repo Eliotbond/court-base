@@ -100,13 +100,26 @@ Per-project root admin (claim `rootAdmin: true`) :
 
 Editor global root → utilise **uniquement** le control-plane (`apps/control-plane`), jamais le web client.
 
-## Officials sur le web
+## Officials sur le web — page `/officials`
 
-Web = surtout admin + coach. Les officiels bossent mobile, mais le web doit supporter :
+Page admin à **onglets** (accès `admin` / `rootAdmin` uniquement — les officiels travaillent sur mobile, pas de login web officiel). Deux onglets :
 
-- **Admin** : config MatchTypes (officials requis), créer/override `officialAssignments`, envoyer notifs manuelles, export fin saison.
-- **Member management** : set `officialLevel`, link Auth account.
-- **UI optionnelle official** : login web autorisé, mêmes guards.
+### Onglet "Assignations" (par défaut)
+
+Pilotage du staffing des matchs — **à domicile et à l'extérieur**.
+
+- **Tableau de tous les matchs** (`/matches`, `kind` `home` et `away`) avec, pour chaque match, une pastille Lieu (Domicile / Extérieur) et son statut de staffing : nombre d'officiels confirmés vs requis. Les besoins viennent de `matchType.homeOfficialRequirements` (ventilé par niveau) pour un match à domicile, de `matchType.awayOfficialCount` (total simple) pour un match à l'extérieur. Un match sans besoin (`awayOfficialCount: 0`) est marqué "Aucun requis".
+- **Panneau de détail par match** : assigner un officiel, override une assignation, ou retirer un officiel. Les `officialAssignments` créés par l'admin démarrent en `status: 'pending'` — l'officiel confirme ou décline ensuite depuis le mobile (même flow qu'une auto-inscription). Le parent Firestore dépend du `kind` : `/bookings/{id}/officialAssignments` pour un match à domicile (porté par le booking), `/matches/{id}/officialAssignments` pour un match à l'extérieur (pas de booking).
+- **Notifications manuelles** : l'admin envoie une notif (collection `/notifications`) avec un `type` (`officials_needed`, `urgent`, …) et une audience (`all_officials`, `unassigned_officials`, `assigned_officials`). `relatedBookingId` est renseigné pour un match à domicile, `null` pour un match à l'extérieur.
+
+### Onglet "Officiels"
+
+- **Liste rentabilité** : charge par officiel (nombre de matchs sur la saison) avec code couleur selon les seuils de `config/club.officialsConfig` (cf. `main.md` → "Officials — indicateurs de rentabilité").
+- **Export CSV** : bouton "Exporter (CSV)" pour l'export de fin de saison des assignations par membre (les officiels sont payés).
+
+### Hors de cette page
+
+Le niveau d'un officiel (`member.officialLevel`) et la liaison de son compte Auth se règlent dans la **fiche membre** (`/members/{id}`), pas sur `/officials`. La config des besoins officiels par type de match (`matchType.homeOfficialRequirements`) se fait dans Settings → Match types.
 
 ## UI library — PrimeVue
 

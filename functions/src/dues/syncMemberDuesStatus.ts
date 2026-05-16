@@ -25,7 +25,10 @@
  */
 import { onDocumentWritten } from 'firebase-functions/v2/firestore'
 import { logger } from 'firebase-functions/v2'
-import type { DueData, DueStatus } from '@club-app/shared-types'
+import type {
+  CotisationData as DueData,
+  CotisationStatus as DueStatus,
+} from '@club-app/shared-types'
 import {
   col,
   computeMemberDuesStatus,

@@ -26,12 +26,14 @@ import Popover from 'primevue/popover'
 import type { MenuItem } from 'primevue/menuitem'
 import { useCotisationsStore, type CotisationStatusFilter } from '@/stores/cotisations'
 import { useSeasonsStore } from '@/stores/seasons'
+import { useAuthStore } from '@/stores/auth'
 import type { CotisationRow } from '@/repositories/cotisations.repo'
 import type { MarkCotisationPaymentMethod } from '@/services/cloudFunctions'
 import type { CotisationStatus } from '@club-app/shared-types'
 import Avatar from '@/components/ui/Avatar.vue'
 import Chip from '@/components/ui/Chip.vue'
 import Pill from '@/components/ui/Pill.vue'
+import EditCotisationDialog from '@/components/cotisations/EditCotisationDialog.vue'
 
 // ---------------------------------------------------------------------------
 // Stores — Cotisations pour la liste/actions, Seasons pour alimenter le Select.
@@ -39,7 +41,17 @@ import Pill from '@/components/ui/Pill.vue'
 
 const cotisations = useCotisationsStore()
 const seasons = useSeasonsStore()
+const auth = useAuthStore()
 const router = useRouter()
+
+/**
+ * Droit d'éditer une cotisation — réservé au comité (admin / treasurer ;
+ * rootAdmin couvert par `hasAccess`). Pilote la visibilité de l'item de menu
+ * "Modifier". La garde réelle vit côté Cloud Function `updateDue`.
+ */
+const canEditCotisation = computed<boolean>(() =>
+  auth.hasAccess(['admin', 'treasurer']),
+)
 
 onMounted(() => {
   void cotisations.load()
@@ -263,7 +275,7 @@ const menuItems = computed<MenuItem[]>(() => {
   if (!row) return []
   const isFinalPaid = row.status === 'paid' || row.status === 'excepted'
   const isCancelled = row.status === 'cancelled'
-  return [
+  const items: MenuItem[] = [
     {
       label: 'Marquer comme payé',
       icon: 'pi pi-check',
@@ -277,11 +289,46 @@ const menuItems = computed<MenuItem[]>(() => {
       command: () => openCancelDialog(row),
     },
   ]
+  // L'édition (dates / statut / note) est réservée au comité — l'item
+  // n'apparaît que pour admin / treasurer / rootAdmin.
+  if (canEditCotisation.value) {
+    items.push({
+      label: 'Modifier',
+      icon: 'pi pi-pencil',
+      command: () => openEditDialog(row),
+    })
+  }
+  return items
 })
 
 function openMenu(event: Event, row: CotisationRow): void {
   activeMenuRow.value = row
   menuRef.value?.toggle(event)
+}
+
+// ---------------------------------------------------------------------------
+// Edit dialog — `EditCotisationDialog` réutilisable. Le dialog appelle lui-même
+// la callable `updateDue` ; à la réussite il émet `saved` → on recharge la
+// liste via `cotisations.load()` (les transitions de statut peuvent recomputer
+// `member.duesStatus` via le trigger serveur).
+// `CotisationRow` étend `Cotisation` → passe tel quel à la prop `cotisation`.
+// ---------------------------------------------------------------------------
+
+const editOpen = ref(false)
+const editTarget = ref<CotisationRow | null>(null)
+
+function openEditDialog(row: CotisationRow): void {
+  editTarget.value = row
+  editOpen.value = true
+}
+
+async function onCotisationEdited(): Promise<void> {
+  const name = editTarget.value?.memberName ?? ''
+  await cotisations.load()
+  flashNotice(
+    name ? `Cotisation mise à jour pour ${name}.` : 'Cotisation mise à jour.',
+    'success',
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,5 +1265,12 @@ function toggleBreakdown(event: Event): void {
         </Button>
       </template>
     </Dialog>
+
+    <!-- ================= Edit dialog (réutilisable) =================== -->
+    <EditCotisationDialog
+      v-model:visible="editOpen"
+      :cotisation="editTarget"
+      @saved="onCotisationEdited"
+    />
   </section>
 </template>

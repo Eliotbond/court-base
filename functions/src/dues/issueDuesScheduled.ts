@@ -29,7 +29,10 @@ import type {
   Query,
   QueryDocumentSnapshot,
 } from 'firebase-admin/firestore'
-import type { DueData, MemberData } from '@club-app/shared-types'
+import type {
+  CotisationData as DueData,
+  MemberData,
+} from '@club-app/shared-types'
 import {
   MAX_BATCH_WRITES,
   Timestamp,

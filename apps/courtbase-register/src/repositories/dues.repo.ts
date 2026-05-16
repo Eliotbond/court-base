@@ -56,6 +56,23 @@ const ACTIVE_COTISATION_STATUSES: CotisationStatus[] = [
 const PAID_COTISATION_STATUSES: CotisationStatus[] = ['paid']
 
 /**
+ * Statuts considérés comme "soldés / clôturés" — toutes les cotisations dont
+ * le cycle de paiement est terminé, qu'elles aient été réglées, annulées ou
+ * dispensées. Regroupe :
+ *  - `paid`     : paiement effectif reçu
+ *  - `cancelled`: cotisation annulée (ex. départ joueur)
+ *  - `excepted` : dispense accordée par le comité
+ *
+ * Utilisé par `listSettledDuesForMembers` pour alimenter le panneau
+ * "Historique" côté parent dans `apps/courtbase-register`.
+ */
+const SETTLED_COTISATION_STATUSES: CotisationStatus[] = [
+  'paid',
+  'cancelled',
+  'excepted',
+]
+
+/**
  * Alias historique conservé pour ne pas casser les consumers du store
  * (`PaymentInstructions.vue`, `Home.vue`). Pointe vers `Cotisation` de
  * `@club-app/shared-types`.
@@ -178,6 +195,76 @@ export async function listPaidDuesForMembers(
   })
 
   return items
+}
+
+/**
+ * Récupère les dues "soldés" (`paid | cancelled | excepted`) liés à une liste
+ * de memberIds — destiné au panneau "Historique" côté parent.
+ *
+ * Même pattern que `listPaidDuesForMembers` :
+ *  - Chunk de 30 sur `memberId in [...]` (limite Firestore `in`).
+ *  - Filtre statuts côté client (évite un index composite).
+ *  - Catch défensif `FirestoreError` rethrown pour les cas non-`permission-denied`
+ *    (index manquant, réseau) — le store loggue le code d'erreur.
+ *
+ * Tri desc par date la plus pertinente :
+ *  - `paidAt` si dispo (dues `paid`)
+ *  - sinon `dueAt` (dues `cancelled` / `excepted` qui avaient une échéance)
+ *  - sinon `createdAt` (fallback défensif)
+ * → le plus récent en tête.
+ */
+export async function listSettledDuesForMembers(
+  memberIds: string[],
+): Promise<DueRecord[]> {
+  if (memberIds.length === 0) return []
+
+  const unique = Array.from(new Set(memberIds))
+  const chunks: string[][] = []
+  for (let i = 0; i < unique.length; i += 30) {
+    chunks.push(unique.slice(i, i + 30))
+  }
+
+  const snaps = await Promise.all(
+    chunks.map((chunk) =>
+      getDocs(query(collection(db, DUES), where('memberId', 'in', chunk))),
+    ),
+  )
+
+  const items: DueRecord[] = []
+  for (const snap of snaps) {
+    for (const d of snap.docs) {
+      const due = snapToDue(d)
+      if (SETTLED_COTISATION_STATUSES.includes(due.status)) {
+        items.push(due)
+      }
+    }
+  }
+
+  // Tri desc : paidAt > dueAt > createdAt (plus récent en tête).
+  items.sort((a, b) => {
+    const da = a.paidAt?.seconds ?? a.dueAt?.seconds ?? a.createdAt?.seconds ?? 0
+    const db_ = b.paidAt?.seconds ?? b.dueAt?.seconds ?? b.createdAt?.seconds ?? 0
+    return db_ - da
+  })
+
+  return items
+}
+
+/**
+ * Tri "date de la cotisation" décroissant (plus récente en tête).
+ *
+ * « Date de la cotisation » = `createdAt` (toujours présent sur les docs
+ * créés par `initiateDuesOnPlayerActivation`), avec fallback défensif
+ * `dueAt` puis `paidAt` pour les éventuelles lignes legacy / corrompues.
+ *
+ * Exporté pour être réutilisé par le store (`allMyDuesSorted`) qui fusionne
+ * les listes actives + soldées en une seule liste unifiée — la couche store
+ * ne réimplémente pas la logique de tri.
+ */
+export function sortDuesByCotisationDateDesc(items: DueRecord[]): DueRecord[] {
+  const cotisationSeconds = (d: DueRecord): number =>
+    d.createdAt?.seconds ?? d.dueAt?.seconds ?? d.paidAt?.seconds ?? 0
+  return [...items].sort((a, b) => cotisationSeconds(b) - cotisationSeconds(a))
 }
 
 /** Récupère un due par son id. Retourne `null` si le doc n'existe pas ou si l'accès est refusé (le user n'est pas tuteur du member concerné). */

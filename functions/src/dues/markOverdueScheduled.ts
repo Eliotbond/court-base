@@ -17,7 +17,7 @@ import type {
   Query,
   QueryDocumentSnapshot,
 } from 'firebase-admin/firestore'
-import type { DueData } from '@club-app/shared-types'
+import type { CotisationData as DueData } from '@club-app/shared-types'
 import {
   MAX_BATCH_WRITES,
   Timestamp,

@@ -14,6 +14,7 @@ Avant toute tâche, identifie où elle se passe et ouvre **uniquement** les fich
 | Le control-plane éditeur | `apps/control-plane/CLAUDE.md` + `docs/deployment.md` |
 | Cloud Functions | `functions/CLAUDE.md` + `docs/firebase.md` |
 | Types partagés | `packages/shared-types/CLAUDE.md` |
+| Le module compta | `docs/compta.md` + `docs/firebase.md` |
 | Schéma Firestore / rules / Auth | `docs/firebase.md` |
 | Règles métier du domaine | `docs/main.md` |
 | Déploiement multi-projet | `docs/deployment.md` |

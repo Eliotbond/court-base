@@ -33,7 +33,17 @@ functions/
 
 ## Functions requises (voir `docs/firebase.md` pour détails)
 
-`generateSeasonBookings`, `previewSeasonBookings`, `applyClosurePeriod`, `handleMatchSlotChange`, `autoOfficialsNeededNotification`, `matchReminders`, `initiateDuesOnPlayerActivation`, `issueDuesScheduled`, `markOverdueScheduled`, `syncMemberDuesStatus`, `applyPaymentException`, `applyLicenseRequest`, `runMigrations`.
+`generateSeasonBookings`, `previewSeasonBookings`, `applyClosurePeriod`, `handleMatchSlotChange`, `autoOfficialsNeededNotification`, `matchReminders`, `initiateDuesOnPlayerActivation`, `issueDuesScheduled`, `markOverdueScheduled`, `syncMemberDuesStatus`, `markDuePaid`, `updateDue`, `applyPaymentException`, `applyLicenseRequest`, `runMigrations`.
+
+### `updateDue` (callable) — édition d'une cotisation
+
+Édite une cotisation `/dues/{dueId}` hors du flux paiement. Réservée au comité.
+
+- **Auth** : signed-in + (claim `rootAdmin` OU rôle `admin` OU `treasurer` côté `/users/{uid}`). Sinon `permission-denied`. Helper local `assertCanUpdateDue`.
+- **Input** (wire) : `{ dueId: string; activatedAt?: number; issuedAt?: number | null; dueAt?: number | null; status?: CotisationStatus; notes?: string | null }`. Dates en epoch millis. Champ absent = non modifié. `null` explicite = effacer (`issuedAt`, `dueAt`, `notes` — `activatedAt` non nullable).
+- **`status`** : refuse `'paid'` (`invalid-argument`) — le passage à payé passe par `markDuePaid`. Statuts acceptés : `pending_grace | issued | overdue | excepted | cancelled`.
+- **Effet** : `update` du doc via Admin SDK. Le trigger `syncMemberDuesStatus` recalcule `member.duesStatus` — ne pas le recalculer ici. **Pas** d'édition du montant ; **pas** de champ `updatedBy` / `updatedAt`.
+- **Retour** : `{ ok: true }`. Wrapper web : `updateCotisation` dans `apps/web/src/services/cloudFunctions.ts`.
 
 ## Migrations
 

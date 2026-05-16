@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { AlertCircle, ArrowRight, ChevronLeft, Loader2, User, Users } from 'lucide-vue-next'
 import type { RegistrationRelationship } from '@club-app/shared-types'
@@ -21,8 +21,28 @@ const relationshipOther = ref<string | null>(null)
 const submitting = ref(false)
 const error = ref<string | null>(null)
 
+/**
+ * True si le user a déjà une inscription "pour soi-même" en cours (statut non
+ * terminal). Dans ce cas l'option "self" est désactivée — il ne peut pas
+ * démarrer une seconde inscription pour lui-même.
+ */
+const selfBlocked = computed(() => registrations.hasActiveSelfRegistration)
+
+/**
+ * Le user peut atterrir sur Step1 sans passer par Home (lien direct, refresh).
+ * On s'assure que `myList` est chargé pour que `hasActiveSelfRegistration` soit
+ * fiable. Si la liste est déjà peuplée (venant de Home), on ne re-fetch pas.
+ */
+onMounted(async () => {
+  const uid = auth.authSnap?.uid
+  if (!uid) return
+  if (registrations.myList.length > 0) return
+  await registrations.loadMyRegistrations(uid)
+})
+
 function pick(value: RegistrationFor) {
   if (registrationFor.value === value) return
+  if (value === 'self' && selfBlocked.value) return
   registrationFor.value = value
   if (value === 'self') {
     relationship.value = null
@@ -96,8 +116,12 @@ async function onContinue() {
       <button
         type="button"
         class="choice-card step1__card"
-        :class="{ selected: registrationFor === 'self' }"
+        :class="{
+          selected: registrationFor === 'self',
+          'step1__card--disabled': selfBlocked,
+        }"
         :aria-pressed="registrationFor === 'self'"
+        :disabled="selfBlocked"
         @click="pick('self')"
       >
         <div class="step1__card-row">
@@ -114,6 +138,14 @@ async function onContinue() {
           >
             <div v-if="registrationFor === 'self'" class="step1__radio-dot" />
           </div>
+        </div>
+
+        <div v-if="selfBlocked" class="step1__blocked">
+          <AlertCircle :size="14" class="step1__blocked-icon" />
+          <span>
+            Vous avez déjà une inscription en cours pour vous-même. Vous pourrez
+            en démarrer une nouvelle une fois celle-ci terminée ou annulée.
+          </span>
         </div>
       </button>
 
@@ -205,6 +237,25 @@ async function onContinue() {
   width: 100%;
   text-align: left;
   font-family: inherit;
+}
+.step1__card--disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.step1__blocked {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-top: 1px solid #fde68a;
+  padding-top: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #92400e;
+}
+.step1__blocked-icon {
+  flex: none;
+  margin-top: 1px;
 }
 .step1__card-row {
   display: flex;

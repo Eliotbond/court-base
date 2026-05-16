@@ -309,6 +309,17 @@ Référentiel `/licenseTypes` éditable par l'admin (Settings → Licences). Une
 - **`/licenseRequests`** = workflow de demande mobile (coach demande à l'admin). Orthogonal à `/licenseTypes`. Voir section "License requests" plus bas.
 - **`config/club.officialsConfig.licenseFee`** (140 CHF flat) = legacy, héritage de l'époque où seul "officiel" avait une licence à 140 CHF. Sera supprimé une fois la création de licence active (les indicateurs de rentabilité officiels utiliseront la grille `/licenseTypes`).
 
+## Comptabilité
+
+Module de **comptabilité du club en partie double**. Détail complet, schéma et flux : voir `docs/compta.md`.
+
+- **Accès restreint** : rôle `treasurer` + claim `rootAdmin` uniquement. L'`admin` standard est **exclu** du module, y compris au niveau `firestore.rules`.
+- **Partie double** : chaque opération est une **écriture équilibrée** (`Σ débit === Σ crédit`, au moins 2 lignes). `/accountingEntries` est append-only — l'annulation d'une écriture passe par une **contre-passation** (écriture inverse), jamais par suppression.
+- **Restitutions** : **bilan** (actif vs passif + résultat de l'exercice), **compte de résultat** (charges vs produits), **journal** (liste chronologique des écritures).
+- **Plan comptable paramétrable** (`/accounts`) : comptes éditables par le trésorier, plus un jeu de **comptes par défaut** seedés (Caisse, Banque, Cotisations, Sponsoring, Subventions J+S, charges…). Les comptes de trésorerie servent de contrepartie automatique dans la saisie simplifiée.
+- **Saisie de crédits** : entrées d'argent (cash, sponsoring, subventions J+S) — crédit d'un compte de produit, contrepartie débit sur un compte de trésorerie.
+- **Factures fournisseurs** (`/invoices`) : import manuel en v1 (OCR différé, champs réservés). Comptabilisation = débit d'un compte de charge / crédit du compte Créditeurs ; règlement = débit Créditeurs / crédit trésorerie.
+
 ## Venues & courts
 
 Le club gère **plusieurs salles** (`/venues`). Une salle contient **plusieurs courts physiques** (`/venues/{id}/courts`). Schéma complet : voir `firebase.md`.
@@ -441,13 +452,16 @@ Lecture : `admin` + `coach` (les coachs voient les matchs de leurs équipes, mai
 ### Officials
 - `officialLevel` sur le Member = source de vérité. **Réglé manuellement par l'admin**, pas d'audit.
 - Un membre peut être official + coach (rôles array).
-- Un `match_home` crée des `officialAssignment` selon `MatchType.homeOfficialRequirements`.
+- Un `match_home` porte ses `officialAssignment` sur son booking (`/bookings/{id}/officialAssignments`), staffé selon `MatchType.homeOfficialRequirements` (ventilé par niveau).
+- Un `match_away` a aussi besoin d'officiels (`MatchType.awayOfficialCount`, total simple). N'ayant pas de booking, ses `officialAssignment` sont portés directement par le doc match (`/matches/{id}/officialAssignments`).
 - Officiels **s'auto-inscrivent** (status `pending`) ou sont assignés par l'admin. Ils confirment/déclinent.
 - Notifs auto :
-  - `officials_needed` si `match_home` < 7 jours et pas full staff.
+  - `officials_needed` si un match (à domicile **ou** à l'extérieur) < 7 jours et pas full staff.
   - `match_reminder` à J-1 (23:00) et H-2 aux officiels confirmés.
 - Export fin de saison des assignations par membre (les officiels sont payés).
 - UI restreinte pour officiels : seulement leurs assignations et matches needing officials. Pas d'accès aux membres/teams/bookings non liés.
+
+La gestion côté admin se fait sur la page web **`/officials`** (onglets "Assignations" + "Officiels", accès `admin` / `rootAdmin`) : staffing de **tous les matchs** (domicile **et** extérieur), assigner / override / retirer des `officialAssignments` (créés en `pending`), envoi de notifications manuelles, et export CSV de fin de saison. Détail UI : `frontend-desktop.md` → "Officials sur le web".
 
 ### Officials — indicateurs de rentabilité
 
@@ -459,6 +473,8 @@ Config (`config/club.officialsConfig`) :
 - `thresholdOrange` (borne basse warning, défaut 3)
 
 `<thresholdOrange` → rouge ; `[thresholdOrange, thresholdGreen-1]` → orange ; `≥ thresholdGreen` → vert. Éditable par l'admin, calculé client-side.
+
+Ces indicateurs sont affichés dans l'onglet "Officiels" de la page web `/officials` (cf. `frontend-desktop.md`).
 
 ### Season planning assistant
 - Optionnel pendant `draft`. Suggère la distribution.

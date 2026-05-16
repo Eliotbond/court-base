@@ -21,8 +21,8 @@
 import { onCall, HttpsError, type CallableRequest } from 'firebase-functions/v2/https'
 import { logger } from 'firebase-functions/v2'
 import type {
-  DuePaymentMethod,
-  DueData,
+  CotisationPaymentMethod as DuePaymentMethod,
+  CotisationData as DueData,
   MemberData,
   UserData,
 } from '@club-app/shared-types'

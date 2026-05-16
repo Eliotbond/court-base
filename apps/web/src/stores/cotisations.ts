@@ -351,6 +351,17 @@ export const useCotisationsStore = defineStore('cotisations', () => {
     }
   }
 
+  /**
+   * Recharge la liste après une mutation effectuée hors du store (ex. le
+   * dialog `EditCotisationDialog` appelle lui-même la callable `updateDue` et
+   * émet `saved`). On expose un alias explicite de `load()` pour que la vue
+   * n'ait pas à connaître l'implémentation. Catch enrichi déjà géré par
+   * `load()`.
+   */
+  async function refresh(): Promise<void> {
+    await load()
+  }
+
   async function cancel(cotisationId: string, reason: string): Promise<void> {
     pendingActionFor.value = cotisationId
     error.value = null
@@ -394,5 +405,6 @@ export const useCotisationsStore = defineStore('cotisations', () => {
     resetFilters,
     markPaid,
     cancel,
+    refresh,
   }
 })
