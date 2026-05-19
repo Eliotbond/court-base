@@ -494,6 +494,9 @@ export async function createMember(input: CreateMemberInput): Promise<MemberRow>
     linkedUserId: null,
     licenseNumber: input.licenseNumber ?? '',
     officialLevel: input.officialLevel ?? null,
+    coachLevel: null,
+    officialLicense: null,
+    coachLicense: null,
     licensed: input.licensed ?? false,
     duesStatus: 'n/a',
     duesStatusUpdatedAt: FirestoreTimestamp.now(),
@@ -557,7 +560,16 @@ export interface MemberPatch {
   lastName?: string
   roles?: string[]
   licenseNumber?: string
+  /**
+   * Niveau de QUALIFICATION officiel (1..N). `null` = retirer la qualification.
+   * Indépendant du fait d'être officiel ACTIF (cf. `member.officialLicense`).
+   */
   officialLevel?: number | null
+  /**
+   * Niveau de QUALIFICATION coach (1..N). `null` = retirer la qualification.
+   * Indépendant du fait d'être coach ACTIF (cf. `member.coachLicense`).
+   */
+  coachLevel?: number | null
   licensed?: boolean
   active?: boolean
   /** `null` = effacer (membre dont on ne connaît pas la date). */
@@ -823,28 +835,26 @@ export async function updateMemberContact(
 }
 
 /**
- * Marqueur d'archivage soft. Conserve l'historique (dues / attendance) et
- * désactive simplement l'affichage actif. Pas de cascade — ce sera traité
- * dans un chantier dédié (close dues, retire des teams, etc.).
+ * Bascule le flag `active` d'un membre (Actif ↔ Inactif).
  *
- * `serverTimestamp` n'est pas posé ici (le doc ne porte pas `archivedAt`).
+ * Distinct de `status` (archive — cf. `MemberStatus`) : `active` pilote
+ * l'accès du membre à l'app mobile / au club (enforced par `firestore.rules`).
+ * Un membre `active: false` reste visible côté admin mais ne peut plus se
+ * connecter à l'app mobile. Le write sur `/members` est déjà admin-only côté
+ * rules — rien à changer côté rules.
  */
-export async function archiveMember(id: string): Promise<void> {
-  await updateDoc(doc(db, MEMBERS, id), { active: false })
-}
-
-/**
- * Symétrique d'`archiveMember`. Réactive un membre archivé.
- */
-export async function reactivateMember(id: string): Promise<void> {
-  await updateDoc(doc(db, MEMBERS, id), { active: true })
+export async function setMemberActive(
+  memberId: string,
+  active: boolean,
+): Promise<void> {
+  await updateDoc(doc(db, MEMBERS, memberId), { active })
 }
 
 // ---------------------------------------------------------------------------
 // Suppression DÉFINITIVE (correction d'erreur de création).
 //
-// Distinct de `archiveMember` : ici on appelle la Cloud Function `deleteMember`
-// qui exécute en transaction côté serveur :
+// Distinct de la désactivation (`setMemberActive`) : ici on appelle la Cloud
+// Function `deleteMember` qui exécute en transaction côté serveur :
 //   - delete physique de /members/{id} + sub-collections
 //   - retrait du member des teams (coachIds / playerIds)
 //   - clear du `matchedMemberId` sur les registrations historiques
@@ -852,7 +862,7 @@ export async function reactivateMember(id: string): Promise<void> {
 //
 // Réservé aux admins (vérification côté Cloud Function). À utiliser uniquement
 // pour corriger une erreur de création — pour une fin d'adhésion normale,
-// préférer `archiveMember` qui conserve l'historique comptable.
+// préférer `setMemberActive(id, false)` qui conserve l'historique comptable.
 // ---------------------------------------------------------------------------
 
 /**

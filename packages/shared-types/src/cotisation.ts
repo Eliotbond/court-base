@@ -65,6 +65,22 @@ export interface CotisationData {
    * cotisation naît déjà `issued` car `gracePeriodDays === 0`).
    */
   emailedAt: Timestamp | null
+  /**
+   * UID du compte qui a soumis l'inscription (`registration.submittedByUid`)
+   * ayant mené à la création de cette cotisation. Dénormalisé à la création
+   * par `initiateDuesOnPlayerActivation` (lookup best-effort de la
+   * registration `(matchedMemberId, teamId)`).
+   *
+   * Sert d'ancre d'autorisation : la rule `/dues` autorise ce compte à lire
+   * la cotisation directement, sans dépendre du binding
+   * `member.linkedUserId` / `member.guardianUserIds`. Champ immuable (le fait
+   * "qui a inscrit" ne change pas) — la dénormalisation est donc sûre.
+   *
+   * `null` si le joueur a été ajouté à l'équipe hors flux d'inscription
+   * (création directe par un admin) ou pour les lignes legacy antérieures à
+   * ce champ.
+   */
+  registeredByUid: string | null
   createdAt: Timestamp
 }
 

@@ -23,6 +23,7 @@ import { logger } from 'firebase-functions/v2'
 import type {
   CotisationData as DueData,
   CotisationTypeData,
+  RegistrationData,
   TeamData,
 } from '@club-app/shared-types'
 import {
@@ -55,6 +56,45 @@ export function diffNewPlayerIds(
   return after.filter((id) => !before.has(id))
 }
 
+/**
+ * Best-effort : retrouve l'uid du compte ayant soumis l'inscription qui a
+ * mené à l'ajout de ce joueur dans la team. Sert à dénormaliser
+ * `due.registeredByUid` — la rule `/dues` autorise ainsi ce compte à lire la
+ * cotisation directement, sans dépendre du binding `member.linkedUserId` /
+ * `member.guardianUserIds`.
+ *
+ * Retourne `null` si le joueur a été ajouté hors flux d'inscription (création
+ * directe par un admin) ou si la lecture échoue — la cotisation reste créée
+ * normalement, la rule retombe alors sur ses autres clauses (admin / coach /
+ * tuteur / membre lié).
+ *
+ * Pas d'index composite : deux filtres d'égalité + tri JS (cf. CLAUDE.md §10).
+ * Plusieurs registrations possibles pour un même couple (joueur ré-inscrit) —
+ * on garde la plus récente par `createdAt`.
+ */
+export async function findRegisteredByUid(
+  memberId: string,
+  teamId: string,
+): Promise<string | null> {
+  try {
+    const snap = await col('registrations')
+      .where('matchedMemberId', '==', memberId)
+      .where('teamId', '==', teamId)
+      .get()
+    if (snap.empty) return null
+    const latest = snap.docs
+      .map((d) => d.data() as RegistrationData)
+      .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0))[0]
+    return latest?.submittedByUid ?? null
+  } catch (err) {
+    logger.warn(
+      'initiateDuesOnPlayerActivation: registration lookup failed — registeredByUid left null',
+      { memberId, teamId, err },
+    )
+    return null
+  }
+}
+
 interface DuesConfigLike {
   gracePeriodDays: number
 }
@@ -83,8 +123,11 @@ export async function createDuesIfMissing(args: {
   seasonId: string
   duesAmount: number
   gracePeriodDays: number
+  /** uid du compte ayant soumis l'inscription, `null` hors flux register. */
+  registeredByUid: string | null
 }): Promise<'created' | 'already-exists'> {
-  const { memberId, teamId, seasonId, duesAmount, gracePeriodDays } = args
+  const { memberId, teamId, seasonId, duesAmount, gracePeriodDays, registeredByUid } =
+    args
   const duesQuery = col('dues')
     .where('memberId', '==', memberId)
     .where('teamId', '==', teamId)
@@ -128,6 +171,9 @@ export async function createDuesIfMissing(args: {
       // Nouveaux champs (shared-types subagent) — défensif si absent.
       paymentReference,
       emailedAt: null,
+      // Ancre d'autorisation : le compte ayant fait l'inscription pourra lire
+      // cette cotisation via la rule `/dues` (cf. firestore.rules).
+      registeredByUid,
       // createdAt = server timestamp (recorded by Firestore on write).
       // Cast through unknown because DueData.createdAt is a Timestamp value but
       // we want the sentinel — same pattern Firestore docs recommend.
@@ -207,12 +253,14 @@ export const initiateDuesOnPlayerActivation = onDocumentWritten(
 
     for (const memberId of newPlayerIds) {
       try {
+        const registeredByUid = await findRegisteredByUid(memberId, teamId)
         const result = await createDuesIfMissing({
           memberId,
           teamId,
           seasonId,
           duesAmount,
           gracePeriodDays,
+          registeredByUid,
         })
         logger.info('initiateDuesOnPlayerActivation: dues processed', {
           memberId,

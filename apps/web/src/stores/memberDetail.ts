@@ -1,9 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
-  archiveMember,
   getMemberDetail,
-  reactivateMember,
   updateMember,
   updateMemberContact,
   type MemberContactPatch,
@@ -19,11 +17,14 @@ import {
  * présences, officiel, demandes) sont implémentées comme des composables /
  * repos indépendants côté tabs (cf. apps/web/src/components/member-detail/).
  *
- * Les mutations (updateProfile / updateContact / archive / reactivate)
- * appliquent une mise à jour optimiste locale puis reload depuis le repo
- * pour réconcilier — utile car certaines transitions déclenchent des
- * Functions backend (dues, syncMemberDuesStatus) qui peuvent changer
- * d'autres champs hors patch.
+ * Les mutations (updateProfile / updateContact) appliquent une mise à jour
+ * locale puis reload depuis le repo pour réconcilier — utile car certaines
+ * transitions déclenchent des Functions backend (dues, syncMemberDuesStatus)
+ * qui peuvent changer d'autres champs hors patch.
+ *
+ * Le flag `active` (Actif / Inactif) n'est PAS muté ici : il passe par le
+ * store `members` (`setMemberActive`), seul point de contrôle du flag — cf.
+ * le toggle de `ProfileTab.vue`.
  */
 export const useMemberDetailStore = defineStore('memberDetail', () => {
   const member = ref<MemberDetailRow | null>(null)
@@ -97,36 +98,6 @@ export const useMemberDetailStore = defineStore('memberDetail', () => {
     }
   }
 
-  async function archive(): Promise<void> {
-    if (!member.value) return
-    const id = member.value.id
-    saving.value = true
-    try {
-      await archiveMember(id)
-      await load(id)
-    } catch (e: unknown) {
-      error.value =
-        e instanceof Error ? e.message : "Erreur lors de l'archivage"
-    } finally {
-      saving.value = false
-    }
-  }
-
-  async function reactivate(): Promise<void> {
-    if (!member.value) return
-    const id = member.value.id
-    saving.value = true
-    try {
-      await reactivateMember(id)
-      await load(id)
-    } catch (e: unknown) {
-      error.value =
-        e instanceof Error ? e.message : 'Erreur lors de la réactivation'
-    } finally {
-      saving.value = false
-    }
-  }
-
   // -------------------------------------------------------------------------
   // Derived
   // -------------------------------------------------------------------------
@@ -155,7 +126,5 @@ export const useMemberDetailStore = defineStore('memberDetail', () => {
     reset,
     applyProfilePatch,
     applyContactPatch,
-    archive,
-    reactivate,
   }
 })

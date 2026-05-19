@@ -4,6 +4,7 @@ import { FirebaseError } from 'firebase/app'
 import type { RegistrationStatus } from '@club-app/shared-types'
 import {
   ACTIVE_STATUSES,
+  deleteRegistration,
   listAllNonDraftRegistrations,
   listRegistrationsForTeams,
   type RegistrationRow,
@@ -310,6 +311,33 @@ export const useRegistrationsStore = defineStore('registrations', () => {
     }
   }
 
+  /**
+   * Supprime définitivement une registration (`deleteDoc`). Réservé à
+   * l'admin / rootAdmin. Destiné à la correction d'erreur — la voie normale
+   * d'extinction reste `cancel`. Le repo refuse les statuts confirmés
+   * (`confirmed_pending_dues` / `active`). Recharge la liste après succès.
+   */
+  async function remove(registrationId: string): Promise<boolean> {
+    actionPendingId.value = registrationId
+    error.value = null
+    try {
+      await deleteRegistration(registrationId)
+      if (selectedRegistrationId.value === registrationId) {
+        selectedRegistrationId.value = null
+      }
+      await load()
+      return true
+    } catch (err: unknown) {
+      const code = err instanceof FirebaseError ? err.code : 'unknown'
+      console.error(`deleteRegistration failed [${code}]`, err)
+      error.value =
+        err instanceof Error ? err.message : 'Suppression impossible'
+      return false
+    } finally {
+      actionPendingId.value = null
+    }
+  }
+
   return {
     // state
     items,
@@ -337,6 +365,7 @@ export const useRegistrationsStore = defineStore('registrations', () => {
     cancel,
     markTrial,
     confirmToDues,
+    remove,
   }
 })
 

@@ -2,30 +2,48 @@
  * `matchExistingMember`
  *
  * Callable invoqué pendant le wizard d'inscription (étape §4.4 — identité du
- * joueur). Cherche un `/members/{id}` correspondant aux infos saisies pour
- * éviter de créer un doublon :
+ * joueur), une fois un AVS valide saisi. Cherche un `/members/{id}` portant le
+ * même AVS pour éviter de créer un doublon.
  *
- *  1. Si `avs` fourni → exact match sur `member.avs` (normalisé digits) puis
- *     fallback sur `member.licenseNumber == avs` (historique).
- *  2. Sinon → fuzzy match `firstName + lastName` (Levenshtein ≤ 2 sommé) ET
- *     `birthDate` identique au jour près.
+ * L'AVS étant désormais **obligatoire** dans le wizard (cf. `docs/registrations/
+ * wizard.md` §Step 2), c'est le seul critère de dédoublonnage live :
+ *  1. Match exact `member.avs == avs`.
+ *  2. Fallback historique `member.licenseNumber == avs` — anciens dossiers où
+ *     l'AVS avait été saisi dans le champ `licenseNumber` avant l'introduction
+ *     du champ `avs` dédié.
  *
- * Retourne tous les candidats trouvés (max 5) avec un score de confiance.
- * Le client demande confirmation explicite à l'utilisateur avant de set
- * `registration.matchedMemberId`.
+ * Plus de fuzzy match nom/prénom/DOB : le filet anti-doublon name+DOB subsiste
+ * uniquement côté `confirmRegistration` (`findExactMemberMatch`), pour rattraper
+ * les membres legacy sans AVS enregistré en base.
  *
- * Auth : signed-in. Pas de scope rôle — n'importe quel utilisateur authentifié
- * peut tester un match (le résultat ne fuite que les infos identité du membre :
- * firstName, lastName, birthDate. Pas l'AVS, pas l'email, pas le téléphone).
+ * AVS comparé tel quel, au format `756.XXXX.XXXX.XX` — c'est la forme stockée
+ * dans `member.avs` par tous les chemins de création (`confirmRegistration`,
+ * `coachCreateMember`, `apps/web` members.repo) et la forme interrogée par
+ * `findExactMemberMatch`. Aucune normalisation digits-only : elle ne matcherait
+ * aucun document.
  *
- * Volume : on lit la collection `/members` filtrée par `birthDate` pour
- * limiter la taille du scan (un seul index simple sur `birthDate`). Acceptable
- * tant que < 10k membres / club.
+ * Chaque match porte `linkedToOtherAccount` : `true` si le dossier est déjà
+ * rattaché à un compte AUTRE que le caller (`linkedUserId` propriétaire ou
+ * `guardianUserIds` tuteur). Le wizard refuse alors le rattachement
+ * self-service et invite à contacter le club — on n'autorise pas un compte à
+ * s'approprier le dossier d'une personne déjà gérée ailleurs.
+ *
+ * Retourne tous les candidats trouvés (max 5). Le client demande confirmation
+ * explicite à l'utilisateur avant de set `registration.matchedMemberId`.
+ *
+ * Auth : signed-in. Pas de scope rôle — le résultat ne fuite que `firstName`,
+ * `lastName`, `birthDate` du membre + un booléen `linkedToOtherAccount`. Pas
+ * l'AVS, pas l'email, pas le téléphone, pas l'identité de l'autre compte.
  */
 import { onCall, HttpsError, type CallableRequest } from 'firebase-functions/v2/https'
 import { logger } from 'firebase-functions/v2'
 import type { MemberData } from '@club-app/shared-types'
-import { Timestamp, col, levenshtein, normalizeAvs, normalizeName } from './_helpers'
+import { col } from './_helpers'
+
+/** Format AVS suisse — identique à la validation du wizard register. */
+const AVS_REGEX = /^756\.\d{4}\.\d{4}\.\d{2}$/
+
+const MAX_MATCHES = 5
 
 /**
  * Convertit un Timestamp neutre (`shared-types` package — pas le `firebase-admin`
@@ -36,12 +54,23 @@ function toIsoDay(ts: { seconds: number; nanoseconds: number }): string {
   return new Date(ts.seconds * 1000).toISOString().slice(0, 10)
 }
 
+/**
+ * `true` si le membre est déjà rattaché à un compte AUTRE que le caller —
+ * c.-à-d. `linkedUserId` (compte propriétaire) ou l'un des `guardianUserIds`
+ * (compte tuteur) pointe vers un uid différent.
+ *
+ * Un dossier rattaché UNIQUEMENT au caller (cas renouvellement / ré-inscription
+ * par le même compte) renvoie `false` : il reste librement re-rattachable par
+ * son propre compte. Un dossier sans aucun rattachement renvoie `false` aussi.
+ */
+function isLinkedToOtherAccount(m: MemberData, callerUid: string): boolean {
+  if (m.linkedUserId != null && m.linkedUserId !== callerUid) return true
+  const guardians = Array.isArray(m.guardianUserIds) ? m.guardianUserIds : []
+  return guardians.some((g) => g !== callerUid)
+}
+
 interface MatchExistingMemberInput {
-  firstName: unknown
-  lastName: unknown
-  /** ISO string "YYYY-MM-DD" — converti en jour-Timestamp côté server. */
-  birthDate: unknown
-  /** AVS brut saisi (format libre), `null` si avsUnavailable. */
+  /** AVS au format 756.XXXX.XXXX.XX — obligatoire (le wizard valide en amont). */
   avs: unknown
 }
 
@@ -49,67 +78,38 @@ export interface MemberMatch {
   memberId: string
   firstName: string
   lastName: string
+  /** ISO YYYY-MM-DD. */
   birthDateIso: string
   /** Champ-source du match : explicite pour l'UX de confirmation. */
-  matchedOn: 'avs' | 'licenseNumber' | 'fuzzy_name_dob'
-  /** 0 = exact, > 0 = nombre d'opérations Levenshtein cumulées (fuzzy). */
-  distance: number
+  matchedOn: 'avs' | 'licenseNumber'
+  /**
+   * `true` si le dossier est déjà rattaché à un compte autre que le caller.
+   * Le wizard refuse alors le rattachement self-service et invite à contacter
+   * le club.
+   */
+  linkedToOtherAccount: boolean
 }
 
 export interface MatchExistingMemberOutput {
   matches: MemberMatch[]
 }
 
-interface ParsedInput {
-  firstName: string
-  lastName: string
-  birthDate: Date
-  avs: string | null
-}
-
-function parseInput(data: MatchExistingMemberInput): ParsedInput {
-  const { firstName, lastName, birthDate, avs } = data ?? ({} as MatchExistingMemberInput)
-  if (typeof firstName !== 'string' || firstName.trim().length === 0) {
-    throw new HttpsError('invalid-argument', 'firstName is required')
-  }
-  if (typeof lastName !== 'string' || lastName.trim().length === 0) {
-    throw new HttpsError('invalid-argument', 'lastName is required')
-  }
-  if (typeof birthDate !== 'string' || birthDate.length === 0) {
-    throw new HttpsError('invalid-argument', 'birthDate is required (ISO YYYY-MM-DD)')
-  }
-  const parsed = new Date(birthDate)
-  if (Number.isNaN(parsed.getTime())) {
-    throw new HttpsError('invalid-argument', 'birthDate is not a valid ISO date')
-  }
-  const avsStr = typeof avs === 'string' ? avs : null
+/** Projette un doc `/members` vers un `MemberMatch` (champs publics + flag). */
+function toMemberMatch(
+  doc: FirebaseFirestore.QueryDocumentSnapshot<MemberData>,
+  matchedOn: MemberMatch['matchedOn'],
+  callerUid: string,
+): MemberMatch {
+  const m = doc.data()
   return {
-    firstName: firstName.trim(),
-    lastName: lastName.trim(),
-    birthDate: parsed,
-    // AVS reste optionnel à ce stade — la callable matche aussi sans.
-    avs: avsStr,
+    memberId: doc.id,
+    firstName: m.firstName,
+    lastName: m.lastName,
+    birthDateIso: m.birthDate ? toIsoDay(m.birthDate) : '',
+    matchedOn,
+    linkedToOtherAccount: isLinkedToOtherAccount(m, callerUid),
   }
 }
-
-/**
- * Borne haute/basse d'une journée (UTC) pour query Firestore. Les
- * `member.birthDate` sont stockées comme jour-Timestamp sans heure
- * (cf. `members.repo.createMember`) — on cherche `[startOfDay, endOfDay)`.
- */
-function dayWindow(d: Date): { from: FirebaseFirestore.Timestamp; to: FirebaseFirestore.Timestamp } {
-  const start = new Date(d)
-  start.setUTCHours(0, 0, 0, 0)
-  const end = new Date(start)
-  end.setUTCDate(end.getUTCDate() + 1)
-  return {
-    from: Timestamp.fromDate(start),
-    to: Timestamp.fromDate(end),
-  }
-}
-
-const MAX_MATCHES = 5
-const FUZZY_MAX_DISTANCE = 2
 
 export const matchExistingMember = onCall(
   async (
@@ -118,91 +118,52 @@ export const matchExistingMember = onCall(
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'Must be signed in.')
     }
-    const input = parseInput(request.data)
+    const callerUid = request.auth.uid
+
+    const raw = request.data?.avs
+    const avs = typeof raw === 'string' ? raw.trim() : ''
+
+    // AVS absent / mal formé : on retourne un résultat vide plutôt que de
+    // throw. Le matching est best-effort — le wizard valide déjà le format en
+    // amont et n'appelle cette callable qu'avec un AVS valide.
+    if (!AVS_REGEX.test(avs)) {
+      return { matches: [] }
+    }
 
     const matches: MemberMatch[] = []
     const seen = new Set<string>()
 
-    // 1) Match exact AVS (ou fallback licenseNumber, pour historique).
-    const normalizedAvs = normalizeAvs(input.avs)
-    if (normalizedAvs) {
-      const avsSnap = await col<MemberData>('members')
-        .where('avs', '==', normalizedAvs)
-        .limit(MAX_MATCHES)
+    // 1) Match exact sur le champ AVS dédié.
+    const avsSnap = await col<MemberData>('members')
+      .where('avs', '==', avs)
+      .limit(MAX_MATCHES)
+      .get()
+    for (const doc of avsSnap.docs) {
+      if (seen.has(doc.id)) continue
+      seen.add(doc.id)
+      matches.push(toMemberMatch(doc, 'avs', callerUid))
+    }
+
+    // 2) Fallback historique : anciens dossiers où l'AVS avait été saisi dans
+    //    le champ `licenseNumber` (avant l'introduction du champ `avs` dédié).
+    if (matches.length < MAX_MATCHES) {
+      const licSnap = await col<MemberData>('members')
+        .where('licenseNumber', '==', avs)
+        .limit(MAX_MATCHES - matches.length)
         .get()
-      for (const doc of avsSnap.docs) {
+      for (const doc of licSnap.docs) {
         if (seen.has(doc.id)) continue
         seen.add(doc.id)
-        const m = doc.data()
-        matches.push({
-          memberId: doc.id,
-          firstName: m.firstName,
-          lastName: m.lastName,
-          birthDateIso: m.birthDate ? toIsoDay(m.birthDate) : '',
-          matchedOn: 'avs',
-          distance: 0,
-        })
-      }
-      if (matches.length < MAX_MATCHES) {
-        const licSnap = await col<MemberData>('members')
-          .where('licenseNumber', '==', normalizedAvs)
-          .limit(MAX_MATCHES - matches.length)
-          .get()
-        for (const doc of licSnap.docs) {
-          if (seen.has(doc.id)) continue
-          seen.add(doc.id)
-          const m = doc.data()
-          matches.push({
-            memberId: doc.id,
-            firstName: m.firstName,
-            lastName: m.lastName,
-            birthDateIso: m.birthDate ? toIsoDay(m.birthDate) : '',
-            matchedOn: 'licenseNumber',
-            distance: 0,
-          })
-        }
+        matches.push(toMemberMatch(doc, 'licenseNumber', callerUid))
       }
     }
-
-    // 2) Fuzzy match (nom + prénom + DOB exact) — toujours testé, même si
-    //    un match AVS a déjà été trouvé : un parent peut saisir un AVS erroné
-    //    et on veut signaler la collision potentielle.
-    const { from, to } = dayWindow(input.birthDate)
-    const dobSnap = await col<MemberData>('members')
-      .where('birthDate', '>=', from)
-      .where('birthDate', '<', to)
-      .limit(50)  // garde-fou : DOB collision avec 50+ membres c'est pathologique
-      .get()
-    const targetFirst = normalizeName(input.firstName)
-    const targetLast = normalizeName(input.lastName)
-    for (const doc of dobSnap.docs) {
-      if (seen.has(doc.id)) continue
-      const m = doc.data()
-      const dFirst = levenshtein(normalizeName(m.firstName), targetFirst)
-      const dLast = levenshtein(normalizeName(m.lastName), targetLast)
-      const total = dFirst + dLast
-      if (total > FUZZY_MAX_DISTANCE) continue
-      seen.add(doc.id)
-      matches.push({
-        memberId: doc.id,
-        firstName: m.firstName,
-        lastName: m.lastName,
-        birthDateIso: m.birthDate ? toIsoDay(m.birthDate) : '',
-        matchedOn: 'fuzzy_name_dob',
-        distance: total,
-      })
-      if (matches.length >= MAX_MATCHES) break
-    }
-
-    // Tri stable : exacts d'abord (distance 0), puis par distance croissante.
-    matches.sort((a, b) => a.distance - b.distance)
 
     logger.info('matchExistingMember', {
-      callerUid: request.auth.uid,
+      callerUid,
       matchCount: matches.length,
-      avsProvided: normalizedAvs !== null,
+      blockedCount: matches.filter((x) => x.linkedToOtherAccount).length,
     })
 
-    return { matches: matches.slice(0, MAX_MATCHES) }
+    return { matches }
   },
 )

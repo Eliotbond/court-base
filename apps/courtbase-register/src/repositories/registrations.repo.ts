@@ -135,8 +135,8 @@ export interface RegistrationPlayerIdentityInput {
   lastName: string
   birthDate: Date
   gender: 'M' | 'F' | 'other' | null
+  /** AVS 756.XXXX.XXXX.XX ; `null` tant qu'il n'est pas saisi (stade draft). */
   avs: string | null
-  avsUnavailable: boolean
   phone: string | null
 }
 
@@ -175,7 +175,6 @@ export async function createDraft(input: CreateDraftInput): Promise<Registration
       birthDate: playerBirthDate,
       gender: input.player.gender ?? null,
       avs: input.player.avs ?? null,
-      avsUnavailable: input.player.avsUnavailable ?? false,
       phone: input.player.phone ?? null,
     },
     matchedMemberId: input.matchedMemberId,
@@ -264,7 +263,6 @@ export async function updateDraft(
     }
     if (p.gender !== undefined) update['player.gender'] = p.gender
     if (p.avs !== undefined) update['player.avs'] = p.avs
-    if (p.avsUnavailable !== undefined) update['player.avsUnavailable'] = p.avsUnavailable
     if (p.phone !== undefined) update['player.phone'] = p.phone
   }
 

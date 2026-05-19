@@ -96,7 +96,6 @@ async function onSubmit(): Promise<void> {
         birthDate: timestampToIso(draft.player.birthDate),
         gender: draft.player.gender,
         avs: draft.player.avs,
-        avsUnavailable: draft.player.avsUnavailable,
         phone: draft.player.phone,
       },
       matchedMemberId: draft.matchedMemberId,

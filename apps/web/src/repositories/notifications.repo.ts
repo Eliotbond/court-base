@@ -64,6 +64,7 @@ export async function createNotification(
       relatedMatchId: input.relatedMatchId,
       createdAt: serverTimestamp(),
       readBy: [],
+      pushedAt: null,
     }
     const ref = await addDoc(collection(db, NOTIFICATIONS), payload)
     return ref.id

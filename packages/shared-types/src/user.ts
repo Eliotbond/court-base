@@ -15,6 +15,9 @@ import type { Timestamp } from './index'
  * - `treasurer` : gestion paiements (marquer `dues` comme `paid`,
  *   consulter toute la collection `/dues` sans scope team). Pas de droit
  *   admin général.
+ * - `secretary` : secrétaire du club. Rôle additif staff. Peut notamment
+ *   confirmer une licence (callable `confirmLicense`) au même titre que
+ *   `treasurer` / `admin`. Pas de droit admin général.
  *
  * `UserData.roles` reste typé `string[]` (extensibilité custom roles) — cette
  * union sert de référence canonique pour la doc, les guards et la validation.
@@ -25,6 +28,7 @@ export type UserRole =
   | 'official'
   | 'parent'
   | 'treasurer'
+  | 'secretary'
 
 /**
  * Document `/users/{uid}` — mirror du compte Firebase Auth.

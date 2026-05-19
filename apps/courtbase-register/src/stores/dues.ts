@@ -58,24 +58,30 @@ export const useDuesStore = defineStore('dues', () => {
   }
 
   /**
-   * Charge l'ensemble des dues du user courant — actifs et payés.
+   * Charge l'ensemble des dues du user courant — actifs, payés et soldés.
    *
-   * Source des memberIds : `listAccessibleMembers(uid, user.memberId)` —
-   * c.-à-d. les members où le user est **guardian** (`guardianUserIds
-   * array-contains uid`) ou **linked member** (`user.memberId`). On évite
-   * ainsi le piège de la dérivation via `registrations.myList.matchedMemberId`
-   * qui rate les cas où :
-   *  - le member existe côté admin sans qu'un flow d'inscription ait été lancé
-   *    (création manuelle admin), MAIS le user est tuteur du member,
-   *  - la registration a été archivée / nettoyée mais le lien guardian persiste.
+   * Critères de lecture en UNION (cf. `dues.repo.ts` §fetchAccessibleDues) :
    *
-   * Ce path matche **exactement** la rule `/dues` (read autorisé à guardian
-   * ou linkedUserId) — donc on ne risque pas de provoquer `permission-denied`
-   * sur le `where memberId in [...]` Firestore.
+   *  1. **memberIds** : `listAccessibleMembers(uid, user.memberId)` — les
+   *     members où le user est **guardian** (`guardianUserIds array-contains
+   *     uid`) ou **linked member** (`user.memberId`). On évite ainsi le piège
+   *     de la dérivation via `registrations.myList.matchedMemberId` qui rate
+   *     les cas où le member existe côté admin sans flow d'inscription, ou
+   *     la registration a été archivée mais le lien guardian persiste.
+   *  2. **registeredByUid** : l'`uid` du user est passé aux fonctions de
+   *     liste du repo, qui ajoutent une query `where registeredByUid == uid`.
+   *     Couvre le cas où aucun binding membre n'a pris : inscription
+   *     `for: 'self'` sur un member déjà lié à un autre compte — le submitter
+   *     reste l'`registeredByUid` de la cotisation sans devenir `linkedUserId`.
    *
-   * Deux queries Firestore parallèles : actives (`pending_grace|issued|overdue`)
-   * + payées. Idempotent ; peut être appelé plusieurs fois (mount Home + retour
-   * de PaymentInstructions). Pas de cache TTL — volume faible (un user a
+   * Les deux critères matchent **exactement** la rule `/dues` (read autorisé
+   * à guardian, linkedUserId, OU `registeredByUid == auth.uid`) — donc pas de
+   * risque de `permission-denied` sur les queries Firestore. C'est pourquoi on
+   * ne shortcut PAS sur `memberIds.length === 0` : la query `registeredByUid`
+   * peut encore remonter des cotisations.
+   *
+   * Idempotent ; peut être appelé plusieurs fois (mount Home + retour de
+   * PaymentInstructions). Pas de cache TTL — volume faible (un user a
    * typiquement 1-3 dues actifs + quelques payés en historique).
    */
   async function loadMyDues(): Promise<void> {
@@ -97,17 +103,14 @@ export const useDuesStore = defineStore('dues', () => {
       )
       const memberIds = accessible.map((m) => m.id)
 
-      if (memberIds.length === 0) {
-        myActiveDues.value = []
-        myPaidDues.value = []
-        myPastDues.value = []
-        return
-      }
-
+      // Pas de shortcut sur `memberIds.length === 0` : même sans member
+      // accessible (binding `linkedUserId` / `guardianUserIds` pas pris), le
+      // user peut avoir des cotisations via la query `registeredByUid == uid`
+      // exécutée par les fonctions de liste du repo.
       const [active, paid, past] = await Promise.all([
-        listActiveDuesForMembers(memberIds),
-        listPaidDuesForMembers(memberIds),
-        listSettledDuesForMembers(memberIds),
+        listActiveDuesForMembers(memberIds, uid),
+        listPaidDuesForMembers(memberIds, uid),
+        listSettledDuesForMembers(memberIds, uid),
       ])
       myActiveDues.value = active
       myPaidDues.value = paid

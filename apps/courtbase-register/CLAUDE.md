@@ -148,6 +148,17 @@ Pour `listMyRegistrations` et `listEligibleTeams`, le `orderBy` Firestore-side a
 
 Au-delà de ces volumes, repasser à une query indexée serveur-side.
 
+## Lecture des cotisations — union `memberId in [...]` ∪ `registeredByUid`
+
+`repositories/dues.repo.ts` lit les cotisations (`/dues`) du user signed-in via une **UNION de deux critères**, fusionnée et dédupliquée par `doc.id` :
+
+1. `where memberId in [chunk]` — couvre les cotisations dont le user est membre lié (`linkedUserId`) ou tuteur (`guardianUserIds`).
+2. `where registeredByUid == uid` — couvre le cas où **aucun binding membre n'a pris** : inscription `for: 'self'` sur un member déjà lié à un autre compte. Le compte ayant soumis l'inscription reste l'`registeredByUid` de la cotisation (champ posé par le trigger `initiateDuesOnPlayerActivation`).
+
+La rule `/dues` (`read`) autorise les deux critères : membre lié / tuteur, **ou** `resource.data.get('registeredByUid', null) == request.auth.uid`. La query `registeredByUid == uid` est une égalité simple → **aucun index composite** (cf. CLAUDE.md racine §10).
+
+Les trois fonctions de liste (`listActiveDuesForMembers` / `listPaidDuesForMembers` / `listSettledDuesForMembers`) prennent un 2ᵉ paramètre `uid` (optionnel, `''` pour omettre la query d'union). `getDue` (single-doc) n'a PAS besoin de changement — la rule couvre déjà le submitter. Le store `dues.ts` passe `auth.authSnap.uid` et ne shortcut **pas** sur `memberIds.length === 0` (sinon le cas binding-raté serait manqué).
+
 ## Avant de tester sur dev
 
 Avant tout test bout-en-bout sur `court-base-44878`, vérifier dans l'ordre :

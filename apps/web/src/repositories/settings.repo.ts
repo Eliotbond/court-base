@@ -32,7 +32,6 @@ import type {
   Invitation,
   InvitationData,
   OfficialsConfig,
-  Role,
   SubscriptionInfo,
   UserData,
 } from '@club-app/shared-types'
@@ -90,12 +89,6 @@ export type ClubConfigPatch = Partial<
   >
 >
 
-/** Input pour créer/éditer un rôle custom. `id`/`createdAt` posés côté repo. */
-export interface RoleInput {
-  name: string
-  color: string
-}
-
 /** Input pour créer une closure period. */
 export interface ClosurePeriodInput {
   name: string
@@ -152,7 +145,6 @@ export interface AdminInviteInput {
  */
 interface SettingsState {
   config: ClubConfig
-  roles: Role[]
   closurePeriods: ClosurePeriod[]
   subscription: SubscriptionInfo
 }
@@ -186,51 +178,6 @@ const STATE: SettingsState = {
     createdAt: ts(new Date('2024-08-15T10:00:00Z')),
     createdBy: 'mock-uid-bootstrap',
   },
-
-  roles: [
-    {
-      id: 'player',
-      name: 'Player',
-      type: 'system',
-      color: '#dbeafe',
-      createdAt: ts(new Date('2024-08-15')),
-    },
-    {
-      id: 'coach',
-      name: 'Coach',
-      type: 'system',
-      color: '#fee2e2',
-      createdAt: ts(new Date('2024-08-15')),
-    },
-    {
-      id: 'official',
-      name: 'Officiel',
-      type: 'system',
-      color: '#dcfce7',
-      createdAt: ts(new Date('2024-08-15')),
-    },
-    {
-      id: 'referee',
-      name: 'Référé',
-      type: 'system',
-      color: '#ede9fe',
-      createdAt: ts(new Date('2024-08-15')),
-    },
-    {
-      id: 'comite',
-      name: 'Comité',
-      type: 'custom',
-      color: '#fef3c7',
-      createdAt: ts(new Date('2024-09-02')),
-    },
-    {
-      id: 'tresorier',
-      name: 'Trésorier',
-      type: 'custom',
-      color: '#fce7f3',
-      createdAt: ts(new Date('2024-09-02')),
-    },
-  ],
 
   closurePeriods: [
     {
@@ -442,75 +389,9 @@ export async function getSubscriptionInfo(): Promise<SubscriptionInfo> {
 }
 
 // ---------------------------------------------------------------------------
-// Public API — Roles
+// Public API — Roles : déplacé vers `repositories/roles.repo.ts` (vraie
+// collection Firestore `/roles`). Voir aussi docs/firebase.md (`/roles`).
 // ---------------------------------------------------------------------------
-
-/**
- * Liste tous les rôles (system + custom). Triés : system d'abord, puis
- * custom alphabétique.
- *
- * TODO(firestore): remplacer par
- *   `collection('/roles').orderBy('type').orderBy('name').get()`.
- */
-export async function listRoles(): Promise<Role[]> {
-  // TODO(firestore): replace when /roles is provisioned.
-  return delay(clone(STATE.roles))
-}
-
-/**
- * Crée un rôle custom. Les rôles `system` ne sont jamais créables via UI.
- *
- * TODO(firestore): remplacer par
- *   `collection('/roles').add({ ...input, type: 'custom', createdAt: serverTimestamp() })`.
- */
-export async function createRole(input: RoleInput): Promise<Role> {
-  // TODO(firestore): replace when /roles is provisioned.
-  const id = `custom-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-  const role: Role = {
-    id,
-    name: input.name,
-    type: 'custom',
-    color: input.color,
-    createdAt: ts(new Date()),
-  }
-  STATE.roles.push(role)
-  return delay(clone(role))
-}
-
-/**
- * Met à jour un rôle (custom uniquement — refusé sur system côté UI et côté
- * rules). On autorise name + color.
- *
- * TODO(firestore): remplacer par
- *   `doc('/roles/{id}').update({ name, color })` après check `type == 'custom'`.
- */
-export async function updateRole(id: string, patch: RoleInput): Promise<void> {
-  // TODO(firestore): replace when /roles is provisioned.
-  const role = STATE.roles.find((r) => r.id === id)
-  if (!role) throw new Error(`Rôle introuvable: ${id}`)
-  if (role.type === 'system') throw new Error('Les rôles système ne sont pas éditables')
-  role.name = patch.name
-  role.color = patch.color
-  return delay(undefined)
-}
-
-/**
- * Supprime un rôle custom. Refus côté UI + côté rules pour les `system`.
- *
- * TODO(firestore): remplacer par `doc('/roles/{id}').delete()` (admin-only).
- *   Penser à scanner les `/members.roles[]` qui référencent ce role pour
- *   décider du comportement (refus si used / cascade reset).
- */
-export async function deleteRole(id: string): Promise<void> {
-  // TODO(firestore): replace when /roles is provisioned.
-  const idx = STATE.roles.findIndex((r) => r.id === id)
-  if (idx === -1) throw new Error(`Rôle introuvable: ${id}`)
-  if (STATE.roles[idx].type === 'system') {
-    throw new Error('Les rôles système ne sont pas supprimables')
-  }
-  STATE.roles.splice(idx, 1)
-  return delay(undefined)
-}
 
 // ---------------------------------------------------------------------------
 // Public API — Closure periods

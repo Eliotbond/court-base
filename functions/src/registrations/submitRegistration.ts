@@ -64,13 +64,15 @@ const ALLOWED_RELATIONSHIPS: readonly RegistrationRelationship[] = [
   'other',
 ]
 
+/** Format AVS suisse — identique à la validation du wizard register. */
+const AVS_REGEX = /^756\.\d{4}\.\d{4}\.\d{2}$/
+
 interface ParsedPlayer {
   firstName: string
   lastName: string
   birthDate: Date
   gender: 'M' | 'F' | 'other' | null
-  avs: string | null
-  avsUnavailable: boolean
+  avs: string
   phone: string | null
 }
 
@@ -92,10 +94,15 @@ function parsePlayer(raw: unknown): ParsedPlayer {
   if (Number.isNaN(dob.getTime())) {
     throw new HttpsError('invalid-argument', 'player.birthDate is not a valid ISO date')
   }
-  const avsUnavailable = p.avsUnavailable === true
-  const avs = typeof p.avs === 'string' && p.avs.length > 0 ? p.avs : null
-  if (!avs && !avsUnavailable) {
-    throw new HttpsError('invalid-argument', 'player.avs or player.avsUnavailable is required')
+  // AVS obligatoire : un joueur sans AVS ne peut pas s'inscrire via le portail
+  // (cas asile / transfert étranger → traités hors portail). Le wizard bloque
+  // déjà la soumission, ce check est la défense serveur.
+  const avs = typeof p.avs === 'string' ? p.avs.trim() : ''
+  if (!AVS_REGEX.test(avs)) {
+    throw new HttpsError(
+      'invalid-argument',
+      'player.avs is required and must match 756.XXXX.XXXX.XX',
+    )
   }
   let gender: 'M' | 'F' | 'other' | null = null
   if (p.gender === 'M' || p.gender === 'F' || p.gender === 'other') gender = p.gender
@@ -104,8 +111,7 @@ function parsePlayer(raw: unknown): ParsedPlayer {
     lastName: p.lastName.trim(),
     birthDate: dob,
     gender,
-    avs: avsUnavailable ? null : avs,
-    avsUnavailable,
+    avs,
     phone: typeof p.phone === 'string' && p.phone.length > 0 ? p.phone : null,
   }
 }
@@ -213,6 +219,14 @@ export const submitRegistration = onCall(
       // submitRegistration sans /users/{uid}, on refuse explicitement.
       throw new HttpsError('failed-precondition', 'user profile not completed')
     }
+    // Member lié au caller (si le user est lui-même un membre du club). Le rôle
+    // `parent` posé plus bas sur `/users.roles` serait écrasé par
+    // `syncUserRolesFromMember` (copie verbatim de `member.roles`) au prochain
+    // write de ce membre → on doit aussi le poser sur `member.roles`.
+    const callerMemberId =
+      typeof (userSnap.data() as UserData).memberId === 'string'
+        ? ((userSnap.data() as UserData).memberId as string)
+        : null
 
     // Identifiant de la registration : draft existant OU nouveau.
     const registrationRef = input.draftRegistrationId
@@ -264,7 +278,6 @@ export const submitRegistration = onCall(
           birthDate: playerBirthDate,
           gender: input.player.gender,
           avs: input.player.avs,
-          avsUnavailable: input.player.avsUnavailable,
           phone: input.player.phone,
         },
         matchedMemberId: input.matchedMemberId,
@@ -310,6 +323,18 @@ export const submitRegistration = onCall(
         tx.update(userRef, {
           roles: admin.firestore.FieldValue.arrayUnion('parent'),
         })
+        // Si le caller est lui-même un membre du club (`memberId` lié), on
+        // doit aussi poser `parent` sur `member.roles` : le trigger
+        // `syncUserRolesFromMember` recopie `member.roles` verbatim dans
+        // `/users.roles` (en écrasant) — sans ça, le `parent` posé ci-dessus
+        // serait effacé au prochain write du membre lié. Pour un parent "pur"
+        // (pas de member lié) le write `/users.roles` ci-dessus suffit, le
+        // trigger ne le touche jamais.
+        if (callerMemberId) {
+          tx.update(db().doc(`members/${callerMemberId}`), {
+            roles: admin.firestore.FieldValue.arrayUnion('parent'),
+          })
+        }
       } else {
         // Self-registration majeure : le user devient son propre member à
         // l'acceptation coach (création/link de /members/{id} hors scope de
@@ -379,24 +404,6 @@ export const submitRegistration = onCall(
         createdAt: serverTimestamp(),
         sentAt: null,
       })
-
-      // 6) Si AVS manquant, alerter admin par email pour collecte manuelle.
-      if (input.player.avsUnavailable) {
-        const avsAlertRef = db().doc(
-          `pendingEmails/${registrationRef.id}_registration_avs_missing`,
-        )
-        tx.set(avsAlertRef, {
-          to: null,  // template-driven : le worker email résoudra la liste admin
-          template: 'registration_avs_missing',
-          context: {
-            registrationId: registrationRef.id,
-            teamId: input.teamId,
-            playerName: playerLabel,
-          },
-          createdAt: serverTimestamp(),
-          sentAt: null,
-        })
-      }
     })
 
     logger.info('submitRegistration: created', {

@@ -4,28 +4,31 @@ import { FirebaseError } from 'firebase/app'
 import {
   cancelInvitation,
   createClosurePeriod,
-  createRole,
   deleteClosurePeriod,
   deleteClubLogoByUrl,
-  deleteRole,
   getClubConfig,
   getSubscriptionInfo,
   inviteAdmin,
   listAdmins,
   listClosurePeriods,
   listInvitations,
-  listRoles,
   removeAdmin,
   updateClubConfig,
-  updateRole,
   updateUserRoles,
   uploadClubLogo,
   type AdminInviteInput,
   type ClosurePeriodInput,
   type ClubAdmin,
   type ClubConfigPatch,
-  type RoleInput,
 } from '@/repositories/settings.repo'
+import {
+  createRole,
+  deleteRole,
+  listRoles,
+  seedRoles,
+  updateRole,
+  type RoleInput,
+} from '@/repositories/roles.repo'
 import type {
   BankingInfo,
   ClosurePeriod,
@@ -346,6 +349,26 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /**
+   * Amorce `/roles` sur un projet vierge : écrit les 6 rôles système + 2
+   * customs par défaut (idempotent côté repo). Recharge ensuite la liste pour
+   * récupérer les docs créés (avec leurs ids canoniques). Utilisé par le CTA
+   * « Initialiser les rôles » affiché quand `roles` est vide.
+   */
+  async function seedRolesAction(): Promise<void> {
+    savingSection.value = 'roles'
+    try {
+      await seedRoles()
+      roles.value = await listRoles()
+      markSaved('roles')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Erreur lors de l'initialisation des rôles")
+      throw e
+    } finally {
+      savingSection.value = null
+    }
+  }
+
   // -----------------------------------------------------
   // Closure periods
   // -----------------------------------------------------
@@ -531,6 +554,7 @@ export const useSettingsStore = defineStore('settings', () => {
     addCustomRole,
     editRole,
     removeRole,
+    seedRolesAction,
     addClosurePeriod,
     removeClosurePeriod,
     inviteAdminAction,

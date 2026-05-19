@@ -40,6 +40,14 @@
  *                          touche pas (préservation du binding existant ; le
  *                          submitter ne verra pas la cotisation côté register
  *                          — cas pathologique à régler manuellement).
+ *  - Réactivation        → si le member matched est inactif (`active === false`)
+ *                          ou archivé (`status === 'archived'`), la réinscription
+ *                          le réactive : `active = true`, `status = 'active'`,
+ *                          `archivedAt/archivedReason/archivedByUid = null`. Règle
+ *                          métier : un membre inactif/archivé qui se réinscrit via
+ *                          le portail register reprend l'accès. La réactivation et
+ *                          le binding sont fusionnés dans un unique `tx.update` du
+ *                          memberRef ; aucun write si rien n'a changé.
  *
  * Le linking inverse (`/users/{submittedByUid}.memberId`) est laissé à un flow
  * dédié (TODO — `linkUserToMember` callable). Pour l'instant la liaison est
@@ -290,6 +298,9 @@ export const confirmRegistration = onCall(
               reg.registrationFor === 'self' ? reg.submittedByUid : null,
             licenseNumber: '',
             officialLevel: null,
+            coachLevel: null,
+            officialLicense: null,
+            coachLicense: null,
             licensed: false,
             duesStatus: 'n/a',  // sera flippé par `initiateDuesOnPlayerActivation`
             duesStatusUpdatedAt: now,
@@ -317,21 +328,25 @@ export const confirmRegistration = onCall(
       //     Sans ce binding, les rules `/dues` refusent au submitter la lecture
       //     de la cotisation qui va être créée par `initiateDuesOnPlayerActivation`
       //     → l'app register reste vide alors qu'une cotisation existe.
+      //     La réactivation (member inactif/archivé qui se réinscrit) est
+      //     fusionnée dans le MÊME objet de patch que le binding : un seul
+      //     `tx.update` par memberRef. On n'écrit que si le patch est non-vide.
       if (existingMember && !memberCreated) {
         const memberRef = db().doc(`members/${memberId}`)
+        const patch: Record<string, unknown> = {}
+
+        // Binding submitter ↔ member.
         if (reg.registrationFor === 'dependent') {
           const currentGuardians = existingMember.guardianUserIds ?? []
           if (!currentGuardians.includes(reg.submittedByUid)) {
-            tx.update(memberRef, {
-              guardianUserIds: admin.firestore.FieldValue.arrayUnion(
-                reg.submittedByUid,
-              ),
-            })
+            patch.guardianUserIds = admin.firestore.FieldValue.arrayUnion(
+              reg.submittedByUid,
+            )
           }
         } else {
           // `for: 'self'` — joueur majeur s'inscrivant pour lui-même.
           if (existingMember.linkedUserId == null) {
-            tx.update(memberRef, { linkedUserId: reg.submittedByUid })
+            patch.linkedUserId = reg.submittedByUid
           } else if (existingMember.linkedUserId !== reg.submittedByUid) {
             // Member déjà lié à un AUTRE compte → on ne touche pas (préserve
             // le binding existant). Le submitter ne verra pas la cotisation
@@ -346,6 +361,30 @@ export const confirmRegistration = onCall(
               },
             )
           }
+        }
+
+        // Réactivation : un membre inactif ou archivé qui se réinscrit via le
+        // portail register reprend l'accès. Idempotent — on ne pose les champs
+        // que si une réactivation est réellement nécessaire (évite un write
+        // inutile quand le member est déjà actif).
+        const needsReactivation =
+          existingMember.active === false || existingMember.status === 'archived'
+        if (needsReactivation) {
+          patch.active = true
+          patch.status = 'active'
+          patch.archivedAt = null
+          patch.archivedReason = null
+          patch.archivedByUid = null
+          logger.info('confirmRegistration: reactivating inactive/archived member', {
+            registrationId,
+            memberId,
+            previousActive: existingMember.active,
+            previousStatus: existingMember.status,
+          })
+        }
+
+        if (Object.keys(patch).length > 0) {
+          tx.update(memberRef, patch as FirebaseFirestore.UpdateData<MemberData>)
         }
       }
 

@@ -10,6 +10,7 @@ import {
   listMembers,
   removeGuardian as repoRemoveGuardian,
   setLinkedUser as repoSetLinkedUser,
+  setMemberActive as repoSetMemberActive,
   updateMember as repoUpdateMember,
   type CreateMemberInput,
   type MemberCommsPatch,
@@ -297,6 +298,31 @@ export const useMembersStore = defineStore('members', () => {
   }
 
   /**
+   * Bascule le flag `active` d'un membre (Actif ↔ Inactif). Un membre
+   * `active: false` perd l'accès à l'app mobile / au club (enforced par
+   * `firestore.rules`). Distinct de l'archive (`status`).
+   */
+  async function setMemberActive(
+    memberId: string,
+    active: boolean,
+  ): Promise<boolean> {
+    error.value = null
+    try {
+      await repoSetMemberActive(memberId, active)
+      await refreshOne(memberId)
+      return true
+    } catch (err: unknown) {
+      const code = err instanceof FirebaseError ? err.code : 'unknown'
+      console.error(`setMemberActive failed [${code}]`, err)
+      error.value =
+        err instanceof Error
+          ? err.message
+          : 'Erreur lors de la mise à jour du statut actif'
+      return false
+    }
+  }
+
+  /**
    * Met à jour la configuration `comms` d'un membre (billing / general
    * recipients). `majorityTransition` n'est pas exposée ici — c'est piloté
    * par les Cloud Functions.
@@ -429,6 +455,7 @@ export const useMembersStore = defineStore('members', () => {
     addGuardian,
     removeGuardian,
     setLinkedUser,
+    setMemberActive,
     setComms,
     deletePermanently,
   }

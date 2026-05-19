@@ -33,7 +33,7 @@ functions/
 
 ## Functions requises (voir `docs/firebase.md` pour détails)
 
-`generateSeasonBookings`, `previewSeasonBookings`, `applyClosurePeriod`, `handleMatchSlotChange`, `autoOfficialsNeededNotification`, `matchReminders`, `initiateDuesOnPlayerActivation`, `issueDuesScheduled`, `markOverdueScheduled`, `syncMemberDuesStatus`, `markDuePaid`, `updateDue`, `applyPaymentException`, `applyLicenseRequest`, `runMigrations`.
+`generateSeasonBookings`, `previewSeasonBookings`, `applyClosurePeriod`, `handleMatchSlotChange`, `autoOfficialsNeededNotification`, `matchReminders`, `initiateDuesOnPlayerActivation`, `issueDuesScheduled`, `markOverdueScheduled`, `syncMemberDuesStatus`, `markDuePaid`, `updateDue`, `applyPaymentException`, `applyLicenseRequest`, `runMigrations`, `fanoutNotification`, `coachCreateMember`, `coachUpdateMember`, `coachDeactivateMember`, `coachCreateAwayMatch`, `syncUserRolesFromMember`.
 
 ### `updateDue` (callable) — édition d'une cotisation
 
@@ -44,6 +44,35 @@ functions/
 - **`status`** : refuse `'paid'` (`invalid-argument`) — le passage à payé passe par `markDuePaid`. Statuts acceptés : `pending_grace | issued | overdue | excepted | cancelled`.
 - **Effet** : `update` du doc via Admin SDK. Le trigger `syncMemberDuesStatus` recalcule `member.duesStatus` — ne pas le recalculer ici. **Pas** d'édition du montant ; **pas** de champ `updatedBy` / `updatedAt`.
 - **Retour** : `{ ok: true }`. Wrapper web : `updateCotisation` dans `apps/web/src/services/cloudFunctions.ts`.
+
+### `confirmLicense` (callable) — confirmation d'une licence fédérale
+
+Confirme une licence `/licenses/{licenseId}` (`pending` → `active`). Matérialise la validation Swiss Basketball + le paiement de la fédération par le club. Fichier : `licenses/confirmLicense.ts`. Region `europe-west6`.
+
+- **Auth** : signed-in + (claim `rootAdmin` OU `/users/{uid}.roles` contient `admin` | `treasurer` | `secretary`). Sinon `permission-denied`. Helper local `assertCanConfirmLicense`.
+- **Input** (wire) : `{ licenseId: string }`.
+- **Effet** (transactionnel, Admin SDK — bypasse les rules du module compta : canal contrôlé et audité via `confirmedByUid`) :
+  1. Lit `/licenses/{licenseId}`. Absente → `not-found`.
+  2. **Idempotence** : `status === 'active'` → retourne `{ ok: true, alreadyActive: true, accountingEntryId: null }` sans rien écrire.
+  3. `status !== 'pending'` (ex. `cancelled`) → `failed-precondition`.
+  4. Poste une écriture `/accountingEntries` (`source: 'manual'`) en partie double équilibrée, montant = `license.feeSnapshot` : **débit** compte de charge « Licences fédérales » / **crédit** compte de trésorerie « Banque ». Comptes résolus par nom avec repli (charge → 1er compte actif de nature `charge` ; trésorerie → 1er compte actif `isTreasury`). Aucun compte → `failed-precondition` "Comptes comptables non initialisés".
+  5. `update` la licence : `status: 'active'`, `confirmedAt`, `confirmedByUid`, `accountingEntryId`.
+  6. `update` le membre : `role === 'official'` → pose `member.officialLicense` ; `role === 'coach'` → `member.coachLicense` (`{ licenseId, seasonId, level }`). `player` / `referee` → pas de denorm membre.
+- **Retour** : `{ ok: true, alreadyActive: boolean, accountingEntryId: string | null }`. Wrapper web à créer : `confirmLicense` dans `apps/web/src/services/cloudFunctions.ts`.
+
+### Chantier app mobile — `fanoutNotification` + callables `coach*`
+
+Introduits par le chantier app mobile Flutter (cf. `docs/mobile-app.md`). `/members` et `/matches` sont write-admin-only dans `firestore.rules` — les callables `coach*` re-vérifient le scope coach côté serveur (Admin SDK bypasse les rules).
+
+- **`fanoutNotification`** (`notifications/fanoutNotification.ts`) — trigger `onDocumentCreated('notifications/{id}')`. Résout `targetAudience` → officiels → tokens `/users/{uid}/fcmTokens` → `sendEachForMulticast` (chunks 500). Purge les tokens morts (`registration-token-not-registered` / `invalid-argument`). Garde idempotence : skip si `notif.pushedAt != null`, pose `pushedAt` en fin.
+- **`coachCreateMember`** (`members/coachCreateMember.ts`) — callable, coach scope. Input `{ teamId, firstName, lastName, birthDate:number|null, avs, email, phone }`. Crée un joueur (dédup `findExactMemberMatch`), `arrayUnion` `team.playerIds` (déclenche `initiateDuesOnPlayerActivation`), écrit `/members/{id}/private/contact`.
+- **`coachUpdateMember`** (`members/coachUpdateMember.ts`) — callable, coach scope. Whitelist d'édition : `firstName`, `lastName`, `birthDate`, contact `email`/`phone`, `comms.generalRecipients`. Tout autre champ → `permission-denied`.
+- **`coachDeactivateMember`** (`members/coachDeactivateMember.ts`) — callable, coach scope. Input `{ memberId, mode:'bench'|'archive', reason? }`. `bench` → `active:false`. `archive` → `status:'archived'` + champs `archived*` (`reason` requis). Idempotent.
+- **`coachCreateAwayMatch`** (`matches/coachCreateAwayMatch.ts`) — callable, coach scope. Crée `/matches` `kind:'away'`, `date` = **minuit UTC**. Libère best-effort les entraînements en conflit (`freeConflictingTrainings` dans `matches/_helpers.ts`).
+
+- **`syncUserRolesFromMember`** (`members/syncUserRolesFromMember.ts`) — trigger `onDocumentWritten('members/{id}')`. Propage `member.roles` → `/users/{linkedUserId}.roles` (copie verbatim, **écrase**). Délien / relien / suppression du membre → roles de l'ancien user remis à `[]`. Idempotent. ⚠️ Écrase tout : un rôle posé hors-membre sur `/users.roles` (ex. `parent` via `submitRegistration`) est perdu au prochain write du membre lié — il doit figurer dans `member.roles` pour persister.
+
+Helper de scope coach partagé : `members/_coachAuth.ts` (`assertCoachOrAdminOfMember`). Wire dates = epoch millis. I/O interfaces locales aux fichiers.
 
 ## Migrations
 

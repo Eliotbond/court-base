@@ -9,6 +9,7 @@
 ```
 /config/club                          (singleton)
 /users/{uid}
+  /fcmTokens/{tokenId}                 (tokens push FCM des appareils — ID = token)
 /members/{memberId}
   /private/contact                    (singleton, ID fixe — email, phone)
 /roles/{roleId}
@@ -33,6 +34,7 @@
 /paymentExceptionRequests/{requestId}
 /licenseTypes/{licenseTypeId}
 /licenseRequests/{requestId}
+/licenses/{licenseId}
 /registrations/{registrationId}
 /accounts/{accountId}
 /accountingEntries/{entryId}
@@ -106,6 +108,17 @@ Un user appartient à **un seul projet**. Pas de `clubMemberships[]`.
 | `parent` | Accès aux pupilles via `member.guardianUserIds`. |
 | `treasurer` | Read full `/dues`. Marque les dues `paid` via callable `markDuePaid`. **Capability comité** : seul rôle (avec `rootAdmin`) autorisé à poser un montant partiel (`paidAmount < due.amount`) ou à marquer payé un due encore en `pending_grace` (validation anticipée). Pas de droits admin généraux. |
 
+### `/users/{uid}/fcmTokens/{tokenId}`
+```ts
+{
+  token: string                         // = ID du document (dédup naturelle)
+  platform: "ios" | "android"
+  createdAt: Timestamp
+  lastSeenAt: Timestamp                  // MAJ à chaque ré-enregistrement (démarrage app / refresh)
+}
+```
+Tokens de push FCM des appareils du user (app mobile Flutter). **L'ID du document EST la chaîne du token** → le client fait `setDoc(token, …)` à chaque démarrage / `onTokenRefresh` sans jamais créer de doublon. Sous-collection (pas un champ sur `/users`) car un user a N appareils ; la Function `fanoutNotification` supprime le doc quand FCM signale le token mort. Rules : self-manage (`request.auth.uid == uid`), read admin pour debug.
+
 ### `/members/{memberId}`
 ```ts
 {
@@ -117,7 +130,10 @@ Un user appartient à **un seul projet**. Pas de `clubMemberships[]`.
   roles: string[]                       // refs vers /roles
   linkedUserId: string | null           // uid Auth
   licenseNumber: string
-  officialLevel: number | null          // 1, 2 ; null si pas official. Manuel admin.
+  officialLevel: number | null          // QUALIFICATION officiel (1..N) ; null si pas qualifié. Manuel admin.
+  coachLevel: number | null             // QUALIFICATION coach (1..N) ; null si pas qualifié. Manuel admin.
+  officialLicense: ActiveLicenseRef | null  // réf dénormalisée vers la licence officiel ACTIVE ; null = aucune. Posée par confirmLicense.
+  coachLicense: ActiveLicenseRef | null     // idem pour la licence de coach.
   licensed: boolean                     // toggled by admin via licenseRequest approval
   duesStatus: "ok" | "pending_grace" | "due" | "overdue" | "excluded" | "excepted" | "n/a"
   duesStatusUpdatedAt: Timestamp
@@ -130,6 +146,20 @@ Un user appartient à **un seul projet**. Pas de `clubMemberships[]`.
 }
 ```
 **Pas de `email`/`phone` ici** — voir `/members/{memberId}/private/contact` ci-dessous. Le doc parent est lisible par tous les rôles club (incl. `official`-only). Les contacts sont gated séparément.
+
+**Niveaux vs licences** — distinction importante :
+
+- `officialLevel` / `coachLevel` = **QUALIFICATIONS** (numériques `1..N`, réglées **manuellement** par l'admin). « Avoir un niveau » signifie « être formé pour », **pas** « être actif ». `officialLevel` détermine quel `homeOfficialRequirements` (ventilé par niveau) un membre peut couvrir.
+- `officialLicense` / `coachLicense` = réf **dénormalisée** (`ActiveLicenseRef`) vers la licence `/licenses` `status:'active'` du rôle correspondant. Posée par la callable `confirmLicense`, `null` sinon. Un membre est officiel/coach **ACTIF** ⟺ la réf existe **et** `officialLicense.seasonId === <id de la saison active>` (dérivation saison-précise). Sert à gater l'accès app (cf. `firestore.rules` → auto-inscription officiel) sans requête `/licenses`.
+
+```ts
+// ActiveLicenseRef — réf dénormalisée portée par member.officialLicense / coachLicense
+{
+  licenseId: string                   // id du doc /licenses/{id}
+  seasonId: string                    // /seasons/{id} — saison de la licence
+  level: number | null                // niveau snapshot (numérique official/coach)
+}
+```
 
 **Lecture étendue tuteurs** : un user dont `request.auth.uid` est dans `member.guardianUserIds` peut lire le doc parent **et** la sub `/private/contact` (cf. règles ci-dessous). Permet à un parent d'accéder à la fiche de sa pupille sans rôle admin/coach.
 
@@ -221,7 +251,13 @@ Les `official`-only (pas admin, pas coach, pas tuteur) **ne voient pas** ce doc.
 ```ts
 { name: string, type: "system" | "custom", color: string, createdAt: Timestamp }
 ```
-System : `player`, `official`, `coach`, `referee`.
+**Vraie collection Firestore** (provisionnée — plus de mock). Types : `RoleData` / `Role` dans `packages/shared-types/src/role.ts` (qui exporte aussi `SYSTEM_ROLE_SEEDS` + `DEFAULT_CUSTOM_ROLE_SEEDS`, source de vérité du seed). CRUD côté `apps/web` : `repositories/roles.repo.ts`.
+
+**Rôles système** (6, non-supprimables) : `admin`, `treasurer`, `secretary`, `coach`, `official`, `player`. Leurs **`id` Firestore = la clé canonique** (`doc('roles/admin')`, etc.) et correspondent aux clés de `/users.roles` — un membre porte ses rôles dans `/members.roles`, et la Function `syncUserRolesFromMember` les **recopie verbatim** dans `/users/{linkedUserId}.roles` (les rôles du membre **définissent** les rôles Auth). Les rôles `custom` (ex. `comite`, `referee`) sont éditables/supprimables et restent côté membre (les rules ignorent les rôles non reconnus).
+
+**Amorçage** : sur projet vierge `/roles` est vide ; la page Settings → Member roles propose un CTA « Initialiser les rôles » qui écrit les 6 rôles système (+ 2 customs par défaut) de façon idempotente (`seedRoles`). Les docs système sont écrits avec leur id canonique en doc id.
+
+**Rules** (`firestore.rules`) : `read` = signed-in non suspendu ; `create`/`update` = `isRootAdmin() || isAdmin()` ; `delete` = `isRootAdmin() || isAdmin()` **ET** `resource.data.type != 'system'` (les 6 rôles système sont non-supprimables côté serveur, défense en profondeur au-delà du blocage UI).
 
 ### `/invitations/{inviteId}`
 ```ts
@@ -569,8 +605,11 @@ Le type partagé `OfficialAssignment` (`packages/shared-types/src/booking.ts`) c
   relatedMatchId: string | null      // /matches lié — renseigné pour les matchs à l'extérieur (pas de booking)
   createdAt: Timestamp
   readBy: string[]                   // uids
+  pushedAt: Timestamp | null         // posé par fanoutNotification après le push FCM — garde anti-double-push
 }
 ```
+
+À la création d'un doc `/notifications`, le trigger `fanoutNotification` résout `targetAudience` → UIDs des officiels concernés → tokens de leurs sous-collections `/users/{uid}/fcmTokens` → push FCM multicast, puis pose `pushedAt`. Un re-delivery du trigger voit `pushedAt != null` et skip.
 
 ### `/pendingEmails/{emailId}`
 
@@ -657,6 +696,7 @@ Le type partagé `OfficialAssignment` (`packages/shared-types/src/booking.ts`) c
   notes: string | null
   paymentReference: string | null    // référence virement déterministe ("DUE-{shortDueId}") posée à la création
   emailedAt: Timestamp | null        // marqueur idempotence email "à payer" (null = pas encore envoyé)
+  registeredByUid: string | null     // uid du compte ayant soumis l'inscription (registration.submittedByUid) ; ancre d'autorisation rules ; null hors flux register / lignes legacy
   createdAt: Timestamp
 }
 ```
@@ -669,6 +709,17 @@ Un `due` par joueur/saison/team. Switch d'équipe mid-saison : TBD (probablement
   - à l'émission `pending_grace → issued` (cas standard, `issueDuesScheduled`),
   - **ou** immédiatement à la création si le due naît déjà `issued` (cas où `gracePeriodDays === 0`).
 
+#### `registeredByUid`
+
+uid du compte ayant soumis l'inscription (`registration.submittedByUid`) qui a mené à la création de la cotisation. **Ancre d'autorisation** : la rule `/dues` (clause `read`) autorise ce compte à lire la cotisation directement, sans dépendre du binding `member.linkedUserId` / `member.guardianUserIds`. Champ **immuable** — le fait "qui a inscrit" ne change pas, donc la dénormalisation est sûre.
+
+Posé par `initiateDuesOnPlayerActivation` à la création : lookup best-effort de la registration `(matchedMemberId == memberId, teamId == teamId)` — deux filtres d'égalité, pas d'index composite, tri JS sur `createdAt` (la plus récente gagne si le joueur a été ré-inscrit). `null` si :
+- le joueur a été ajouté à l'équipe **hors flux d'inscription** (création directe par un admin),
+- la lecture des registrations échoue (best-effort — la cotisation est créée quand même),
+- ligne **legacy** antérieure à ce champ.
+
+Couvre notamment le cas où le binding membre n'a pas pris : inscription `for: 'self'` sur un member déjà lié à un autre compte (cf. `confirmRegistration`) — le submitter ne devient pas `linkedUserId` mais reste l'`registeredByUid` de la cotisation.
+
 #### Lecture / écriture côté rôles
 
 | Rôle | Read | Write direct | Action via callable |
@@ -678,6 +729,7 @@ Un `due` par joueur/saison/team. Switch d'équipe mid-saison : TBD (probablement
 | `coach` (scope team) | dues de ses teams | refusé | `paymentExceptionRequest` (cf. `/paymentExceptionRequests`) |
 | **Membre lié** (`linkedUserId`) | sa propre cotisation uniquement | refusé | — (paiement par virement externe, marquage par admin/treasurer) |
 | **Tuteurs** (`guardianUserIds`) | les cotisations des membres dont ils sont tuteurs | refusé | — |
+| **Auteur de l'inscription** (`registeredByUid`) | les cotisations issues des inscriptions qu'il a soumises | refusé | — |
 
 Le treasurer n'écrit jamais directement dans `/dues` — toute action passe par la callable `markDuePaid` (Admin SDK, validation `treasurer || admin` côté serveur). Idem pour les transitions automatiques (`issueDuesScheduled`, `markOverdueScheduled`, `applyPaymentException`) qui restent dans les Functions.
 
@@ -685,7 +737,7 @@ Le treasurer n'écrit jamais directement dans `/dues` — toute action passe par
 
 **Édition d'une cotisation (callable `updateDue`)** : édite une cotisation hors flux paiement. Auth : signed-in + (claim `rootAdmin` OU rôle `admin` OU `treasurer`), sinon `permission-denied`. Input wire `{ dueId, activatedAt?, issuedAt?, dueAt?, status?, notes? }` — dates en epoch millis ; champ absent = inchangé ; `null` explicite efface `issuedAt` / `dueAt` / `notes` (`activatedAt` non nullable). **Le montant (`amount`) n'est pas éditable** ; **`status: 'paid'` est refusé** (`invalid-argument`) — le passage à payé passe par `markDuePaid`. L'`update` est fait via Admin SDK ; le trigger `syncMemberDuesStatus` recalcule `member.duesStatus`. Aucun champ `updatedBy` / `updatedAt` ajouté au schéma. Fichier : `functions/src/dues/updateDue.ts`. Wrapper web : `updateCotisation` dans `apps/web/src/services/cloudFunctions.ts`.
 
-**Note rules — lecture parent/membre.** La rule `read` exécute deux `get()` Firestore (`/members/{resource.data.memberId}`) pour vérifier `linkedUserId == auth.uid` puis `auth.uid in guardianUserIds`. Coût : 2 lectures supplémentaires par doc évalué — borné car l'app `courtbase-register` filtre toujours `where memberId in [...]` côté client (chunk ≤ 30 docs). Acceptable pour le volume attendu (1–3 cotisations actives par foyer). Pas de cache rule-side : si une cotisation référence un `memberId` qui n'existe plus, le `get()` échoue et la lecture est refusée — comportement souhaité (cohérence référentielle).
+**Note rules — lecture parent/membre.** La rule `read` exécute deux `get()` Firestore (`/members/{resource.data.memberId}`) pour vérifier `linkedUserId == auth.uid` puis `auth.uid in guardianUserIds`. Coût : 2 lectures supplémentaires par doc évalué — borné car l'app `courtbase-register` filtre toujours `where memberId in [...]` côté client (chunk ≤ 30 docs). Acceptable pour le volume attendu (1–3 cotisations actives par foyer). Pas de cache rule-side : si une cotisation référence un `memberId` qui n'existe plus, le `get()` échoue et la lecture est refusée — comportement souhaité (cohérence référentielle). La clause `registeredByUid`, elle, est un check **direct sur le doc** (`resource.data.get('registeredByUid', null)`) — aucun `get()` supplémentaire, et le `get(..., null)` tolère les docs legacy sans le champ. Une query register `where registeredByUid == auth.uid` est donc également valide côté rules (alternative au filtre `memberId in [...]`).
 
 ### `/paymentExceptionRequests/{requestId}`
 ```ts
@@ -739,6 +791,33 @@ Référentiel éditable par l'admin (Settings → Licences).
 ```
 Approval → `member.licensed = true`. Procédure fédérale hors-bande.
 
+### `/licenses/{id}`
+```ts
+{
+  memberId: string                   // /members/{id} titulaire de la licence
+  seasonId: string                   // /seasons/{id} — saison de validité
+  licenseTypeId: string              // /licenseTypes/{id} référencé à la création
+  role: "player" | "official" | "coach" | "referee"  // snapshot du LicenseType
+  level: number | null               // snapshot du niveau (numérique official/coach/referee, null player)
+  licenseName: string                // snapshot du libellé ("Officiel J+S")
+  feeSnapshot: number                // snapshot du prix courant du LicenseType (CHF)
+  status: "pending" | "active" | "cancelled"
+  createdAt: Timestamp
+  createdByUid: string               // admin ayant créé la licence
+  confirmedAt: Timestamp | null       // posé par confirmLicense, null tant que status !== 'active'
+  confirmedByUid: string | null       // treasurer/admin/secretary/rootAdmin ayant confirmé
+  accountingEntryId: string | null    // id de l'écriture /accountingEntries postée à la confirmation
+}
+```
+
+Instance concrète d'une licence fédérale émise pour un **membre × saison × type de licence**. `level`, `licenseName`, `feeSnapshot` sont **snapshottés** depuis le `LicenseType` à la création — figés malgré les évolutions de la grille tarifaire.
+
+**Cycle de vie** : `pending` (créée par l'admin depuis la fiche membre, write client direct) → `active` (confirmée par Swiss Basketball + payée par le club ; passage **via la callable `confirmLicense`**, réservée treasurer/admin/secretary/rootAdmin). La confirmation pose `confirmedAt` / `confirmedByUid` / `accountingEntryId`, met à jour la réf dénormalisée `member.officialLicense` / `member.coachLicense`, et **poste une écriture comptable** (charge « Licences fédérales » / crédit Banque, montant `feeSnapshot`). `cancelled` est terminal.
+
+Un membre est officiel/coach **ACTIF** ⟺ il a une licence `active` pour ce rôle et la **saison courante** (dérivation via la réf dénormalisée — cf. `/members` ci-dessus). Cf. `docs/main.md` → Licences.
+
+**Pas d'index composite** : les lectures attendues (`where memberId == X`, < 100 docs) passent par une **simple query + tri JS** côté client (règle 10 du `CLAUDE.md` racine). `firestore.indexes.json` n'est pas modifié.
+
 ### `/registrations/{registrationId}`
 ```ts
 {
@@ -756,12 +835,11 @@ Approval → `member.licensed = true`. Procédure fédérale hors-bande.
     lastName: string
     birthDate: Timestamp
     gender: "M" | "F" | "other" | null
-    avs: string | null
-    avsUnavailable: boolean
+    avs: string | null   // 756.XXXX.XXXX.XX ; null seulement au stade draft — obligatoire à la soumission
     phone: string | null
   }
 
-  // Lien à un /member existant (si AVS match ou confirmation fuzzy match)
+  // Lien à un /member existant (rattaché par match AVS exact)
   matchedMemberId: string | null
 
   // Équipe choisie
@@ -832,7 +910,7 @@ submitted → cancelled (par le user avant validation coach, terminal)
 - Lecture : auteur (`submittedByUid`), tuteur du `matchedMemberId` (si défini), coach de la `teamId`, admin.
 - Création : auteur uniquement (`request.auth.uid == submittedByUid`).
 - Update client : autorisé **uniquement** sur `status == "draft"` par l'auteur (autosave wizard). Toutes les autres transitions passent par les callables (`submitRegistration`, `refuseRegistration`, etc.) — garantit l'intégrité du lifecycle.
-- Delete : `false` (jamais).
+- Delete : (a) l'auteur sur son propre `draft` (annule un brouillon non soumis) ; (b) admin / rootAdmin — suppression définitive depuis la vue Inscriptions, **tous statuts confondus** (correction d'erreur de création). La voie normale d'extinction d'une inscription soumise reste `cancelRegistration` (conserve l'audit). Pas de garde-fou de statut : supprimer une registration `confirmed_pending_dues` / `active` ne nettoie PAS le member + la cotisation déjà créés (l'UI prévient explicitement) — pour un retrait complet, passer par `deleteMember`.
 
 ### `/accounts/{accountId}`
 ```ts
@@ -926,8 +1004,10 @@ Un projet = un club, donc pas de filtrage `clubId`.
 
 - **`rootAdmin`** (claim) : read/write partout. Bypass.
 - **`admin`** : read/write tout sauf `_meta/schema` (réservé migration runner).
-- **`coach`** : read members, venues, courts, timeSlots, bookings. Write bookings de **ses** slots (reserve/cancel). Create/read `matchRequests`. Write `attendance` sur bookings de son équipe.
+- **`coach`** : read members, venues, courts, timeSlots, bookings. Write bookings de **ses** slots (reserve/cancel). Create/read `matchRequests`. Write `attendance` sur bookings de son équipe. Création/édition/désactivation de membres et création de matchs à l'extérieur : **pas d'écriture directe** (`/members` et `/matches` restent admin-only) — le coach passe par les callables `coachCreateMember` / `coachUpdateMember` / `coachDeactivateMember` / `coachCreateAwayMatch` (Admin SDK, re-vérifient le scope coach).
+- **`/users/{uid}/fcmTokens`** : self-manage — chaque user gère uniquement ses propres tokens de push (`request.auth.uid == uid`). Admin lit pour debug. La Function `fanoutNotification` (Admin SDK) bypasse.
 - **`treasurer`** : read full `/dues` (vue globale paiements, pas de scope team). Pas de write direct — passe par la callable `markDuePaid` (Admin SDK valide `treasurer || admin` côté serveur). Cumulable avec `admin`/`coach`.
+- **`secretary`** : rôle additif staff (helper `isSecretary()` = `hasRole('secretary')`). Lit `/licenses`. Peut confirmer une licence via la callable `confirmLicense` (Admin SDK — pas de write direct sur `/licenses`). Pas de droits admin généraux. Comme tout rôle staff, **jamais suspendu** par `callerSuspended()`.
 - **`official`** :
   - Read `/members/*` parent docs (nom, roles, licensed, duesStatus, officialLevel) — pas de contact info (gated dans `/members/{id}/private/contact`, official-only n'y accède pas).
   - Read `bookings` `match_home` (upcoming + passés pour export).
@@ -941,12 +1021,79 @@ Un projet = un club, donc pas de filtrage `clubId`.
 - **`/dues/`** : admin (all), treasurer (all, read-only via rules), coach (joueurs de ses équipes). Write admin + Functions. Coachs et treasurers **jamais** d'écriture directe — treasurer passe par la callable `markDuePaid`.
 - **`/paymentExceptionRequests/`** : coach crée pour ses joueurs, lit les siens. Admin lit/écrit tout.
 - **`/licenseRequests/`** : idem. `member.licensed` écrit seulement par admin (ou Function sur approval).
+- **`/licenses/`** : instances de licences émises. **Read** : staff (rootAdmin/admin/coach/treasurer/secretary) + le membre lié (`isLinkedMember`) + ses tuteurs (`isGuardianOf`). **Create** : admin/rootAdmin (création en `pending` depuis la fiche membre). **Update/delete** : admin/rootAdmin uniquement. La confirmation (`status:'active'` + `accountingEntryId` + réfs dénormalisées + écriture comptable) passe par la callable `confirmLicense` (Admin SDK, bypass rules, re-vérifie le scope treasurer/admin/secretary/rootAdmin) — treasurer/secretary **n'ont pas** de write direct ici. **Pas** de garde `!callerSuspended()` : comme `/dues`, un membre inactif garde la lecture de sa propre licence.
+- **Auto-inscription officiel** (`officialAssignments` create self-register, sur `/bookings` et `/matches`) : exige désormais que le membre du caller ait une licence d'officiel active — helper `callerHasOfficialLicense()` = `member.officialLicense != null` (accès défensif `get('officialLicense', null)`). Le check **saison-précis** (la licence cible-t-elle la saison courante ?) n'est **pas** faisable en rules — `/config/club` ne porte pas de pointeur de saison active et déterminer la saison `status:'active'` exigerait une query collection (interdite en rules). Ce check est porté côté UI/callable d'assignation ; les rules font la garde grossière (défense en profondeur). L'accès admin/rootAdmin n'est pas affecté.
 - **`/users/{uid}`** : self-create autorisé (par l'app register) avec contraintes whitelist — `request.auth.uid == uid`, `roles.size() == 0`, `memberId == null`, `teamIds.size() == 0`. Self-update sur les champs profil (`displayName`, `photoURL`, `phone`, `address`, `profileCompletedAt`) ; les champs `roles` / `memberId` / `teamIds` restent admin-only.
 - **Module Comptabilité** (`/accounts`, `/accountingEntries`, `/invoices`) : read/write réservés à `treasurer` + `rootAdmin`. L'`admin` standard est **explicitement exclu** (aucune rule ne mentionne `isAdmin()` sur ces collections, et aucun wildcard `/{document=**}` ne les couvre). `/accountingEntries` est append-only (`allow delete: if false` — annulation par contre-passation). Cf. `docs/compta.md`.
-- **`/registrations/`** : auth required (app register). Lecture par auteur (`submittedByUid`), tuteur du `matchedMemberId`, coach de la `teamId`, admin. Create par auteur uniquement. Update client seulement sur `status == "draft"` par auteur (autosave wizard) ; toutes autres transitions via callables.
+- **`/registrations/`** : auth required (app register). Lecture par auteur (`submittedByUid`), tuteur du `matchedMemberId`, coach de la `teamId`, admin. Create par auteur uniquement. Update client seulement sur `status == "draft"` par auteur (autosave wizard) ; toutes autres transitions via callables. Delete : auteur sur son `draft`, ou admin / rootAdmin (suppression définitive depuis la vue Inscriptions — correction d'erreur).
 - **`/teams/{}/refusalLogs/`** : write `false` (callable `refuseRegistration` only, Admin SDK), read admin uniquement. CollectionGroup `refusalLogs` également admin-only (vue admin "tous les refus").
 - **Route guards** : **allowlist** des rôles par route. `rootAdmin` implicitement dans toutes.
 - **collectionGroup queries** : exigent une règle séparée `match /{path=**}/<name>/{id}` — les rules de sous-collection ne couvrent **pas** les `collectionGroup()` queries (limitation Firestore). Présent pour `courts` (utilisé par Venues + Bookings). À ajouter au cas par cas si une nouvelle `collectionGroup()` query apparaît côté client (ex. `attendance`, `officialAssignments` côté web aujourd'hui : leurs lectures sont catch-failed, mais à corriger si on veut les activer).
+
+### Membre inactif — suspension de l'accès app club (`callerSuspended()`)
+
+Sémantique `member.active` : un membre dont `/members/{memberId}.active === false`
+est **inactif** — typiquement un joueur/officiel qui a quitté le club. Le flag est
+basculé par l'admin depuis la fiche membre (rule `write` de `/members` inchangée,
+admin-only). `active` est orthogonal à `member.status` (`active`/`archived`) :
+un membre peut être inactif sans être archivé.
+
+Conséquence sur l'accès données : le compte Auth lié à un membre inactif
+(`member.linkedUserId` ↔ `user.memberId`) **perd l'accès aux données de l'app
+club** (web/mobile), mais **conserve l'accès au portail `courtbase-register`**
+pour se réinscrire. La réinscription le réactive (cf. `confirmRegistration`
+ci-dessous et `docs/main.md` → "Membre actif / inactif").
+
+Helper `callerSuspended()` — retourne `true` SSI **toutes** les conditions :
+
+1. le caller est signé (`isSignedIn()`),
+2. il n'a **aucun** rôle staff — `!isRootAdmin() && !isAdmin() && !isCoach() && !isTreasurer() && !isSecretary()` ; les comptes staff utilisent le desktop et ne sont **jamais** suspendus,
+3. son `userDoc().memberId` est non-null (le compte est lié à un membre),
+4. `/members/{memberId}.data.get('active', true) == false` — accès **défensif** : un doc membre sans le champ `active` est traité comme **actif** (pas de suspension par omission).
+
+Les checks de rôle (étape 2) sont placés **avant** le `get()` sur `/members` :
+un compte staff court-circuite l'évaluation et ne paie jamais la lecture
+supplémentaire. Pour un compte non-staff lié à un membre, le helper coûte
+2 `get()` (`/users/{uid}` déjà mis en cache par les autres helpers + `/members`).
+
+Partitionnement des collections — `&& !callerSuspended()` ajouté sur la **lecture**
+(et les clauses de write self-service) des collections **app club uniquement** :
+
+| Collection | Coupée pour inactif ? | Justification |
+|---|---|---|
+| `/bookings` (+ `officialAssignments` self-register, lecture `attendance`) | **Oui** | Donnée app club, non lue par register. `attendance` non gardée explicitement (read/write coach/admin only → court-circuit staff). |
+| `/bookingSeries` | **Oui** | Idem bookings. |
+| `/matches` (+ `officialAssignments` self-register) | **Oui** | Donnée app club, non lue par register. |
+| `/venues`, `/courts`, `/timeSlots`, collectionGroup `courts` | **Oui** | Donnée app club, non lue par register. |
+| `/notifications` (read + update `readBy`) | **Oui** | Donnée app club. |
+| `/matchTypes`, `/seasons`, `/closurePeriods` | **Oui** | Référentiels app club, non lus par register. |
+| `/roles` | **Oui** | Résolu par l'app club, **pas** par register. |
+| `/licenseTypes` | **Oui** | App club. Register lit `/licenseRequests`, **pas** `/licenseTypes`. |
+| `/config/club` | **Non** | Lu par register (`club.repo.ts`) — branding/IBAN du portail d'inscription. |
+| `/members`, `/members/private/contact` | **Non** | Register lit la fiche du membre lié + ses contacts. La lecture self (`isLinkedMember`) doit rester ouverte pour réinscription. |
+| `/categories` | **Non** | Lu par register (`teams.repo.ts`) — résolution catégorie d'équipe. |
+| `/teams` | **Non** | Lu par register — sélection d'équipe d'inscription. |
+| `/dues` | **Non** | Lu par register — facture/cotisation propre du membre. |
+| `/users` | **Non** | Identité propre du membre (self read/update). |
+| `/registrations` | **Non** | Cœur du portail register — création/lecture d'inscriptions. |
+| `/licenseRequests` | **Non** | Lu/écrit par register. |
+| `/licenses` | **Non** | Comme `/dues` : un membre inactif garde la lecture de sa propre licence (read membre lié + tuteurs). |
+| `/matchRequests`, `/paymentExceptionRequests` | **N/A** | Read coach/admin-only — un membre inactif (non-staff) n'y a déjà aucun accès ; pas de garde ajoutée. |
+| `/tags`, `/cotisations` | **Non** | Référentiels signed-read ; register **ne les lit pas directement** (résout `categories`), mais en cas de doute laissés ouverts (sécurité < disponibilité réinscription). |
+| `/accounts`, `/accountingEntries`, `/invoices`, `/pendingEmails`, `/_meta`, `/invitations` | **N/A** | Module compta / server-only / admin-only — hors périmètre, intouchés. |
+
+Rationale du partitionnement : **sécurité < disponibilité de la réinscription**.
+En cas de doute sur la dépendance de register à une collection, on **ne coupe pas** —
+couper une collection dont register dépend bloquerait la réinscription (le
+membre inactif ne pourrait plus redevenir actif). Les collections "register"
+restent donc ouvertes même quand elles exposent un peu de donnée club.
+
+`confirmRegistration` — **réactivation** : quand la callable réutilise un
+membre existant (matched), elle repose `active: true`. Si le membre était
+archivé (`status === 'archived'`), elle repose aussi `status: 'active'` et
+efface `archivedAt` / `archivedReason` / `archivedByUid`. C'est le mécanisme
+qui sort un compte de l'état suspendu. Cf. `docs/main.md` → section
+"Cotisations — email à payer, paiement, archive" / lifecycle d'inscription.
 
 ## Firebase Storage — paths
 
@@ -1044,8 +1191,8 @@ Déployées sur **chaque projet client** via CI cross-projet (voir `deployment.m
 | `setRootAdminClaim` | Callable (rootAdmin-only) | Toggle le claim `rootAdmin` sur un user (par email). Préserve les autres claims. Le caller ne peut pas se révoquer lui-même. Bootstrap du tout premier rootAdmin : via script Admin SDK hors-app. |
 | `listRootAdminUids` | Callable (admin-only) | Retourne `{ uids: string[] }` — les uids portant le claim `rootAdmin: true`. Le claim vit côté Auth (pas Firestore) ; cette callable résout le badge rootAdmin sur l'écran Settings → Admin team. Pagination via `admin.auth().listUsers()`. |
 | `acceptInvitation` | Callable (signed-in) | Cherche `/invitations` par email du caller, crée `/users/{uid}` à partir de l'invitation et supprime le doc. Appelée par le flow auth client quand un sign-in OAuth orphelin a une invitation pending. Codes : `not-found` (pas d'invitation), `already-exists` (/users/{uid} existe déjà). |
-| `matchExistingMember` | Callable (auth required) | Lookup AVS + fuzzy match (lastName/firstName/birthDate) pour le wizard d'inscription. Retourne `MemberMatch[]`. Cf. `docs/chantier-registrations.md` §4.4. |
-| `submitRegistration` | Callable (auth required) | Finalise un `/registrations/{id}` (status `draft` → `submitted`), set `coachNotifiedAt`/`adminNotifiedAt`, file un email user via `/pendingEmails`, ajoute `roles: ['parent']` sur `/users/{uid}` si registration "pour un enfant". Idempotent. |
+| `matchExistingMember` | Callable (auth required) | Lookup d'un member existant par AVS exact (`avs`, fallback `licenseNumber`) pour le wizard d'inscription. Retourne `MemberMatch[]`. Cf. `docs/chantier-registrations.md` §4.4. |
+| `submitRegistration` | Callable (auth required) | Finalise un `/registrations/{id}` (status `draft` → `submitted`), set `coachNotifiedAt`/`adminNotifiedAt`, file un email user via `/pendingEmails`, ajoute `'parent'` à `/users/{uid}.roles` si registration "pour un enfant". Si le caller a un member lié (`/users/{uid}.memberId != null`), `'parent'` est **aussi** `arrayUnion`'d dans `/members/{memberId}.roles` — sinon le prochain write du membre lié, propagé par `syncUserRolesFromMember` (qui écrase `/users.roles` verbatim), effacerait le rôle `parent`. Idempotent. |
 | `refuseRegistration` | Callable (coach scope) | Set `status = 'refused'`, écrit `/teams/{teamId}/refusalLogs/{id}` (motif obligatoire), déclenche auto-rerouting si une autre équipe `open` existe dans la catégorie. |
 | `cancelRegistration` | Callable (auteur) | Annulation par le user lui-même tant que `status ∈ {draft, submitted, open_pending_trial, conditional_pending_review}`. Au-delà, l'annulation passe par l'admin (callable séparée à venir). Idempotent. |
 | `onRegistrationStatusChanged` | Firestore trigger (`/registrations/{id}` update) | Crée notifs (`new_registration_*`, `registration_accepted`, `registration_refused`, `trial_started`), maintient `member.duesStatus` lifecycle à l'atteinte de `confirmed_pending_dues`. |
@@ -1053,6 +1200,14 @@ Déployées sur **chaque projet client** via CI cross-projet (voir `deployment.m
 | `generateLicenseForm` | Callable (admin ou coach) | Génère le PDF de formulaire pré-rempli pour une `/licenseRequests/{id}` (depuis `member` + `licenseRequest`) ; renvoie un Storage path. |
 | `respondLicenseDocReview` | Callable (admin) | Accepte / refuse un document de licence uploadé via app register, notifie le user (`license_doc_refused` si refus avec motif). |
 | `becomeOwnerOfMyMember` | Callable (user, signed-in) | Permet à un membre devenu majeur de prendre la main sur son propre dossier : set `member.linkedUserId = uid`, retire les guardians. Garde-fous : âge ≥ 18 ans ET `member.comms.majorityTransition.resolvedAt != null`. |
+| `fanoutNotification` | Firestore trigger (`/notifications/{id}` create) | Push FCM d'une notification. Résout `targetAudience` → officiels → tokens `/users/{uid}/fcmTokens` → `sendEachForMulticast` (chunks 500). Purge les tokens morts. Pose `pushedAt` (garde idempotence anti-double-push). |
+| `coachCreateMember` | Callable (coach scope) | Coach crée un joueur dans une de ses équipes : crée `/members/{id}` (`roles:['player']`, dédup `findExactMemberMatch`), `arrayUnion` dans `team.playerIds` (déclenche `initiateDuesOnPlayerActivation`), écrit `/members/{id}/private/contact`. App mobile. |
+| `coachUpdateMember` | Callable (coach scope) | Coach édite un membre d'une de ses équipes — whitelist : `firstName`, `lastName`, `birthDate`, contact `email`/`phone`, `comms.generalRecipients`. App mobile. |
+| `coachDeactivateMember` | Callable (coach scope) | `mode:'bench'` → `active:false`. `mode:'archive'` → `status:'archived'` + `archivedAt`/`archivedReason`/`archivedByUid` + `active:false` (pas de retrait de `playerIds`). App mobile. |
+| `coachCreateAwayMatch` | Callable (coach scope) | Coach crée un match à l'extérieur (`/matches`, `kind:'away'`, `date` = minuit UTC) pour une de ses équipes + libère best-effort les entraînements en conflit (`freeConflictingTrainings`). App mobile. |
+| `syncUserRolesFromMember` | Firestore trigger (`/members/{id}` write) | Propage `member.roles` → `/users/{linkedUserId}.roles` (copie verbatim, écrase). Délien/suppression → roles de l'ancien user remis à `[]`. Les rôles du membre définissent les rôles Auth. |
+
+> Les 5 dernières (`fanoutNotification` + 4 callables `coach*`) sont introduites par le chantier app mobile Flutter — cf. `docs/mobile-app.md`. Les callables `coach*` re-vérifient le scope coach côté serveur (Admin SDK) car `/members` et `/matches` sont write-admin-only dans `firestore.rules`.
 
 ## Auth
 

@@ -32,6 +32,10 @@ service cloud.firestore {
     // la collection `/dues` (pas de scope team) et peut marquer un due payé
     // via la callable `markDuePaid`. Pas de droits admin généraux.
     function isTreasurer() { return hasRole('treasurer'); }
+    // Secrétaire — rôle additif staff. Peut notamment confirmer une licence
+    // via la callable `confirmLicense` (au même titre que treasurer/admin).
+    // Pas de droits admin généraux ; jamais suspendu (cf. `callerSuspended`).
+    function isSecretary() { return hasRole('secretary'); }
     // Le user est lié à ce member (auto-lecture autorisée).
     function isLinkedMember(memberId) {
       return isSignedIn() && userDoc().memberId == memberId;
@@ -52,6 +56,56 @@ service cloud.firestore {
     function isGuardianOf(memberId) {
       return isSignedIn() && request.auth.uid in
         get(/databases/$(database)/documents/members/$(memberId)).data.guardianUserIds;
+    }
+    // Le membre lié au caller a une licence d'officiel ACTIVE confirmée
+    // (`member.officialLicense != null`). Sert à gater l'auto-inscription
+    // d'un officiel à un match (cf. `officialAssignments` create self-register).
+    //
+    // Défense en profondeur : le check SAISON-PRÉCIS (la licence cible-t-elle
+    // bien la saison courante ?) N'EST PAS fait ici. Les rules ne peuvent pas
+    // connaître à bas coût l'id de la saison active — `/config/club` ne porte
+    // pas de pointeur et déterminer la saison `status:'active'` exigerait une
+    // query collection (interdite en rules). Le check saison-précis est porté
+    // par l'UI et la callable d'assignation ; ici on se contente de
+    // `officialLicense != null` comme garde grossière.
+    //
+    // Accès défensif : `get('officialLicense', null)` tolère un doc membre
+    // legacy sans le champ (traité comme « pas de licence »). Suppose un
+    // caller non-staff avec `memberId` non-null (les clauses appelantes
+    // court-circuitent déjà sur les rôles staff).
+    function callerHasOfficialLicense() {
+      return isSignedIn()
+        && userDoc().memberId != null
+        && get(/databases/$(database)/documents/members/$(userDoc().memberId))
+             .data.get('officialLicense', null) != null;
+    }
+
+    // -------- Membre inactif → accès app club suspendu --------
+    // Un membre marqué inactif (`/members/{memberId}.active == false`) est un
+    // joueur/officiel ayant quitté le club. Son compte Auth lié perd l'accès
+    // aux données de l'app club (mobile / app club — collections `/bookings`,
+    // `/matches`, `/venues`, `/notifications`, etc.), MAIS conserve l'accès
+    // au portail public `courtbase-register` pour se réinscrire (la callable
+    // `confirmRegistration` repose `active:true` sur réutilisation du membre).
+    //
+    // `callerSuspended()` retourne `true` SSI :
+    //  - le caller est signé,
+    //  - il n'a AUCUN rôle staff (rootAdmin/admin/coach/treasurer/secretary)
+    //    — les comptes staff utilisent le desktop, jamais suspendus,
+    //  - son `userDoc().memberId` est non-null,
+    //  - le `/members/{memberId}.active` vaut explicitement `false`.
+    //
+    // Les checks de rôle sont placés AVANT le `get()` sur /members : un compte
+    // staff court-circuite et ne paie jamais la lecture supplémentaire.
+    // Accès défensif au champ `active` : `.get('active', true)` ⇒ un doc sans
+    // le champ est traité comme actif (pas de suspension par omission).
+    function callerSuspended() {
+      return isSignedIn()
+        && !isRootAdmin() && !isAdmin() && !isCoach() && !isTreasurer()
+        && !isSecretary()
+        && userDoc().memberId != null
+        && get(/databases/$(database)/documents/members/$(userDoc().memberId))
+             .data.get('active', true) == false;
     }
 
     // -------- rootAdmin bypass (à placer en premier dans chaque match) --------
@@ -90,6 +144,16 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['displayName', 'photoURL', 'phone', 'address', 'profileCompletedAt']));
       allow delete: if isRootAdmin() || isAdmin();
+
+      // Tokens de push FCM des appareils du user (app mobile Flutter).
+      // L'ID du document EST la chaîne du token (dédup naturelle, multi-device).
+      // Self-manage only : un user gère uniquement ses propres tokens. Admin
+      // lit pour debug. La Function `fanoutNotification` (Admin SDK) bypasse.
+      // Cf. docs/firebase.md (section /users/{uid}/fcmTokens).
+      match /fcmTokens/{tokenId} {
+        allow read: if isRootAdmin() || isAdmin() || request.auth.uid == uid;
+        allow create, update, delete: if isSignedIn() && request.auth.uid == uid;
+      }
     }
 
     // ========================================================================
@@ -101,17 +165,21 @@ service cloud.firestore {
       allow read: if isRootAdmin() || isAdmin() || isCoach() ||
         hasRole('official') || isLinkedMember(memberId) || isGuardianOf(memberId);
       // Write admin-only en v1. `guardianUserIds` et `comms` sont admin-only-write.
-      // NOTE : `docs/main.md` documente que le coach pourra éditer
-      // `comms.generalRecipients` pour les mineurs de son équipe — ce flow passera
-      // par une callable function (validation team + minor) en v1.1, PAS au niveau
-      // des rules. Ne pas ajouter de règle coach-update tant que la callable n'est
-      // pas livrée (sinon on ouvre trop large).
+      // Les mutations coach (app mobile) passent par des callables Admin SDK qui
+      // bypassent cette rule et re-vérifient le scope coach côté serveur :
+      //  - `coachCreateMember`     — crée un joueur + l'ajoute à team.playerIds.
+      //  - `coachUpdateMember`     — édite firstName/lastName/birthDate/contact +
+      //                              `comms.generalRecipients` (le flow anticipé
+      //                              ci-dessus pour les mineurs de l'équipe).
+      //  - `coachDeactivateMember` — `mode:'bench'` (active=false) ou
+      //                              `mode:'archive'` (status='archived', …).
+      // Ne PAS ajouter de règle coach-update directe ici (on ouvrirait trop
+      // large) — tout passe par les callables.
       //
       // Archive (`status='archived'`, `archivedAt`, `archivedReason`,
-      // `archivedByUid`) : posée par callable serveur (`archiveMember` ou
-      // déclenchée par `refuseRegistration`). PAS d'ouverture client dédiée —
-      // la rule admin globale couvre l'admin SDK ; les coachs/officials ne
-      // peuvent pas archiver directement.
+      // `archivedByUid`) : posée par callable serveur (`coachDeactivateMember`
+      // mode 'archive', ou déclenchée par `refuseRegistration`). PAS d'ouverture
+      // client dédiée — la rule admin globale couvre l'Admin SDK.
       allow write: if isRootAdmin() || isAdmin();
 
       // Contact info isolés ici : email + phone.
@@ -123,9 +191,17 @@ service cloud.firestore {
         allow write: if isRootAdmin() || isAdmin() || isLinkedMember(memberId);
       }
     }
+    // Référentiel rôles — résolu par l'app club (web/mobile), PAS par
+    // courtbase-register. Lecture coupée pour les membres inactifs.
+    //
+    // create/update : admin-only. delete : admin-only ET interdit sur les
+    // rôles `system` (les 6 rôles canoniques sont non-supprimables — garde
+    // serveur, défense en profondeur au-delà du blocage UI).
     match /roles/{roleId} {
-      allow read: if isSignedIn();
-      allow write: if isRootAdmin() || isAdmin();
+      allow read: if isSignedIn() && !callerSuspended();
+      allow create, update: if isRootAdmin() || isAdmin();
+      allow delete: if (isRootAdmin() || isAdmin())
+        && resource.data.type != 'system';
     }
     match /invitations/{inviteId} {
       allow read, write: if isRootAdmin() || isAdmin();
@@ -134,16 +210,18 @@ service cloud.firestore {
     // ========================================================================
     // /venues + /courts + /timeSlots
     // ========================================================================
+    // Données "app club" : non lues par le portail courtbase-register. La
+    // lecture est coupée pour les membres inactifs (`!callerSuspended()`).
     match /venues/{venueId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       allow write: if isRootAdmin() || isAdmin();
 
       match /courts/{courtId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && !callerSuspended();
         allow write: if isRootAdmin() || isAdmin();
 
         match /timeSlots/{slotId} {
-          allow read: if isSignedIn();
+          allow read: if isSignedIn() && !callerSuspended();
           allow write: if isRootAdmin() || isAdmin();
         }
       }
@@ -153,8 +231,9 @@ service cloud.firestore {
     // utilisé par Venues (load) et Bookings (count par court). Les rules de
     // sous-collection ci-dessus ne s'appliquent PAS aux collectionGroup queries
     // (limitation Firestore : il faut une règle séparée avec wildcard `{path=**}`).
+    // Donnée app club → coupée pour les membres inactifs.
     match /{path=**}/courts/{courtId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
     }
 
     // Rule collectionGroup `refusalLogs` — admin seulement. Permet la vue admin
@@ -198,26 +277,30 @@ service cloud.firestore {
       allow write: if isRootAdmin() || isAdmin();
     }
     // Référentiel types de licence (rôle × niveau, prix courant). Sera référencé
-    // par la future entité /licenses. Read signed, write admin only — édité
-    // depuis Settings → Licences.
+    // par la future entité /licenses. Write admin only — édité depuis
+    // Settings → Licences. Donnée app club — courtbase-register lit
+    // `/licenseRequests` mais PAS `/licenseTypes` → lecture coupée pour les
+    // membres inactifs.
     match /licenseTypes/{licenseTypeId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       allow write: if isRootAdmin() || isAdmin();
     }
 
     // ========================================================================
     // /matchTypes, /seasons, /closurePeriods
     // ========================================================================
+    // Données "app club" — pas utilisées par courtbase-register. Lecture
+    // coupée pour les membres inactifs (`!callerSuspended()`).
     match /matchTypes/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       allow write: if isRootAdmin() || isAdmin();
     }
     match /seasons/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       allow write: if isRootAdmin() || isAdmin();
     }
     match /closurePeriods/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       allow write: if isRootAdmin() || isAdmin();
     }
 
@@ -227,16 +310,21 @@ service cloud.firestore {
     // Chaque booking instance dans /bookings référence le seriesId. Seuls les
     // admins gèrent les séries (création, édition, suppression) — les coachs
     // ne peuvent pas créer/modifier de série.
+    // Donnée app club → lecture coupée pour les membres inactifs.
     match /bookingSeries/{seriesId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       allow create, update, delete: if isRootAdmin() || isAdmin();
     }
 
     // ========================================================================
     // /bookings + sub-collections
     // ========================================================================
+    // Donnée "app club" — non lue par courtbase-register. Lecture coupée pour
+    // les membres inactifs (`!callerSuspended()`). Les clauses write/coach ne
+    // sont pas re-gardées : les rôles coach/admin ne déclenchent jamais
+    // `callerSuspended` (court-circuit staff).
     match /bookings/{bookingId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       // Create/delete : admin only (les bookings sont générés par Function ou créés par admin).
       allow create: if isRootAdmin() || isAdmin();
       allow delete: if isRootAdmin() || isAdmin();
@@ -247,22 +335,30 @@ service cloud.firestore {
            .hasOnly(['status', 'cancelReason', 'actionLog']));
 
       match /officialAssignments/{assignmentId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && !callerSuspended();
         allow create: if isRootAdmin() || isAdmin() ||
           // Self-register : l'official crée son propre assignment, pour lui-même.
-          (isSignedIn() &&
+          // Bloqué pour un membre inactif — fonctionnalité app club. Exige en
+          // plus une licence d'officiel ACTIVE (`callerHasOfficialLicense()`) :
+          // un membre qualifié mais sans licence active ne peut pas s'inscrire.
+          // Check saison-précis fait côté UI/callable (cf. helper).
+          (isSignedIn() && !callerSuspended() &&
+           callerHasOfficialLicense() &&
            request.resource.data.status == 'pending' &&
            request.resource.data.memberId == userDoc().memberId);
         allow update: if isRootAdmin() || isAdmin() ||
-          // L'official peut update status + respondedAt sur SA propre assignation
-          (resource.data.memberId == userDoc().memberId &&
+          // L'official peut update status + respondedAt sur SA propre assignation.
+          // Bloqué pour un membre inactif.
+          (!callerSuspended() &&
+           resource.data.memberId == userDoc().memberId &&
            request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['status', 'respondedAt']));
         allow delete: if isRootAdmin() || isAdmin();
       }
 
       match /attendance/{attendanceId} {
-        // Coach restreint à sa team (via teamId du booking parent).
+        // Coach restreint à sa team (via teamId du booking parent). Pas de
+        // garde inactif nécessaire : seuls admin/coach accèdent (court-circuit staff).
         allow read: if isRootAdmin() || isAdmin() || isCoachOfBooking(bookingId);
         allow write: if isRootAdmin() || isAdmin() || isCoachOfBooking(bookingId);
       }
@@ -277,8 +373,10 @@ service cloud.firestore {
     //  - match AWAY : `match.bookingId === null` (pas de booking — date/heure
     //    sont source de vérité sur le match).
     // Cf. docs/firebase.md (section /matches).
+    // Donnée "app club" — non lue par courtbase-register. Lecture coupée pour
+    // les membres inactifs (`!callerSuspended()`).
     match /matches/{matchId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       allow create, update, delete: if isRootAdmin() || isAdmin();
 
       // Assignations d'officiels d'un match À L'EXTÉRIEUR (kind='away') — les
@@ -286,15 +384,21 @@ service cloud.firestore {
       // ici. Schéma + permissions identiques à
       // /bookings/{}/officialAssignments (cf. docs/firebase.md).
       match /officialAssignments/{assignmentId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && !callerSuspended();
         allow create: if isRootAdmin() || isAdmin() ||
           // Self-register : l'official crée son propre assignment.
-          (isSignedIn() &&
+          // Bloqué pour un membre inactif — fonctionnalité app club. Exige en
+          // plus une licence d'officiel ACTIVE (`callerHasOfficialLicense()`).
+          // Check saison-précis fait côté UI/callable (cf. helper).
+          (isSignedIn() && !callerSuspended() &&
+           callerHasOfficialLicense() &&
            request.resource.data.status == 'pending' &&
            request.resource.data.memberId == userDoc().memberId);
         allow update: if isRootAdmin() || isAdmin() ||
           // L'official update status + respondedAt sur SA propre assignation.
-          (resource.data.memberId == userDoc().memberId &&
+          // Bloqué pour un membre inactif.
+          (!callerSuspended() &&
+           resource.data.memberId == userDoc().memberId &&
            request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['status', 'respondedAt']));
         allow delete: if isRootAdmin() || isAdmin();
@@ -313,11 +417,13 @@ service cloud.firestore {
     // ========================================================================
     // /notifications
     // ========================================================================
+    // Donnée "app club" — non utilisée par courtbase-register. Lecture et
+    // marquage `readBy` coupés pour les membres inactifs (`!callerSuspended()`).
     match /notifications/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && !callerSuspended();
       allow create: if isRootAdmin() || isAdmin();
       // Tout user peut s'ajouter à readBy[] — uniquement son propre uid, pas de retrait.
-      allow update: if isSignedIn() &&
+      allow update: if isSignedIn() && !callerSuspended() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']) &&
         request.resource.data.readBy.toSet()
           .difference(resource.data.readBy.toSet())
@@ -338,7 +444,13 @@ service cloud.firestore {
     // Lecture parent/membre (app `courtbase-register`) :
     //  - le **membre lié** (`/members/{memberId}.linkedUserId == auth.uid`),
     //  - les **tuteurs** (`/members/{memberId}.guardianUserIds` contient
-    //    `auth.uid`).
+    //    `auth.uid`),
+    //  - le **compte ayant fait l'inscription** (`due.registeredByUid ==
+    //    auth.uid`). Ancre directe posée par `initiateDuesOnPlayerActivation`
+    //    à la création — couvre le submitter même quand le binding membre
+    //    n'a pas pris (ex. `for: 'self'` sur un member déjà lié à un autre
+    //    compte). Champ optionnel : `get('registeredByUid', null)` tolère les
+    //    lignes legacy. `null` ⇒ aucun compte ne matche via cette clause.
     //
     // Implémentation : `get()` direct sur `/members/{resource.data.memberId}`
     // côté rules — coût = 1 lecture supplémentaire par doc évalué, acceptable
@@ -364,7 +476,11 @@ service cloud.firestore {
         // directement le linkedUserId.
         (isSignedIn() &&
          get(/databases/$(database)/documents/members/$(resource.data.memberId))
-           .data.linkedUserId == request.auth.uid);
+           .data.linkedUserId == request.auth.uid) ||
+        // Compte ayant soumis l'inscription à l'origine de la cotisation.
+        // Check direct sur le doc — aucun get() supplémentaire.
+        (isSignedIn() &&
+         resource.data.get('registeredByUid', null) == request.auth.uid);
       // Écriture directe : admin/rootAdmin (filets de sécurité). Le passage
       // `paid` standard passe par la callable `markDuePaid` (Admin SDK, scope
       // admin OU treasurer enforcée côté callable). Treasurer n'a PAS de
@@ -421,6 +537,48 @@ service cloud.firestore {
     }
 
     // ========================================================================
+    // /licenses  — instances de licences fédérales émises
+    // ========================================================================
+    // Un doc `/licenses/{id}` = une licence émise pour un membre × saison ×
+    // type de licence (role, level, feeSnapshot snapshottés). Cf.
+    // docs/firebase.md (/licenses) + docs/main.md (Licences).
+    //
+    // Cycle de vie :
+    //  - `pending`   : créée par l'admin depuis la fiche membre (write client
+    //                  direct couvert par la clause `create` ci-dessous).
+    //  - `active`    : confirmée (fédération + paiement club). Le passage en
+    //                  `active` — qui pose aussi `accountingEntryId`,
+    //                  `confirmedAt`, `confirmedByUid` et la réf dénormalisée
+    //                  `member.officialLicense` / `coachLicense` + poste
+    //                  l'écriture comptable de la charge — passe par la
+    //                  callable `confirmLicense` (Admin SDK, qui BYPASSE ces
+    //                  rules et re-vérifie le scope treasurer/admin/secretary/
+    //                  rootAdmin côté serveur). On n'ouvre donc PAS treasurer
+    //                  ni secretary en write direct ici : la rule `update`
+    //                  reste serrée sur admin/rootAdmin (filets de sécurité).
+    //  - `cancelled` : terminal.
+    //
+    // Lecture : staff (rootAdmin/admin/coach/treasurer/secretary), le membre
+    // lié, et ses tuteurs — chacun peut consulter sa propre licence. PAS de
+    // garde `!callerSuspended()` : comme `/dues`, un membre inactif garde la
+    // lecture de sa propre licence.
+    //
+    // Pas d'index composite : les lectures `where memberId == X` portent sur
+    // < 100 docs → simple query + tri JS côté client (règle 10 du CLAUDE.md).
+    match /licenses/{id} {
+      allow read: if isRootAdmin() || isAdmin() || isCoach()
+        || isTreasurer() || isSecretary()
+        || isLinkedMember(resource.data.memberId)
+        || isGuardianOf(resource.data.memberId);
+      // Create : admin/rootAdmin — création en `pending` depuis la fiche membre.
+      allow create: if isRootAdmin() || isAdmin();
+      // Update/delete : admin/rootAdmin uniquement. La confirmation
+      // (`status: 'active'` + `accountingEntryId`) passe par la callable
+      // `confirmLicense` en Admin SDK — voir commentaire du bloc ci-dessus.
+      allow update, delete: if isRootAdmin() || isAdmin();
+    }
+
+    // ========================================================================
     // /registrations  — inscriptions self-service via app courtbase-register
     // ========================================================================
     // Cf. docs/chantier-registrations.md. Les transitions de status post-`submitted`
@@ -444,12 +602,20 @@ service cloud.firestore {
         && resource.data.submittedByUid == request.auth.uid
         && resource.data.status == 'draft'
         && request.resource.data.submittedByUid == resource.data.submittedByUid;
-      // Delete : auteur uniquement, et uniquement tant que la registration est
-      // encore un brouillon. Une fois soumise, le user passe par la callable
-      // `cancelRegistration` (qui set status='cancelled', conserve l'audit trail).
-      allow delete: if isSignedIn()
-        && resource.data.submittedByUid == request.auth.uid
-        && resource.data.status == 'draft';
+      // Delete :
+      //  (a) l'auteur, uniquement tant que la registration est encore un
+      //      brouillon. Une fois soumise, il passe par la callable
+      //      `cancelRegistration` (set status='cancelled', conserve l'audit).
+      //  (b) admin / rootAdmin — suppression définitive depuis la vue
+      //      Inscriptions (correction d'erreur). La voie normale d'extinction
+      //      reste `cancelRegistration` ; un garde-fou côté repo refuse de
+      //      supprimer une registration confirmée (member + cotisation créés).
+      allow delete: if isSignedIn() && (
+        (resource.data.submittedByUid == request.auth.uid
+          && resource.data.status == 'draft')
+        || isAdmin()
+        || isRootAdmin()
+      );
     }
 
     // ========================================================================

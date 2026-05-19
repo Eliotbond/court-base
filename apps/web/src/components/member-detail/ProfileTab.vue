@@ -9,10 +9,11 @@ import {
   MapPin,
   Pencil,
   Phone,
+  Power,
   ShieldCheck,
   Trash2,
   TriangleAlert,
-  UserPlus,
+  Unlink,
   Users as UsersIcon,
 } from 'lucide-vue-next'
 import InputText from 'primevue/inputtext'
@@ -33,8 +34,7 @@ import type {
 } from '@club-app/shared-types'
 import Avatar from '@/components/ui/Avatar.vue'
 import Pill from '@/components/ui/Pill.vue'
-import ManageGuardiansDialog from '@/components/member-detail/ManageGuardiansDialog.vue'
-import ManageLinkedUserDialog from '@/components/member-detail/ManageLinkedUserDialog.vue'
+import LinkUserDialog from '@/components/member-detail/LinkUserDialog.vue'
 import DeleteMemberDialog from '@/components/member-detail/DeleteMemberDialog.vue'
 
 defineProps<{
@@ -219,16 +219,23 @@ function clearAvs(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Guardians — list + add (dialog) + remove (confirm).
+// Comptes liés — un seul dialog unifié `LinkUserDialog` pour lier un
+// /users/{uid} comme propriétaire (member.linkedUserId) OU comme tuteur
+// (member.guardianUserIds). Les retraits restent inline ci-dessous.
 // ---------------------------------------------------------------------------
 
-const isManageGuardiansOpen = ref(false)
+const isLinkUserDialogOpen = ref(false)
+
+function openLinkUserDialog(): void {
+  isLinkUserDialogOpen.value = true
+}
+
+// ---------------------------------------------------------------------------
+// Guardians — remove (confirm). L'ajout passe par `LinkUserDialog`.
+// ---------------------------------------------------------------------------
+
 const guardianToRemove = ref<GuardianRef | null>(null)
 const isRemovingGuardian = ref(false)
-
-function openAddGuardianDialog(): void {
-  isManageGuardiansOpen.value = true
-}
 
 function askRemoveGuardian(g: GuardianRef): void {
   guardianToRemove.value = g
@@ -274,14 +281,63 @@ function formatAddress(addr: UserAddress | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Linked-user dialog — admin lie/délie un member à un /users{uid}
-// (typiquement issu d'une inscription parent dans `apps/courtbase-register`).
+// Owner unlink — délie le compte propriétaire du membre. Confirmation inline
+// en deux clics (pas de sub-dialog). La liaison, elle, passe par `LinkUserDialog`.
 // ---------------------------------------------------------------------------
 
-const isManageLinkedUserOpen = ref(false)
+const confirmUnlinkOwner = ref(false)
+const isUnlinkingOwner = ref(false)
 
-function openManageLinkedUserDialog(): void {
-  isManageLinkedUserOpen.value = true
+function askUnlinkOwner(): void {
+  confirmUnlinkOwner.value = true
+}
+
+function cancelUnlinkOwner(): void {
+  confirmUnlinkOwner.value = false
+}
+
+async function confirmUnlinkOwnerAction(): Promise<void> {
+  if (!store.member) return
+  isUnlinkingOwner.value = true
+  const ok = await membersStore.setLinkedUser(store.member.id, null)
+  if (ok) {
+    await store.load(store.member.id)
+    confirmUnlinkOwner.value = false
+  }
+  isUnlinkingOwner.value = false
+}
+
+// ---------------------------------------------------------------------------
+// Toggle Actif / Inactif — `member.active` pilote l'accès à l'app mobile
+// (enforced par firestore.rules). Distinct de l'archive (`status`).
+//
+// Passage en INACTIF → confirmation (le membre perd l'accès mobile).
+// Passage en ACTIF → pas de confirmation.
+// ---------------------------------------------------------------------------
+
+const isDeactivateConfirmOpen = ref(false)
+const isTogglingActive = ref(false)
+
+function onToggleActive(): void {
+  if (!store.member) return
+  if (store.member.active) {
+    // Actif → inactif : on demande confirmation.
+    isDeactivateConfirmOpen.value = true
+  } else {
+    // Inactif → actif : pas de confirmation.
+    void setActive(true)
+  }
+}
+
+async function setActive(active: boolean): Promise<void> {
+  if (!store.member) return
+  isTogglingActive.value = true
+  const ok = await membersStore.setMemberActive(store.member.id, active)
+  if (ok) {
+    await store.load(store.member.id)
+    isDeactivateConfirmOpen.value = false
+  }
+  isTogglingActive.value = false
 }
 
 // ---------------------------------------------------------------------------
@@ -559,11 +615,37 @@ function onDeleted(memberId: string): void {
             </button>
           </dd>
         </div>
-        <div class="flex">
+        <div class="flex items-start">
           <dt class="w-32 text-surface-500">
             Statut
           </dt>
-          <dd>{{ store.member.active ? 'Actif' : 'Archivé' }}</dd>
+          <dd class="flex-1 flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <Pill :variant="store.member.active ? 'emerald' : 'amber'">
+                {{ store.member.active ? 'Actif' : 'Inactif' }}
+              </Pill>
+              <Pill
+                v-if="store.member.status === 'archived'"
+                variant="rose"
+              >
+                Archivé
+              </Pill>
+            </div>
+            <button
+              v-if="canEdit"
+              type="button"
+              class="btn btn-ghost btn-sm !h-6 !px-2"
+              :class="store.member.active ? '!text-amber-700' : '!text-emerald-700'"
+              :disabled="store.saving || isTogglingActive"
+              @click="onToggleActive"
+            >
+              <Power
+                :size="12"
+                :stroke-width="2"
+              />
+              {{ store.member.active ? 'Désactiver' : 'Activer' }}
+            </button>
+          </dd>
         </div>
       </dl>
     </div>
@@ -651,13 +733,13 @@ function onDeleted(memberId: string): void {
           type="button"
           class="btn btn-secondary btn-sm"
           :disabled="store.saving"
-          @click="openAddGuardianDialog"
+          @click="openLinkUserDialog"
         >
-          <UserPlus
+          <Link2
             :size="13"
             :stroke-width="2"
           />
-          Ajouter un tuteur
+          Lier un user
         </button>
       </div>
 
@@ -982,32 +1064,53 @@ function onDeleted(memberId: string): void {
           />
           Compte Firebase Auth
         </h2>
-        <button
-          v-if="canEdit && store.member.linkedUserId"
-          type="button"
-          class="btn btn-secondary btn-sm"
-          :disabled="store.saving"
-          @click="openManageLinkedUserDialog"
+        <div
+          v-if="canEdit"
+          class="flex items-center gap-2"
         >
-          <Pencil
-            :size="12"
-            :stroke-width="2"
-          />
-          Modifier
-        </button>
-        <button
-          v-else-if="canEdit"
-          type="button"
-          class="btn btn-secondary btn-sm"
-          :disabled="store.saving"
-          @click="openManageLinkedUserDialog"
-        >
-          <Link2
-            :size="12"
-            :stroke-width="2"
-          />
-          Lier un compte
-        </button>
+          <button
+            v-if="store.member.linkedUserId"
+            type="button"
+            class="btn btn-ghost btn-sm !text-rose-700"
+            :disabled="store.saving || isUnlinkingOwner"
+            @click="confirmUnlinkOwner ? confirmUnlinkOwnerAction() : askUnlinkOwner()"
+          >
+            <Unlink
+              :size="12"
+              :stroke-width="2"
+            />
+            <template v-if="isUnlinkingOwner">
+              Détachement…
+            </template>
+            <template v-else-if="confirmUnlinkOwner">
+              Confirmer le détachement
+            </template>
+            <template v-else>
+              Délier
+            </template>
+          </button>
+          <button
+            v-if="confirmUnlinkOwner"
+            type="button"
+            class="btn btn-ghost btn-sm"
+            :disabled="isUnlinkingOwner"
+            @click="cancelUnlinkOwner"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            :disabled="store.saving"
+            @click="openLinkUserDialog"
+          >
+            <Link2
+              :size="12"
+              :stroke-width="2"
+            />
+            {{ store.member.linkedUserId ? 'Remplacer' : 'Lier un user' }}
+          </button>
+        </div>
       </div>
       <template v-if="store.member.linkedUser">
         <dl class="text-[13px] space-y-2">
@@ -1125,7 +1228,8 @@ function onDeleted(memberId: string): void {
       <p class="text-[12px] text-surface-500">
         Actions irréversibles. À utiliser uniquement en cas d'erreur de
         création. Pour mettre fin à l'adhésion d'un membre légitime, utilisez
-        plutôt l'archive (bouton en haut de la page).
+        plutôt le bouton « Désactiver » de la carte Identité : il conserve
+        l'historique et retire l'accès à l'app mobile.
       </p>
       <div>
         <button
@@ -1320,26 +1424,15 @@ function onDeleted(memberId: string): void {
     </template>
   </Dialog>
 
-  <!-- ============== Manage Guardians dialog ============== -->
-  <ManageGuardiansDialog
+  <!-- ============== Link user dialog (unifié owner / guardian) ============== -->
+  <LinkUserDialog
     v-if="store.member"
-    :visible="isManageGuardiansOpen"
-    :member-id="store.member.id"
-    :current-guardians="store.member.guardians"
-    :member-linked-user-id="store.member.linkedUserId"
-    @update:visible="isManageGuardiansOpen = $event"
-    @linked="isManageGuardiansOpen = false"
-  />
-
-  <!-- ============== Manage Linked User dialog ============== -->
-  <ManageLinkedUserDialog
-    v-if="store.member"
-    :visible="isManageLinkedUserOpen"
+    :visible="isLinkUserDialogOpen"
     :member-id="store.member.id"
     :current-linked-user-id="store.member.linkedUserId"
     :current-guardians="store.member.guardians"
-    @update:visible="isManageLinkedUserOpen = $event"
-    @linked="isManageLinkedUserOpen = false"
+    @update:visible="isLinkUserDialogOpen = $event"
+    @linked="isLinkUserDialogOpen = false"
   />
 
   <!-- ============== Delete member dialog (zone de danger) ============== -->
@@ -1392,6 +1485,49 @@ function onDeleted(memberId: string): void {
         </template>
         <template v-else>
           Retirer
+        </template>
+      </button>
+    </template>
+  </Dialog>
+
+  <!-- ============== Confirm deactivate member ============== -->
+  <Dialog
+    :visible="isDeactivateConfirmOpen"
+    modal
+    :draggable="false"
+    :style="{ width: '440px' }"
+    header="Désactiver ce membre"
+    @update:visible="(v: boolean) => { if (!v) isDeactivateConfirmOpen = false }"
+  >
+    <div class="space-y-2 pt-1 text-[13px]">
+      <p>
+        Passer ce membre en <strong>inactif</strong> ?
+      </p>
+      <p class="text-[12px] text-surface-500">
+        Ce membre perdra l'accès à l'application mobile. Il pourra toujours se
+        réinscrire via le portail d'inscription.
+      </p>
+    </div>
+    <template #footer>
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm"
+        :disabled="isTogglingActive"
+        @click="isDeactivateConfirmOpen = false"
+      >
+        Annuler
+      </button>
+      <button
+        type="button"
+        class="btn btn-primary btn-sm !bg-amber-600 hover:!bg-amber-700"
+        :disabled="isTogglingActive"
+        @click="setActive(false)"
+      >
+        <template v-if="isTogglingActive">
+          …
+        </template>
+        <template v-else>
+          Désactiver
         </template>
       </button>
     </template>

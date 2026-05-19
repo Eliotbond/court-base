@@ -16,18 +16,14 @@ import { functions } from './firebase'
  */
 
 // ---------------------------------------------------------------------------
-// matchExistingMember — lookup AVS + fuzzy match nom/DOB.
+// matchExistingMember — lookup d'un member existant par AVS exact.
 // Source : functions/src/registrations/matchExistingMember.ts
 // Auth : signed-in.
 // ---------------------------------------------------------------------------
 
 export interface MatchExistingMemberInput {
-  firstName: string
-  lastName: string
-  /** ISO YYYY-MM-DD. */
-  birthDate: string
-  /** AVS brut (format libre, normalisé côté server). `null` si avsUnavailable. */
-  avs: string | null
+  /** AVS au format 756.XXXX.XXXX.XX (obligatoire). */
+  avs: string
 }
 
 export interface MemberMatch {
@@ -36,8 +32,13 @@ export interface MemberMatch {
   lastName: string
   /** ISO YYYY-MM-DD. */
   birthDateIso: string
-  matchedOn: 'avs' | 'licenseNumber' | 'fuzzy_name_dob'
-  distance: number
+  matchedOn: 'avs' | 'licenseNumber'
+  /**
+   * `true` si le dossier est déjà rattaché à un compte autre que le caller
+   * (`linkedUserId` ou `guardianUserIds`). Le wizard refuse alors le
+   * rattachement self-service et invite à contacter le club.
+   */
+  linkedToOtherAccount: boolean
 }
 
 export interface MatchExistingMemberOutput {
@@ -67,9 +68,12 @@ export interface SubmitRegistrationPlayer {
   /** ISO YYYY-MM-DD. */
   birthDate: string
   gender: 'M' | 'F' | 'other' | null
-  /** AVS brut, normalisé côté server. `null` si `avsUnavailable`. */
+  /**
+   * AVS au format 756.XXXX.XXXX.XX. Obligatoire — la callable `submitRegistration`
+   * rejette toute soumission sans AVS valide. `null` n'est toléré qu'au transit
+   * d'un draft incomplet (le wizard bloque la soumission en amont).
+   */
   avs: string | null
-  avsUnavailable: boolean
   phone: string | null
 }
 

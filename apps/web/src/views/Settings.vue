@@ -620,6 +620,18 @@ async function confirmDeleteRole(role: Role): Promise<void> {
   }
 }
 
+/**
+ * Amorce `/roles` sur un projet vierge (6 rôles système + 2 customs par
+ * défaut). CTA affiché tant que la collection est vide.
+ */
+async function seedRoles(): Promise<void> {
+  try {
+    await store.seedRolesAction()
+  } catch {
+    /* surfaced via store.error */
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Closure periods — list + add form
 // ---------------------------------------------------------------------------
@@ -2988,9 +3000,24 @@ watch(
 
             <div
               v-if="store.roles.length === 0"
-              class="px-3 py-6 text-center text-[12px] text-surface-500"
+              class="px-3 py-6 flex flex-col items-center gap-3 text-center"
             >
-              Aucun rôle configuré.
+              <p class="text-[12px] text-surface-500">
+                Aucun rôle configuré. Initialisez les 6 rôles système
+                (+ 2 rôles custom par défaut) pour démarrer.
+              </p>
+              <button
+                type="button"
+                class="btn btn-primary btn-sm"
+                :disabled="isSavingThis('roles')"
+                @click="seedRoles"
+              >
+                <Plus
+                  :size="14"
+                  :stroke-width="2"
+                />
+                Initialiser les rôles
+              </button>
             </div>
           </div>
 

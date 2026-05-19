@@ -64,8 +64,12 @@ interface DefaultAccountSeed {
 }
 
 /**
- * Les 10 comptes par défaut du plan comptable (docs/compta.md §3). L'ordre du
+ * Les comptes par défaut du plan comptable (docs/compta.md §3). L'ordre du
  * tableau dicte le `displayOrder` (index × 10).
+ *
+ * Le compte « Licences fédérales » est résolu **par son nom** côté callable
+ * serveur `confirmLicense` (qui y poste la charge à la confirmation d'une
+ * licence) — le libellé exact doit être préservé.
  */
 const DEFAULT_ACCOUNTS: readonly DefaultAccountSeed[] = [
   { number: '1000', name: 'Caisse', nature: 'actif', isTreasury: true },
@@ -77,6 +81,7 @@ const DEFAULT_ACCOUNTS: readonly DefaultAccountSeed[] = [
   { number: '3400', name: 'Subventions J+S', nature: 'produit', isTreasury: false },
   { number: '4000', name: 'Frais de matériel', nature: 'charge', isTreasury: false },
   { number: '4200', name: "Frais d'arbitrage", nature: 'charge', isTreasury: false },
+  { number: '4300', name: 'Licences fédérales', nature: 'charge', isTreasury: false },
   { number: '6500', name: 'Frais administratifs', nature: 'charge', isTreasury: false },
 ]
 
@@ -157,7 +162,7 @@ export async function deleteAccount(id: string): Promise<void> {
 }
 
 /**
- * Crée les 10 comptes par défaut du plan comptable (docs/compta.md §3).
+ * Crée les comptes par défaut du plan comptable (docs/compta.md §3).
  * Idempotent : ne fait rien si la collection contient déjà des comptes.
  */
 export async function seedDefaultAccounts(): Promise<void> {

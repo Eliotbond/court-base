@@ -2,14 +2,12 @@
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Archive,
   ArrowLeft,
   CheckCircle2,
   CircleAlert,
   Mail,
   Pencil,
   Phone,
-  RotateCcw,
   TriangleAlert,
   X,
 } from 'lucide-vue-next'
@@ -85,7 +83,11 @@ const TABS = computed<readonly TabDef[]>(() => [
   { id: 'profile', label: 'Profil', visible: () => true },
   { id: 'dues', label: 'Cotisations', visible: () => store.isPlayer },
   { id: 'attendance', label: 'Présences', visible: () => store.isPlayer || store.isCoach },
-  { id: 'official', label: 'Officiel', visible: () => store.isOfficial },
+  // L'onglet "Officiel & coach" gère les niveaux (officiel + coach) et les
+  // licences fédérales — il est donc toujours visible (la qualification peut
+  // être posée sur n'importe quel membre, pas seulement les officiels déjà
+  // promus). La section rentabilité officiel reste conditionnée en interne.
+  { id: 'official', label: 'Officiel & coach', visible: () => true },
   { id: 'requests', label: 'Demandes', visible: () => true },
 ])
 
@@ -169,26 +171,6 @@ async function submitEdit(): Promise<void> {
   if (!store.error) {
     isEditDialogOpen.value = false
   }
-}
-
-// ---------------------------------------------------------------------------
-// Archive / reactivate confirmation
-// ---------------------------------------------------------------------------
-
-const isArchiveConfirmOpen = ref(false)
-
-function openArchiveConfirm(): void {
-  isArchiveConfirmOpen.value = true
-}
-
-async function confirmArchiveOrReactivate(): Promise<void> {
-  if (!store.member) return
-  if (store.member.active) {
-    await store.archive()
-  } else {
-    await store.reactivate()
-  }
-  isArchiveConfirmOpen.value = false
 }
 
 // ---------------------------------------------------------------------------
@@ -453,20 +435,6 @@ function tabProps() {
           />
           Modifier
         </button>
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm"
-          :class="store.member.active ? '!text-rose-700' : '!text-emerald-700'"
-          :disabled="store.saving"
-          @click="openArchiveConfirm"
-        >
-          <component
-            :is="store.member.active ? Archive : RotateCcw"
-            :size="13"
-            :stroke-width="2"
-          />
-          {{ store.member.active ? 'Archiver' : 'Réactiver' }}
-        </button>
       </div>
     </div>
 
@@ -590,57 +558,6 @@ function tabProps() {
           </template>
           <template v-else>
             Enregistrer
-          </template>
-        </button>
-      </template>
-    </Dialog>
-
-    <!-- ============== Archive confirm dialog ============== -->
-    <Dialog
-      v-model:visible="isArchiveConfirmOpen"
-      modal
-      :draggable="false"
-      :style="{ width: '420px' }"
-      :header="store.member.active ? 'Archiver le membre' : 'Réactiver le membre'"
-    >
-      <div class="space-y-2 pt-1 text-[13px]">
-        <template v-if="store.member.active">
-          <p>
-            Archiver <strong>{{ store.fullName }}</strong> ? Le membre restera
-            visible dans l'historique mais sera marqué inactif.
-          </p>
-          <p class="text-[12px] text-surface-500">
-            Pas de cascade : les cotisations / présences / assignations existantes
-            sont conservées. Pour retirer le membre des équipes, fais-le manuellement
-            depuis la page Teams.
-          </p>
-        </template>
-        <template v-else>
-          <p>
-            Réactiver <strong>{{ store.fullName }}</strong> ?
-          </p>
-        </template>
-      </div>
-      <template #footer>
-        <button
-          type="button"
-          class="btn btn-secondary btn-sm"
-          @click="isArchiveConfirmOpen = false"
-        >
-          Annuler
-        </button>
-        <button
-          type="button"
-          class="btn btn-sm"
-          :class="store.member.active ? 'btn-primary !bg-rose-600 hover:!bg-rose-700' : 'btn-primary'"
-          :disabled="store.saving"
-          @click="confirmArchiveOrReactivate"
-        >
-          <template v-if="store.saving">
-            …
-          </template>
-          <template v-else>
-            {{ store.member.active ? 'Archiver' : 'Réactiver' }}
           </template>
         </button>
       </template>

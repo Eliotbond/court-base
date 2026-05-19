@@ -14,6 +14,12 @@ const ADMIN_COACH: readonly string[] = ['admin', 'coach']
 const ADMIN_ONLY: readonly string[] = ['admin']
 const ALL_AUTHED: readonly string[] = ['admin', 'coach', 'official']
 /**
+ * Accès aux fiches membres — admin, coach, et `secretary` (rôle staff). Le
+ * secrétaire a besoin d'atteindre la fiche membre pour confirmer les licences
+ * fédérales (callable `confirmLicense`). Cf. `apps/web/CLAUDE.md` § Licences.
+ */
+const MEMBERS_ACCESS: readonly string[] = ['admin', 'coach', 'secretary']
+/**
  * Module Comptabilité — accès réservé au trésorier (`treasurer`). Le rootAdmin
  * est laissé passer globalement par le guard (court-circuit claim), pas besoin
  * de l'ajouter ici. L'admin standard est exclu (cf. docs/compta.md §1).
@@ -49,13 +55,13 @@ const routes: RouteRecordRaw[] = [
         path: 'members',
         name: 'members',
         component: () => import('@/views/Members.vue'),
-        meta: { title: 'Members', allowedRoles: ADMIN_COACH },
+        meta: { title: 'Members', allowedRoles: MEMBERS_ACCESS },
       },
       {
         path: 'members/:id',
         name: 'member-detail',
         component: () => import('@/views/MemberDetail.vue'),
-        meta: { title: 'Member detail', allowedRoles: ADMIN_COACH },
+        meta: { title: 'Member detail', allowedRoles: MEMBERS_ACCESS },
       },
       {
         path: 'teams',

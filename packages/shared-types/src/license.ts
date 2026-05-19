@@ -66,3 +66,58 @@ export interface LicenseRequestData {
 }
 
 export type LicenseRequest = LicenseRequestData & { id: string }
+
+/**
+ * Statut d'une licence émise (`/licenses/{id}`).
+ * - `pending`   : licence créée par l'admin, en attente de confirmation par
+ *                 la fédération (Swiss Basketball) et de paiement par le club.
+ * - `active`    : confirmée + payée — posée via la callable `confirmLicense`
+ *                 (trésorier / admin / secrétaire). Rend l'officiel/coach ACTIF.
+ * - `cancelled` : licence annulée. Terminal.
+ */
+export type LicenseStatus = 'pending' | 'active' | 'cancelled'
+
+/**
+ * Document `/licenses/{id}` — instance concrète d'une licence fédérale émise
+ * pour un membre × saison × type de licence. Voir docs/firebase.md + main.md.
+ *
+ * Cycle de vie : `pending` (créée par l'admin depuis la fiche membre) →
+ * `active` (confirmée par Swiss Basketball + payée par le club ; passage via
+ * la callable `confirmLicense` qui poste aussi l'écriture comptable de la
+ * charge). Un membre est officiel/coach ACTIF si une licence `active` existe
+ * pour le rôle et la saison courante (réf dénormalisée
+ * `member.officialLicense` / `member.coachLicense`).
+ *
+ * `level`, `licenseName`, `feeSnapshot` sont snapshottés depuis le
+ * `LicenseType` à la création — figés malgré les évolutions de la grille.
+ */
+export interface LicenseData {
+  memberId: string
+  /** `/seasons/{id}` — saison de validité de la licence. */
+  seasonId: string
+  /** `/licenseTypes/{id}` référencé à la création. */
+  licenseTypeId: string
+  /** Snapshot du rôle du `LicenseType`. */
+  role: LicenseRole
+  /** Snapshot du niveau du `LicenseType` (numérique official/coach/referee, null player). */
+  level: number | null
+  /** Snapshot du libellé du `LicenseType` (ex. "Officiel J+S"). */
+  licenseName: string
+  /** Snapshot du prix courant du `LicenseType` au moment de la création (CHF). */
+  feeSnapshot: number
+  status: LicenseStatus
+  createdAt: Timestamp
+  /** uid de l'admin ayant créé la licence. */
+  createdByUid: string
+  /** Posé par `confirmLicense`. `null` tant que `status !== 'active'`. */
+  confirmedAt: Timestamp | null
+  /** uid du trésorier/admin/secrétaire ayant confirmé. `null` si pas confirmée. */
+  confirmedByUid: string | null
+  /**
+   * id de l'écriture `/accountingEntries` postée à la confirmation (charge
+   * "Licences fédérales" / crédit trésorerie). `null` tant que pas confirmée.
+   */
+  accountingEntryId: string | null
+}
+
+export type License = LicenseData & { id: string }

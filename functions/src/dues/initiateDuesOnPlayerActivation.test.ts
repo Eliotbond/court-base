@@ -186,6 +186,7 @@ describe('createDuesIfMissing', () => {
       seasonId: 's1',
       duesAmount: 250,
       gracePeriodDays: 21,
+      registeredByUid: 'reg-user-1',
     })
     expect(result).toBe('created')
     expect(txSet).toHaveBeenCalledOnce()
@@ -198,6 +199,7 @@ describe('createDuesIfMissing', () => {
       status: 'pending_grace',
       paidAt: null,
       dueAt: null,
+      registeredByUid: 'reg-user-1',
     })
     // issuedAt = activatedAt + 21 days
     expect(dueDoc.issuedAt.seconds).toBe(1_000_000 + 21 * 86_400)
@@ -215,9 +217,57 @@ describe('createDuesIfMissing', () => {
       seasonId: 's1',
       duesAmount: 250,
       gracePeriodDays: 21,
+      registeredByUid: null,
     })
     expect(result).toBe('already-exists')
     expect(txSet).not.toHaveBeenCalled()
     expect(txUpdate).not.toHaveBeenCalled()
+  })
+})
+
+// ---------- findRegisteredByUid ----------
+describe('findRegisteredByUid', () => {
+  function buildRegistrationsCol(
+    docs: { submittedByUid: string; createdAt: { seconds: number } }[],
+  ): void {
+    const snap: FakeSnapshot = {
+      empty: docs.length === 0,
+      size: docs.length,
+      docs: docs.map((d, i) => ({ id: `reg-${i}`, data: () => d })),
+    }
+    const query: FakeQuery = {
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      get: vi.fn().mockResolvedValue(snap),
+    }
+    fakeCol.mockImplementation((path: string) => {
+      if (path === 'registrations') return query
+      throw new Error(`unexpected col(${path})`)
+    })
+  }
+
+  it('returns null when no registration matches', async () => {
+    buildRegistrationsCol([])
+    expect(await mod.findRegisteredByUid('m1', 't1')).toBeNull()
+  })
+
+  it('returns submittedByUid of the single matching registration', async () => {
+    buildRegistrationsCol([{ submittedByUid: 'user-a', createdAt: { seconds: 100 } }])
+    expect(await mod.findRegisteredByUid('m1', 't1')).toBe('user-a')
+  })
+
+  it('keeps the most recent registration when several match', async () => {
+    buildRegistrationsCol([
+      { submittedByUid: 'old-user', createdAt: { seconds: 100 } },
+      { submittedByUid: 'recent-user', createdAt: { seconds: 999 } },
+    ])
+    expect(await mod.findRegisteredByUid('m1', 't1')).toBe('recent-user')
+  })
+
+  it('returns null (does not throw) when the lookup fails', async () => {
+    fakeCol.mockImplementation(() => {
+      throw new Error('firestore exploded')
+    })
+    expect(await mod.findRegisteredByUid('m1', 't1')).toBeNull()
   })
 })

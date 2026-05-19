@@ -41,6 +41,13 @@ export interface NotificationData {
   createdAt: Timestamp
   /** uids des officiels qui ont lu la notification. */
   readBy: string[]
+  /**
+   * Posé par la Function `fanoutNotification` après l'envoi du push FCM.
+   * Sert de garde d'idempotence : un re-delivery du trigger Firestore voit
+   * `pushedAt != null` et skip l'envoi (pas de double push). `null` tant que
+   * le fan-out n'a pas tourné.
+   */
+  pushedAt: Timestamp | null
 }
 
 export type Notification = NotificationData & { id: string }

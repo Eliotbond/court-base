@@ -34,6 +34,32 @@ Voir `docs/mobile-app.md` pour le détail.
 - **License toggle** : crée `licenseRequest` `pending`, valid admin sur web.
 - **Payment exception submit** : depuis player row exclu, form motivation libre.
 
+## Push iOS (APNs) — étapes manuelles obligatoires
+
+Le code Flutter (`messaging_repository.dart`, `Info.plist`) est prêt, mais le
+**push iOS reste muet** tant que ces étapes manuelles ne sont pas faites — elles
+ne peuvent pas l'être par script :
+
+1. **Xcode** — ouvrir `ios/Runner.xcworkspace`, onglet *Signing & Capabilities*
+   de la cible `Runner` :
+   - ajouter la capability **Push Notifications** ;
+   - ajouter la capability **Background Modes** et cocher *Remote notifications*
+     (le `UIBackgroundModes` de `Info.plist` ne suffit pas seul) ;
+   - vérifier qu'une équipe de signature valide est sélectionnée.
+2. **Apple Developer** — créer une clé d'authentification **APNs `.p8`**
+   (Certificates, Identifiers & Profiles → Keys → APNs). Noter le *Key ID* et le
+   *Team ID*.
+3. **Console Firebase** — projet `court-base-44878` → *Project settings* →
+   *Cloud Messaging* → section *Apple app configuration* : uploader la clé
+   `.p8` avec son *Key ID* et le *Team ID*. **Sans ça, `getToken()` peut
+   renvoyer `null` et aucun push n'arrive sur iOS.**
+4. Vérifier que le bundle id de l'app (`ch.alpinedigital.courtbase…`) correspond
+   à l'App ID Apple et à `GoogleService-Info.plist`.
+
+Android : aucune étape manuelle FCM (le plugin `com.google.gms.google-services`
+et `google-services.json` suffisent). Penser tout de même à enregistrer les
+SHA-1/256 debug+release dans la console Firebase pour Google Sign-In.
+
 ## TODO (Phase 2)
 
 Voir `docs/mobile-app.md` section TODO.

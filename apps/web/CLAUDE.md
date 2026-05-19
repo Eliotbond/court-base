@@ -37,7 +37,7 @@ Tout raccourci = à refuser ou refactor.
 
 ## Cloud Functions — comment les appeler
 
-Le projet expose 17 Cloud Functions (cf. `functions/src/index.ts`). **La plupart sont des triggers** (Firestore writes ou scheduled) — elles tournent automatiquement, rien à faire côté web. **4 sont callables** (= invocables depuis le client) :
+Le projet expose plusieurs Cloud Functions (cf. `functions/src/index.ts`). **La plupart sont des triggers** (Firestore writes ou scheduled) — elles tournent automatiquement, rien à faire côté web. Les **callables** (= invocables depuis le client) sont listées ci-dessous :
 
 | Function | Auth requise | Quand |
 |---|---|---|
@@ -50,6 +50,7 @@ Le projet expose 17 Cloud Functions (cf. `functions/src/index.ts`). **La plupart
 | `markTrialInProgress({ registrationId })` | admin / coach (team scope) | Inscriptions → bouton "Planifier essai". Démarre compteur 14j. |
 | `confirmRegistration({ registrationId })` | admin / coach (team scope) | Inscriptions → bouton "Confirmer". Crée le member si nouveau, ajoute à `team.playerIds` (déclenche cotisation). |
 | `updateCotisation({ cotisationId, activatedAt?, issuedAt?, dueAt?, status?, notes? })` | admin / treasurer / rootAdmin | Cotisations (liste) + Détail membre → "Modifier". Édite dates / statut / note. `status: 'paid'` refusé (flux `markCotisationPaid`). Wrappe la callable serveur `updateDue`. |
+| `confirmLicense({ licenseId })` | treasurer / admin / secretary / rootAdmin | Détail membre → onglet "Officiel & coach" → bouton "Confirmer" sur une licence `pending`. Passe `/licenses/{id}` en `active`, poste l'écriture comptable de la charge (débit « Licences fédérales » / crédit trésorerie) et dénormalise `member.officialLicense` / `coachLicense`. Retour `{ ok, alreadyActive, accountingEntryId }` — idempotent (re-confirmer ne re-poste pas d'écriture). |
 
 > `previewSeasonBookings` n'est plus appelée côté client (dry-run retiré 2026-05-14 — les bookings sont désormais créés manuellement via `/bookings`). La Cloud Function reste déployée mais sans wrapper TS ; à supprimer côté Functions quand on fera le nettoyage backend.
 
@@ -115,6 +116,7 @@ Sans ça, les bugs disparaissent silencieusement (cas vécu côté register : in
 Voir `docs/registrations/phases.md` §"Phase D" pour le détail complet. Livré dans `apps/web` :
 
 - **Vue `/registrations`** (`src/views/Inscriptions.vue`) — table filtrable par statut (chips) + équipe (Select) + recherche, drawer détail in-page, action **refus motivé** branchée sur `refuseRegistration`. Scope auto par rôle (admin → toute la collection ; coach → ses `teamIds`).
+  - **Suppression définitive** (admin / rootAdmin uniquement) : bouton corbeille + dialog type-to-confirm (`SUPPRIMER`), aligné sur la suppression des cotisations. `deleteRegistration` fait un `deleteDoc` direct (rules `/registrations` delete = auteur-draft ∪ admin) — destiné à la correction d'erreur. **Tous statuts confondus**, pas de garde-fou repo : pour `confirmed_pending_dues` / `active`, le dialog affiche un avertissement renforcé (member + cotisation déjà créés non nettoyés → `deleteMember` pour un retrait complet).
 - **Repo + store** : `src/repositories/registrations.repo.ts` (read-only — toutes les transitions passent par callables) + `src/stores/registrations.ts` (auto-scope via `useAuthStore`).
 - **Wrappers callables** dans `src/services/cloudFunctions.ts` : `refuseRegistration`, `cancelRegistration` (les deux déjà déployées sur dev).
 - **Sidebar** : entrée "Inscriptions" dans Operations (icône `ClipboardList`).
@@ -140,14 +142,18 @@ Composant : `vue-cal` v4 (MIT). Voir `docs/frontend-desktop.md` §Bookings calen
 6. **Format de date des events** : `YYYY-MM-DD HH:MM` heure locale — cohérent avec le repo qui stocke via `Timestamp.fromDate(startOfLocalDay)`.
 7. **Couleurs par type** : classes CSS `vc-training` / `vc-match-home` / `vc-match-pending` / `vc-match-away` / `vc-reserve` / `vc-custom` + modifiers `vc-cancelled` / `vc-freed` dans `<style scoped>` de `Bookings.vue`. Si tu changes la palette tailwind globale, sync ici.
 
-## Liaison membre ↔ compte d'inscription (livré 2026-05-14)
+## Liaison membre ↔ compte d'inscription (livré 2026-05-14, dialog unifié 2026-05-18)
 
 Quand un parent s'inscrit via `apps/courtbase-register`, un `/users/{uid}` est créé avec rôle `parent`. La page **détail membre** (`/members/:id` → ProfileTab) permet à l'admin de :
 
 1. **Voir les données enrichies des tuteurs** — `GuardianRef` enrichi avec `phone`, `address`, `profileCompletedAt`. Le bloc Tuteurs affiche email + téléphone + adresse formatée + Pill "Profil complété" / "Profil incomplet".
-2. **Lier un membre à un compte d'inscription** — card "Compte Firebase Auth" passe de read-only à actionnable. Bouton "Lier un compte" (si vide) ou "Modifier" (si lié) ouvre `ManageLinkedUserDialog.vue` (recherche par email, validations `alreadyLinked` / `isGuardian`).
+2. **Lier un membre à un compte Auth** — un **dialog unifié** `LinkUserDialog.vue` (remplace les anciens `ManageLinkedUserDialog.vue` + `ManageGuardiansDialog.vue`, supprimés). Un seul point d'entrée bouton **"Lier un user"** (présent dans la card Tuteurs et la card "Compte Firebase Auth"). Le dialog propose un `SelectButton` de rôle : **Propriétaire** (compte du membre → `setLinkedUser`) ou **Tuteur** (parent → `addGuardian`). Recherche par email (`searchUsersByEmail`, debounce 200ms), validations selon le rôle (refus si déjà propriétaire/tuteur, avertissement amber "Remplacer" si le membre a déjà un propriétaire). Les **retraits** restent inline dans ProfileTab : bouton "Retirer" par tuteur, "Délier" (confirmation 2-clics) pour le propriétaire.
 
-**Implémentation clé** : `setLinkedUser(memberId, uid | null)` dans `members.repo.ts` — `writeBatch` atomique bidirectionnel (`/members/{id}.linkedUserId` + `/users/{uid}.memberId`) avec nettoyage des deux types d'orphelins (ancien lien côté member + ancien lien côté user). Les rules existantes couvrent ce write (admin-only sur les deux champs — pas de modif `firestore.rules` nécessaire).
+**Implémentation clé** : `setLinkedUser(memberId, uid | null)` dans `members.repo.ts` — `writeBatch` atomique bidirectionnel (`/members/{id}.linkedUserId` + `/users/{uid}.memberId`) avec nettoyage des deux types d'orphelins (ancien lien côté member + ancien lien côté user). `addGuardian` / `removeGuardian` gèrent l'invariant `/users.roles` ⊃ `parent`. Les rules existantes couvrent ces writes (admin-only — pas de modif `firestore.rules` nécessaire).
+
+### Toggle Actif / Inactif (livré 2026-05-18)
+
+`member.active` (bool) pilote l'accès du membre à l'app mobile / au club (enforcé côté `firestore.rules`). Distinct de l'archive (`status: 'active' | 'archived'`). La ligne "Statut" de la card Identité affiche deux Pills séparées : `active` → emerald "Actif" / amber "Inactif", et une Pill rose "Archivé" en plus si `status === 'archived'`. Un bouton "Désactiver / Activer" (gaté `canEdit`) bascule le flag via `membersStore.setMemberActive` → `setMemberActive(memberId, active)` dans `members.repo.ts` (simple `updateDoc`). Le passage en **inactif** ouvre une confirmation (perte d'accès mobile) ; le passage en actif est immédiat.
 
 ## Cotisations — paiement & arrangement comité (livré 2026-05-15)
 
@@ -267,3 +273,35 @@ Toute la logique de bilan/résultat/journal vit dans le store `accountingReports
 ### OCR différé
 
 L'import de factures est **manuel** en v1. Les champs `invoice.ocrStatus` / `ocrRawText` existent mais restent inertes (`'none'` / `null`). Fichiers uploadés dans Storage à `accounting/invoices/{invoiceId}/{file}`.
+
+## Niveaux officiel/coach & Licences fédérales (livré 2026-05-18)
+
+Gestion, depuis la fiche membre, des **qualifications** numériques (niveau officiel / niveau coach) et des **licences fédérales** émises (`/licenses`).
+
+### Modèle métier — qualification vs actif
+
+- `member.officialLevel` / `member.coachLevel` : QUALIFICATIONS numériques `1..N`, réglées **manuellement** par l'admin. Avoir un niveau ≠ être actif.
+- Officiel/coach **ACTIF** = a une licence `/licenses` `status:'active'` pour ce rôle ET la saison courante. Dérivation : `member.officialLicense != null && officialLicense.seasonId === <id saison active>` (réf dénormalisée posée par la callable serveur `confirmLicense`).
+- Cycle licence : `pending` (créée par l'admin, write client direct) → `active` (via `confirmLicense`, réservée treasurer/admin/secretary/rootAdmin) → ou `cancelled` (terminal).
+
+### Onglet "Officiel & coach" (`member-detail/OfficialTab.vue`)
+
+L'ancien onglet "Officiel" est généralisé. Il est désormais **toujours visible** (la qualification peut être posée sur n'importe quel membre) et porte 3 blocs :
+
+1. **Qualifications** — édition du niveau officiel ET coach via dialog `InputNumber` (entier `1..N`, plus de L1/L2 en dur). Bouton "Retirer le niveau" → remet `null`. Badges dérivés "Officiel actif" / "Coach actif" (saison-précis). Passe par `memberDetail` store → `applyProfilePatch` → `updateMember` (whitelist `MemberPatch` étend `coachLevel`).
+2. **Licences** — DataTable des licences du membre (type, saison, montant, Pill statut `pending` ambre / `active` emerald / `cancelled` slate). Bouton "Créer une licence" (dialog Select type + Select saison). Bouton "Confirmer" sur les `pending`, **visible uniquement** si treasurer/admin/secretary/rootAdmin.
+3. **Rentabilité officiel** — section existante préservée, conditionnée à `officialLevel != null`.
+
+### Couches
+
+- **Repo** `repositories/licenses.repo.ts` : `listMemberLicenses(memberId)` (query simple `where memberId == X` + tri JS `createdAt` desc — pas d'index composite) ; `createLicense({ memberId, seasonId, licenseTypeId })` qui lit le `LicenseType` et **snapshotte** `role`/`level`/`name`→`licenseName`/`fee`→`feeSnapshot` dans `/licenses` (`status:'pending'`).
+- **Store** `stores/licenses.ts` : scopé au membre courant (`load`/`reset`/`create`/`confirm`), try/catch enrichi `FirebaseError`.
+- **Callable** `confirmLicense` dans `services/cloudFunctions.ts` (cf. table des callables).
+
+### Compte comptable
+
+`seedDefaultAccounts` (`accounts.repo.ts`) seede un compte de charge **`Licences fédérales`** (number `4300`). Le nom exact est **load-bearing** : la callable serveur `confirmLicense` résout ce compte **par son nom** pour y poster la charge. Ne pas renommer.
+
+### Rôle `secretary`
+
+Rôle staff additif. Côté web : guard du bouton "Confirmer une licence" (`canConfirmLicense` = treasurer/admin/secretary/rootAdmin) et ajout aux routes `members` / `members/:id` (constante `MEMBERS_ACCESS`) pour que le secrétaire atteigne la fiche membre.

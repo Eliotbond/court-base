@@ -90,6 +90,28 @@ export interface MajorityResponse {
   respondedByUid: string
 }
 
+/**
+ * Référence dénormalisée vers la licence ACTIVE (confirmée) d'un membre pour
+ * un rôle donné (`official` / `coach`). Posée par la callable `confirmLicense`
+ * à la confirmation d'une licence, `null` sinon.
+ *
+ * Sert à dériver « officiel/coach actif » sans requête `/licenses`, et à gater
+ * l'accès app côté `firestore.rules`. La dérivation est saison-précise : un
+ * membre est officiel ACTIF si `officialLicense != null` ET
+ * `officialLicense.seasonId === <id de la saison active>`.
+ *
+ * À distinguer de `officialLevel` / `coachLevel` qui sont des QUALIFICATIONS
+ * (ce pour quoi le membre est formé) — indépendantes du fait d'être actif.
+ */
+export interface ActiveLicenseRef {
+  /** id du doc `/licenses/{id}`. */
+  licenseId: string
+  /** Saison de la licence (`/seasons/{id}`). */
+  seasonId: string
+  /** Niveau snapshot de la licence (numérique pour official/coach). */
+  level: number | null
+}
+
 export interface MemberData {
   firstName: string
   lastName: string
@@ -111,8 +133,28 @@ export interface MemberData {
   /** uid Auth si le membre a un compte */
   linkedUserId: string | null
   licenseNumber: string
-  /** 1, 2 ; null si pas official. Manuel admin. */
+  /**
+   * Niveau de QUALIFICATION officiel (numérique, 1..N). `null` si le membre
+   * n'est pas qualifié comme officiel. Réglé manuellement par l'admin.
+   * Détermine quel `homeOfficialRequirements` (ventilé par niveau) le membre
+   * peut couvrir. Indépendant du fait d'être officiel ACTIF (cf.
+   * `officialLicense`).
+   */
   officialLevel: number | null
+  /**
+   * Niveau de QUALIFICATION coach (numérique, 1..N). `null` si le membre
+   * n'est pas qualifié comme coach. Réglé manuellement par l'admin.
+   * Indépendant du fait d'être coach ACTIF (cf. `coachLicense`).
+   */
+  coachLevel: number | null
+  /**
+   * Réf dénormalisée vers la licence d'officiel active (confirmée). `null` =
+   * aucune licence officiel confirmée. Le membre est officiel ACTIF si cette
+   * réf existe ET cible la saison courante. Posée par `confirmLicense`.
+   */
+  officialLicense: ActiveLicenseRef | null
+  /** Idem pour la licence de coach. Cf. `officialLicense`. */
+  coachLicense: ActiveLicenseRef | null
   licensed: boolean
   duesStatus: DuesStatus
   duesStatusUpdatedAt: Timestamp

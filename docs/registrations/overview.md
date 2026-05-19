@@ -33,9 +33,8 @@ Le rôle `parent` est **déjà additif** (cf. `project_roles_additifs`) et coexi
 [Landing] → [Sign-up Google/Apple/Email]
    → [Profil user] (email confirmé, adresse, téléphone)
    → [Pour qui ?] (moi / un enfant / un pupille)
-   → [Identité joueur] (nom, prénom, DOB, AVS)
-        ├─ AVS connu → lookup member + fuzzy-match dup → confirmation link
-        └─ AVS absent (réfugié, etc.) → notif admin par email + flag "AVS manquant"
+   → [Identité joueur] (nom, prénom, DOB, AVS — obligatoire pour continuer)
+        └─ Lookup member par AVS exact → si dossier trouvé, confirmation du rattachement
    → [Choix équipe] (filtrée par âge, status, horaires, manuel coach)
         ├─ Équipe ouverte    → [Manuel d'inscription du coach] → continue
         └─ Équipe sous-cond. → [Conditions du coach] → registration créée en "pending_review"

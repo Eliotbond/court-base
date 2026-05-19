@@ -7,7 +7,7 @@
 
 | Function | Trigger | Rôle |
 |---|---|---|
-| `matchExistingMember` | Callable (auth required) | Lookup AVS + fuzzy match. Retourne `MemberMatch[]`. |
+| `matchExistingMember` | Callable (auth required) | Lookup d'un member existant par AVS exact. Retourne `MemberMatch[]`. |
 | `submitRegistration` | Callable | Crée `/registrations/{id}` (status = `submitted`), notifie coach + admin, file un email user via `/pendingEmails`. Idempotent : refuse re-soumission d'un draft déjà submitted. |
 | `cancelRegistration` | Callable | L'auteur annule sa propre inscription (transition vers `cancelled`). |
 | `refuseRegistration` | Callable (coach scope) | Set `status = 'refused'`, écrit `/teams/{teamId}/refusalLogs`, déclenche auto-rerouting si une autre équipe `open` existe dans la catégorie. |
@@ -26,7 +26,7 @@
 
 **Input** :
 ```ts
-{ firstName: string, lastName: string, birthDate: string /* YYYY-MM-DD */, avs?: string | null }
+{ avs: string }
 ```
 
 **Output** :
@@ -34,15 +34,16 @@
 { matches: MemberMatch[] }
 ```
 
-**Logique** :
-1. Si `avs` renseigné : recherche `/members where licenseNumber == avs OR avs == avs` (champ AVS dédié, distinct de `licenseNumber`).
-   - **Hit exact** → renvoie le member en `match.kind: 'avs'`.
-2. Sinon, **fuzzy match côté serveur** (pas d'index Firestore qui le supporte) :
-   - Lit la liste des membres par DOB exact d'abord.
-   - Filtre nom/prénom en JS via Levenshtein ≤ 2 sur `firstName + lastName`.
-   - Acceptable car volume < 10k membres / club.
+**Logique** — match **AVS exact uniquement** (l'AVS étant désormais obligatoire dans le wizard, c'est le seul critère de dédoublonnage live) :
+1. Recherche `/members where avs == avs` (champ AVS dédié, distinct de `licenseNumber`).
+   - **Hit** → renvoie le member en `matchedOn: 'avs'`.
+2. Fallback historique : `/members where licenseNumber == avs` (anciens dossiers où l'AVS avait été saisi dans `licenseNumber`) → `matchedOn: 'licenseNumber'`.
 
-L'UI affichera un prompt de confirmation explicite avant de set `registration.matchedMemberId`.
+Plus de fuzzy match nom/prénom/DOB côté wizard. Le filet anti-doublon nom+date de naissance subsiste uniquement côté `confirmRegistration` (`findExactMemberMatch`), pour rattraper les members legacy sans AVS enregistré.
+
+Chaque `MemberMatch` porte **`linkedToOtherAccount: boolean`** — `true` si le dossier est déjà rattaché à un compte **autre que le caller** (`member.linkedUserId` propriétaire, ou un `guardianUserIds` tuteur). Un dossier rattaché uniquement au caller (renouvellement / ré-inscription par le même compte) — ou rattaché à personne — vaut `false`.
+
+L'UI affiche un prompt de confirmation explicite avant de set `registration.matchedMemberId`. Si `linkedToOtherAccount === true`, le wizard **refuse le rattachement self-service** et invite à contacter le club — pas de création d'un nouveau dossier (l'AVS étant unique, ce serait un doublon de la même personne).
 
 ### 2.2 `submitRegistration`
 

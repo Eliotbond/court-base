@@ -143,8 +143,11 @@ Comptes seedés au démarrage du module (par l'app web). Tous : `isDefault: true
 | 3200 | Sponsoring | produit | false |
 | 3400 | Subventions J+S | produit | false |
 | 4000 | Frais de matériel | charge | false |
+| 4300 | Licences fédérales | charge | true |
 | 4200 | Frais d'arbitrage | charge | false |
 | 6500 | Frais administratifs | charge | false |
+
+> Le compte **4300 Licences fédérales** est seedé par défaut (`isDefault: true`) : il est la contrepartie débit de l'écriture automatique postée par la callable `confirmLicense` à la confirmation d'une licence (cf. §5).
 
 ## 4. Conventions de calcul
 
@@ -226,6 +229,27 @@ Deux temps :
 ### Saisie manuelle (débit / écriture générique)
 
 Pour toute opération ne relevant pas d'un crédit standard ou d'une facture : écriture (`source: 'manual'`) à **2 comptes libres** choisis par le trésorier (un au débit, un au crédit), montant équilibré. Sert aussi aux contre-passations (cf. §2) et aux régularisations.
+
+### Charge de licence fédérale (écriture automatique `confirmLicense`)
+
+Quand une licence `/licenses/{id}` est confirmée — passage `pending → active` via la callable **`confirmLicense`** (cf. `docs/main.md` → Licences) — la callable poste **automatiquement** une écriture comptable de la charge de licence :
+
+- **Débit** du compte de **charge** `4300 Licences fédérales`.
+- **Crédit** du compte de **trésorerie** `1020 Banque`.
+- Montant = `license.feeSnapshot` (prix snapshotté du `LicenseType` à la création de la licence).
+
+Le club paie la fédération : l'argent **quitte** la banque, et une licence n'est confirmée qu'**une fois déjà payée**. Il n'y a donc **qu'une seule** écriture — **pas** de passage par le compte `2000 Créditeurs (fournisseurs)` (contrairement au flux facture fournisseur en deux temps).
+
+Exemple — confirmation d'une licence à 140 CHF :
+
+| Compte | Débit | Crédit |
+|---|---|---|
+| 4300 Licences fédérales | 140 | 0 |
+| 1020 Banque | 0 | 140 |
+
+L'écriture créée est référencée dans `license.accountingEntryId` (lien bidirectionnel licence ↔ écriture).
+
+**Frontière de sécurité** : `confirmLicense` s'exécute en **Admin SDK** et **bypasse les rules**. C'est un canal **contrôlé et audité** — la callable re-vérifie côté serveur que le caller a un rôle `treasurer` / `admin` / `secretary` / `rootAdmin`. Cela signifie qu'un **admin non-trésorier** peut, via ce canal, déclencher une écriture sur `/accountingEntries` — alors qu'il n'a **aucun** accès en write direct au module compta. La frontière de sécurité du module (rules `/accounts` / `/accountingEntries` / `/invoices` réservées `treasurer` + `rootAdmin`, admin exclu — cf. §7) **reste intacte pour les writes directs** : seul ce canal callable spécifique, dédié et tracé (`source` de l'écriture identifiable, `confirmedByUid` sur la licence), est ouvert à l'admin.
 
 ## 6. OCR
 

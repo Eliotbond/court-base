@@ -121,16 +121,16 @@ Contenu :
   - `gender` — select (M / F / Autre / Préfère ne pas dire).
   - **Bloc AVS distinct, mis en avant** :
     - Input `avs` avec masque `756.XXXX.XXXX.XX`.
-    - **Note d'aide visible** sous le champ : *"Le numéro AVS est nécessaire pour établir la licence fédérale. Si le joueur est en cours de procédure d'asile ou n'a pas encore son AVS, cochez ci-dessous — nous vous contacterons par email."*
-    - Checkbox `avsUnavailable` : "AVS non disponible — me contacter pour la suite".
+    - **Note d'aide visible** sous le champ : *"Le numéro AVS est obligatoire pour établir la licence fédérale et finaliser l'inscription. Si le joueur n'a pas encore d'AVS (procédure d'asile, transfert depuis l'étranger), contactez directement le club."*
+    - AVS **obligatoire** : le bouton "Continuer" reste désactivé tant que l'AVS n'est pas valide (pas de case "AVS non disponible").
 - CTA "Continuer".
 
 ### E7. Wizard step 2.5 — Modal "Joueur similaire trouvé"
 
-**But** : afficher le résultat du fuzzy match et demander confirmation.
+**But** : afficher le résultat du match AVS exact et demander confirmation.
 
 Contenu (modal/dialog par-dessus E6) :
-- Titre : "Un dossier ressemble fortement à votre saisie".
+- Titre : "Nous avons trouvé un dossier correspondant".
 - Card du membre existant matché : prénom + nom + date de naissance + initiales avatar + éventuelle équipe précédente.
 - Texte explicatif : "Si c'est bien la même personne, nous allons rattacher cette inscription à son dossier existant — cela évite de créer un doublon."
 - Boutons : "Oui, c'est la même personne" / "Non, c'est quelqu'un d'autre".

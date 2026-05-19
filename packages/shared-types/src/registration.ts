@@ -57,9 +57,13 @@ export interface RegistrationPlayerIdentity {
   lastName: string
   birthDate: Timestamp
   gender: 'M' | 'F' | 'other' | null
-  /** AVS au format 756.XXXX.XXXX.XX, `null` si `avsUnavailable` est true. */
+  /**
+   * AVS au format 756.XXXX.XXXX.XX. `null` uniquement au stade `draft` (champ
+   * pas encore rempli) — la callable `submitRegistration` rejette toute
+   * soumission sans AVS valide : un joueur sans AVS ne peut pas s'inscrire via
+   * le portail (cas asile / transfert étranger → traités hors portail).
+   */
   avs: string | null
-  avsUnavailable: boolean
   /** Téléphone direct du joueur (recommandé, pas obligatoire). */
   phone: string | null
 }
@@ -77,7 +81,8 @@ export interface RegistrationData {
   player: RegistrationPlayerIdentity
 
   /**
-   * Lien à un `/members/{id}` existant si AVS match ou confirmation fuzzy match.
+   * Lien à un `/members/{id}` existant, rattaché par match AVS exact confirmé
+   * par l'utilisateur dans le wizard.
    * `null` = nouveau dossier qui sera créé à l'acceptation par le coach.
    */
   matchedMemberId: string | null

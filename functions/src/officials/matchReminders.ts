@@ -215,6 +215,7 @@ export async function emitMatchReminderForBooking(
     relatedMatchId: booking.matchId ?? null,
     createdAt: serverTimestamp(),
     readBy: [],
+    pushedAt: null,
   }
   await col<NotificationData>('notifications').add(
     notification as unknown as NotificationData,

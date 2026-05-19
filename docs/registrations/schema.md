@@ -21,12 +21,11 @@ interface RegistrationData {
     lastName: string
     birthDate: Timestamp
     gender: 'M' | 'F' | 'other' | null
-    avs: string | null
-    avsUnavailable: boolean
+    avs: string | null   // 756.XXXX.XXXX.XX ; null seulement au stade draft — obligatoire à la soumission
     phone: string | null
   }
 
-  // Lien à un /member existant (si AVS match ou confirmation parent fuzzy match)
+  // Lien à un /member existant (rattaché par match AVS exact)
   matchedMemberId: string | null
 
   // Équipe choisie
@@ -182,7 +181,9 @@ match /registrations/{registrationId} {
   // Les transitions de status post-soumission passent par callables
   allow create: if isSignedIn() && request.resource.data.submittedByUid == request.auth.uid
   allow update: if false   // toutes les updates via callables (intégrité du lifecycle)
-  allow delete: if false
+  // Delete : auteur sur son draft, ou admin/rootAdmin (suppression définitive
+  // depuis la vue Inscriptions — correction d'erreur). Cf. firestore.rules.
+  allow delete: if isAuteurDraft || isAdmin() || isRootAdmin()
 }
 
 match /teams/{teamId}/refusalLogs/{logId} {

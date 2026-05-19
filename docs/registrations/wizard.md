@@ -68,7 +68,7 @@ Si un atome manque, l'ajouter dans `style.css` dans la même PR que la vue qui l
 ### Step 1 — Whoami (`Step1Whoami.vue`)
 
 - État local : `registrationFor: 'self' | 'dependent'`, plus `relationship` + `relationshipOther` si dépendant.
-- Action store : `startDraft({ registrationFor, relationship, relationshipOther, player: { firstName: '', lastName: '', birthDate: <Timestamp epoch 0>, gender: null, avs: null, avsUnavailable: false, phone: null } })` au clic Continuer.
+- Action store : `startDraft({ registrationFor, relationship, relationshipOther, player: { firstName: '', lastName: '', birthDate: <Timestamp epoch 0>, gender: null, avs: null, phone: null } })` au clic Continuer.
 - Validation client : `registrationFor` obligatoire ; si `dependent` alors `relationship` obligatoire (et `relationshipOther` non-vide si `relationship === 'other'`).
 - Cible suivante : `/register/step-2`.
 - Précédent : disabled (étape 1).
@@ -76,9 +76,10 @@ Si un atome manque, l'ajouter dans `style.css` dans la même PR que la vue qui l
 
 ### Step 2 — Identity (`Step2Identity.vue`)
 
-- État local : `firstName`, `lastName`, `birthDate` (date picker), `gender`, `avs`, `avsUnavailable`.
-- Validation client : AVS regex `/^756\.\d{4}\.\d{4}\.\d{2}$/` (skip si `avsUnavailable === true`). `.input.error` + `.helper-error` si invalide non-vide.
-- Action store : au blur AVS valide (ou au Continuer), appelle `findMatches({ firstName, lastName, birthDate: 'YYYY-MM-DD', avs })`. Si `matches.length > 0` → ouvre `<MatchFoundDialog>`. Sur `@confirm(memberId)`, `patchDraft({ matchedMemberId: memberId })` puis step-3. Sur `@reject`, `clearMatches()` puis step-3.
+- État local : `firstName`, `lastName`, `birthDate` (date picker), `gender`, `avs`.
+- Validation client : AVS **obligatoire** — regex `/^756\.\d{4}\.\d{4}\.\d{2}$/`. Le bouton Continuer reste désactivé tant que l'AVS n'est pas valide (plus de case « AVS non disponible » : un joueur sans AVS ne peut pas s'inscrire via le portail). `.input.error` + `.helper-error` si invalide non-vide.
+- Action store : au blur AVS valide (ou au Continuer), appelle `findMatches({ avs })`. Si `matches.length > 0` → ouvre `<MatchFoundDialog>`. Sur `@confirm(memberId)`, `patchDraft({ matchedMemberId: memberId })` puis step-3. Sur `@reject`, `clearMatches()` puis step-3.
+- Match déjà rattaché : si un `MemberMatch` a `linkedToOtherAccount === true` (dossier déjà géré par un autre compte), `<MatchFoundDialog>` passe en **mode bloqué** — pas de bouton de confirmation, message « contactez le club ». L'événement `@close` ferme la modale **sans** poser `matchRejected` : l'utilisateur reste à l'étape 2 (corriger l'AVS ou contacter le club). On ne crée jamais de nouveau dossier dans ce cas.
 - Cible suivante : `/register/step-3`.
 - Gotcha : conversion `Timestamp` neutre côté client (cf. `design-to-vue-register.md` §10) — le type `Timestamp` de `@club-app/shared-types` est `{ seconds, nanoseconds }`, pas la classe Firebase. Le date picker doit lire et écrire via le helper `tsToDate` / `dateToTs`.
 

@@ -19,10 +19,13 @@ import { useRegistrationsStore } from '@/stores/registrations'
  * Step 2/8 — Identité du joueur + numéro AVS.
  *
  * - Formulaire prénom/nom/date de naissance/genre + bloc AVS séparé.
+ * - L'AVS est OBLIGATOIRE : un joueur sans AVS ne peut pas s'inscrire via le
+ *   portail (cas asile / transfert étranger → traités hors portail par le
+ *   club). Le bouton Continuer reste désactivé tant que l'AVS n'est pas valide.
  * - Persistance du brouillon via `useRegistrationsStore().patchDraft()`.
  * - Au passage à l'étape suivante (ou au blur de l'AVS), appelle
- *   `findMatches()` pour détecter un doublon. Si match → ouvre la modal
- *   `<MatchFoundDialog>`. Le user choisit de lier (-> step-3 avec
+ *   `findMatches()` pour détecter un doublon par AVS exact. Si match → ouvre la
+ *   modal `<MatchFoundDialog>`. Le user choisit de lier (-> step-3 avec
  *   `matchedMemberId`) ou de rejeter (la modal se ferme, on attend un
  *   nouveau clic Continuer pour confirmer la création d'un nouveau dossier).
  */
@@ -42,7 +45,6 @@ const lastName = ref('')
 const birthDate = ref('')
 const gender = ref<Gender>(null)
 const avs = ref('')
-const avsUnavailable = ref(false)
 
 const error = ref<string | null>(null)
 const submitting = ref(false)
@@ -83,7 +85,6 @@ onMounted(() => {
     }
     gender.value = p.gender ?? null
     avs.value = p.avs ?? ''
-    avsUnavailable.value = p.avsUnavailable ?? false
   }
 })
 
@@ -102,7 +103,7 @@ const AVS_REGEX = /^756\.\d{4}\.\d{4}\.\d{2}$/
 
 const avsIsValid = computed(() => AVS_REGEX.test(avs.value.trim()))
 const avsShowError = computed(
-  () => avs.value.trim() !== '' && !avsIsValid.value && !avsUnavailable.value,
+  () => avs.value.trim() !== '' && !avsIsValid.value,
 )
 
 const canContinue = computed(() => {
@@ -110,7 +111,6 @@ const canContinue = computed(() => {
   if (!firstName.value.trim()) return false
   if (!lastName.value.trim()) return false
   if (!birthDate.value) return false
-  if (avsUnavailable.value) return true
   return avsIsValid.value
 })
 
@@ -120,15 +120,9 @@ const canContinue = computed(() => {
 
 async function maybeRunMatch(): Promise<void> {
   if (matchRejected.value) return
-  if (!firstName.value.trim() || !lastName.value.trim() || !birthDate.value) return
-  if (avsUnavailable.value || !avsIsValid.value) return
+  if (!avsIsValid.value) return
   try {
-    const matches = await store.findMatches({
-      firstName: firstName.value.trim(),
-      lastName: lastName.value.trim(),
-      birthDate: birthDate.value,
-      avs: avs.value.trim(),
-    })
+    const matches = await store.findMatches({ avs: avs.value.trim() })
     if (matches.length > 0) {
       dialogOpen.value = true
     }
@@ -140,7 +134,7 @@ async function maybeRunMatch(): Promise<void> {
 }
 
 async function onAvsBlur(): Promise<void> {
-  if (!avsIsValid.value || avsUnavailable.value) return
+  if (!avsIsValid.value) return
   await maybeRunMatch()
 }
 
@@ -153,8 +147,7 @@ function buildPlayerPatch(): {
   lastName: string
   birthDate: Date
   gender: Gender
-  avs: string | null
-  avsUnavailable: boolean
+  avs: string
   phone: null
 } {
   return {
@@ -162,8 +155,7 @@ function buildPlayerPatch(): {
     lastName: lastName.value.trim(),
     birthDate: new Date(birthDate.value),
     gender: gender.value,
-    avs: avsUnavailable.value ? null : avs.value.trim(),
-    avsUnavailable: avsUnavailable.value,
+    avs: avs.value.trim(),
     phone: null,
   }
 }
@@ -191,16 +183,11 @@ async function onContinue(): Promise<void> {
   // Si l'AVS est valide et qu'aucun match n'a encore été rejeté, on tente
   // un dernier appel — au cas où l'utilisateur n'aurait pas blur le champ
   // AVS (cliquer Continuer doit suffire à déclencher le matching).
-  if (!matchRejected.value && avsIsValid.value && !avsUnavailable.value) {
+  if (!matchRejected.value && avsIsValid.value) {
     submitting.value = true
     error.value = null
     try {
-      const matches = await store.findMatches({
-        firstName: firstName.value.trim(),
-        lastName: lastName.value.trim(),
-        birthDate: birthDate.value,
-        avs: avs.value.trim(),
-      })
+      const matches = await store.findMatches({ avs: avs.value.trim() })
       if (matches.length > 0) {
         dialogOpen.value = true
         return
@@ -228,6 +215,19 @@ function onRejectMatch(): void {
   // champs. L'utilisateur doit re-cliquer Continuer pour confirmer la
   // création d'un nouveau dossier.
   matchRejected.value = true
+}
+
+/**
+ * Fermeture de la modal en mode bloqué : le dossier trouvé est déjà rattaché à
+ * un autre compte (`linkedToOtherAccount`). On NE pose PAS `matchRejected` —
+ * l'utilisateur reste à l'étape 2 et un nouveau clic Continuer relancera le
+ * match, qui rebloquera. La seule issue est de corriger l'AVS ou de contacter
+ * le club (cf. message de la modal). On ne crée surtout pas de nouveau dossier :
+ * l'AVS étant unique, ce serait un doublon de la même personne.
+ */
+function onCloseBlockedMatch(): void {
+  store.clearMatches()
+  dialogOpen.value = false
 }
 </script>
 
@@ -300,7 +300,7 @@ function onRejectMatch(): void {
         class="text-[11px] font-mono text-slate-500 tracking-wider mt-5 mb-2 flex items-center gap-1.5"
       >
         <BadgeInfo :size="14" />
-        NUMÉRO AVS · NÉCESSAIRE POUR LA LICENCE
+        NUMÉRO AVS · OBLIGATOIRE
       </div>
 
       <div class="card p-4" style="border-color: #bae6fd; background: #f0f9ff;">
@@ -315,7 +315,6 @@ function onRejectMatch(): void {
             placeholder="756.XXXX.XXXX.XX"
             class="input with-icon-left"
             :class="{ error: avsShowError }"
-            :disabled="avsUnavailable"
             style="background: white; letter-spacing: 0.04em; font-family: 'JetBrains Mono', ui-monospace, monospace;"
             @blur="onAvsBlur"
           />
@@ -334,22 +333,12 @@ function onRejectMatch(): void {
         <div class="banner banner-soft mt-3" style="background: white; border-color: #bae6fd;">
           <Info :size="14" style="color: #0369a1;" />
           <span class="text-[12px] leading-relaxed" style="color: #0c4a6e;">
-            Le numéro AVS est nécessaire pour établir la licence fédérale. Si
-            le joueur est en cours de procédure d'asile ou n'a pas encore son
-            AVS, cochez ci-dessous — nous vous contacterons par email.
+            Le numéro AVS est obligatoire pour établir la licence fédérale et
+            finaliser l'inscription. Si le joueur n'a pas encore d'AVS
+            (procédure d'asile, transfert depuis l'étranger), contactez
+            directement le club.
           </span>
         </div>
-
-        <label class="flex items-start gap-2.5 mt-3 cursor-pointer">
-          <input
-            v-model="avsUnavailable"
-            type="checkbox"
-            style="margin-top: 3px; accent-color: #10b981;"
-          />
-          <div class="text-[12.5px] text-slate-800 leading-relaxed">
-            AVS non disponible — me contacter pour la suite
-          </div>
-        </label>
       </div>
     </div>
 
@@ -380,5 +369,6 @@ function onRejectMatch(): void {
     :visible="dialogOpen"
     @confirm="onConfirmMatch"
     @reject="onRejectMatch"
+    @close="onCloseBlockedMatch"
   />
 </template>

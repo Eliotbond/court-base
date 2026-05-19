@@ -31,5 +31,8 @@
   },
   "devDependencies": {
     "prettier": "^3.3.0"
+  },
+  "dependencies": {
+    "firebase-functions": "^7.2.5"
   }
 }

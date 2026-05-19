@@ -183,6 +183,10 @@ Les **mineurs** (membres dont `birthDate < now - 18ans`) voient leurs communicat
 
 Rôle **additif** sur `/users.roles`, cumulable avec `admin`, `coach`, `official` (cf. mémoire `project_roles_additifs`). Il n'ouvre **pas** d'accès admin : un parent voit uniquement ses **pupilles** — les membres liés via `member.guardianUserIds`.
 
+### Rôle `secretary`
+
+Rôle **additif staff** sur `/users.roles` (énum canonique `UserRole` dans `packages/shared-types/src/user.ts` : `admin | coach | official | parent | treasurer | secretary`). Le secrétaire **n'a pas** de droits admin généraux. Il peut notamment **confirmer une licence** via la callable `confirmLicense` — au même titre que `treasurer` / `admin` / `rootAdmin` (cf. section Licences). Comme tout rôle staff, un secrétaire n'est **jamais** suspendu par `callerSuspended()` (cf. `firebase.md` → Membre inactif).
+
 ### Lien tuteur ↔ pupille
 
 `/members/{memberId}.guardianUserIds: string[]` est la **source de vérité** du lien. Conventions :
@@ -279,6 +283,39 @@ draft → submitted → (open_pending_trial | conditional_pending_review → tri
 
 Toutes les transitions post-`submitted` passent par callables (`refuseRegistration`, `onRegistrationStatusChanged`, etc.) — pas d'écriture client directe sur le status. Détail produit complet + plan d'implémentation : `docs/chantier-registrations.md`.
 
+### Membre actif / inactif
+
+Le flag `/members/{memberId}.active` (booléen, déjà au schéma) pilote l'accès du
+compte lié à l'**app club** (web admin et future app mobile Flutter).
+
+- **(a) Toggle admin** — l'admin bascule `member.active` depuis la fiche membre.
+  La rule `write` de `/members` reste admin-only ; aucun autre rôle ne peut
+  changer ce flag directement.
+- **(b) `active === false` ⇒ accès app club coupé** — le compte Auth lié
+  (`member.linkedUserId` ↔ `user.memberId`) perd l'accès aux données de l'app
+  club. C'est **enforced dans `firestore.rules`** via le helper
+  `callerSuspended()` : les collections app club (`/bookings`, `/matches`,
+  `/venues`, `/notifications`, `/matchTypes`, `/roles`, `/licenseTypes`, etc.)
+  rejettent la lecture pour un compte non-staff dont le membre lié est inactif.
+  Les comptes staff (rootAdmin/admin/coach/treasurer) ne sont **jamais**
+  suspendus. Partitionnement complet : `docs/firebase.md` → "Membre inactif —
+  suspension de l'accès app club".
+- **(c) Le portail `courtbase-register` reste accessible** — les collections
+  dont dépend la réinscription (`/registrations`, `/config/club`, `/teams`,
+  `/categories`, `/members` self, `/dues` self, `/users`, `/licenseRequests`)
+  ne sont **pas** coupées. Un membre inactif peut donc se réinscrire.
+- **(d) La réinscription réactive le membre** — la callable
+  `confirmRegistration`, quand elle réutilise un membre existant (matched, cf.
+  dédup stricte AVS ou nom+date de naissance), repose `active: true`. Si le
+  membre était archivé (`status === 'archived'`), elle repose aussi
+  `status: 'active'` et efface `archivedAt` / `archivedReason` /
+  `archivedByUid`. C'est le seul mécanisme qui sort un compte de l'état
+  suspendu — l'inscription validée rend l'accès app club.
+
+`active` est **orthogonal** à `member.status` : un membre peut être inactif
+(`active: false`) sans être archivé. L'archive est un état de cycle de vie
+(refus d'inscription, départ) ; l'inactivité est l'interrupteur d'accès.
+
 ## Licences
 
 Une licence fédérale est une **ressource payée, active pour une saison**, attachée à un membre pour un rôle donné (`player` / `official` / `coach` / `referee`). Chaque rôle a **N niveaux** (selon le niveau de pratique : J+S, Ligue A, C+, etc.).
@@ -297,12 +334,34 @@ Référentiel `/licenseTypes` éditable par l'admin (Settings → Licences). Une
 
 **Ajout d'une nouvelle licence** (ex : ouverture de la Ligue A) : créer une entrée `/licenseTypes` à tout moment depuis Settings.
 
-### Phases futures (préparé, pas implémenté)
+### Phase 2 — Niveaux + entité `/licenses` (partiellement livré)
 
-1. **Entité `/licenses/{id}`** — instance concrète d'une licence émise pour un membre × saison × licenseType. Porte `feeSnapshot`, `issuedAt`, `paidAt`, `transactionId`, `invoiceId`.
-2. **Comptabilité** — chaque création de licence génère une **transaction identifiable**. Liste filtrable, lien vers une facture rattachable. Vue "licences sans facture" pour le suivi compta.
-3. **Refactor `member.licensed` / `officialLevel`** — deviendront dérivés des licences actives de la saison courante (cf. `project_members_creation_roadmap` memory). Aujourd'hui maintenus en l'état tant que la création de licence n'existe pas.
-4. **Workflow d'octroi** — `/licenseRequests` (déjà existant, mobile coach → admin web) restera le canal de demande. À l'approbation, le flow ouvrira la création d'une licence (au lieu de juste flipper `member.licensed = true` comme aujourd'hui).
+#### Niveaux officiel / coach (qualifications)
+
+`member.officialLevel` et `member.coachLevel` sont des **QUALIFICATIONS** : niveaux numériques `1..N` réglés **manuellement par l'admin** depuis la fiche membre. « Avoir un niveau » = « être formé pour ce rôle », ce qui est **indépendant** du fait d'être actif.
+
+- `officialLevel` détermine quel `homeOfficialRequirements` (ventilé par niveau) le membre peut couvrir.
+- Les deux champs valent `null` si le membre n'est pas qualifié pour le rôle.
+
+#### Entité `/licenses/{id}` — officiel / coach ACTIF
+
+Un doc `/licenses/{id}` est une **instance concrète** de licence fédérale, émise pour un **membre × saison × type de licence**. `level`, `licenseName`, `feeSnapshot` sont snapshottés depuis le `/licenseTypes` à la création. Schéma : voir `firebase.md` (`/licenses`).
+
+**Définition « officiel/coach ACTIF »** : un membre est officiel (resp. coach) **actif** s'il a une licence `/licenses` `status:'active'` pour ce rôle et la **saison courante**. C'est distinct de la qualification (`officialLevel` / `coachLevel`) : on peut être qualifié sans licence active.
+
+**Dérivation** : pour éviter une requête `/licenses` à chaque check, le membre porte une réf **dénormalisée** `member.officialLicense` / `member.coachLicense` (`ActiveLicenseRef`, posée par la callable `confirmLicense`, `null` sinon). Actif ⟺ `officialLicense != null` **et** `officialLicense.seasonId === <id de la saison active>`.
+
+**Cycle de vie** `pending → active` :
+
+1. `pending` — la licence est créée par l'**admin** depuis la fiche membre (write client direct).
+2. `active` — une fois la licence confirmée par Swiss Basketball **et payée par le club**, elle passe en `active` via la callable **`confirmLicense`**, réservée aux rôles **treasurer / admin / secretary / rootAdmin**. La callable pose `confirmedAt` / `confirmedByUid` / `accountingEntryId`, met à jour la réf dénormalisée du membre, et **poste l'écriture comptable** de la charge de licence (cf. ci-dessous).
+3. `cancelled` — terminal.
+
+**Écriture comptable à la confirmation** : `confirmLicense` poste une écriture en partie double — **débit** du compte de charge « Licences fédérales », **crédit** du compte de trésorerie Banque, montant = `license.feeSnapshot`. `license.accountingEntryId` lie la licence à l'écriture. Le club paie la fédération (l'argent quitte la banque, une licence n'est confirmée qu'une fois déjà payée) → une **seule** écriture, pas de passage par le compte Créditeurs. Détail : `docs/compta.md`.
+
+**Effet sur les droits d'accès app** : un officiel **sans licence officiel active** ne peut **pas s'auto-inscrire à un match** — `firestore.rules` gate la création d'un `officialAssignment` self-register sur `member.officialLicense != null` (le check saison-précis est porté côté UI/callable). Voir `firebase.md` → Security rules.
+
+> **Reste hors scope (Phase 2 non terminée)** : le refactor de `member.licensed` / `officialLevel` en dérivés des licences actives (cf. `project_members_creation_roadmap`), et le rebranchement du workflow `/licenseRequests` (demande mobile coach → admin) sur la création d'une `/licenses` au lieu de flipper `member.licensed`. Aujourd'hui `member.licensed` reste maintenu en l'état.
 
 ### Distinction avec les concepts voisins
 
@@ -485,6 +544,18 @@ Ces indicateurs sont affichés dans l'onglet "Officiels" de la page web `/offici
 ### Notifications
 - FCM push + in-app (badge + liste).
 - Types : `new_match`, `officials_needed`, `urgent`, `match_reminder`.
+- **Mécanisme push** : à la création d'un doc `/notifications`, le trigger `fanoutNotification` résout `targetAudience` → officiels concernés → tokens FCM de leurs appareils (`/users/{uid}/fcmTokens`) → push multicast. `pushedAt` garde l'idempotence. Vaut pour les notifs admin **et** auto (`autoOfficialsNeededNotification`, `matchReminders`).
+- **Rappels match de l'officiel inscrit** (24h + 3h avant) : notifications **locales** planifiées sur l'appareil par l'app mobile à l'auto-inscription (précises, offline) — pas de Cloud Function. Annulées si l'officiel décline.
+
+### Membres — création/édition coach (app mobile)
+
+Sur mobile, un coach peut créer un joueur dans une de ses équipes, l'éditer et le désactiver/archiver. `/members` étant write-admin-only dans `firestore.rules`, ces mutations passent par des **callables** (`coachCreateMember`, `coachUpdateMember`, `coachDeactivateMember`) qui re-vérifient le scope coach côté serveur. Idem pour la création d'un match à l'extérieur (`coachCreateAwayMatch`). Cf. `docs/firebase.md` (section Cloud Functions) et `docs/mobile-app.md`.
+
+### Rôles membre → rôles Auth
+
+Les rôles d'un membre (`/members.roles`) **définissent** les rôles de son compte Auth (`/users.roles`, qui gatent les `firestore.rules` et l'accès app). La Function `syncUserRolesFromMember` recopie `member.roles` verbatim vers `/users/{linkedUserId}.roles` à chaque écriture du membre lié — la sync **écrase** intégralement (un rôle posé hors-membre sur `/users.roles` ne survit pas ; il doit figurer dans `member.roles`). Un membre délié → roles de l'ancien user remis à `[]`.
+
+**6 rôles système** (référentiel `/roles`, non-supprimables) : `admin`, `treasurer`, `secretary`, `coach`, `official`, `player`. Leurs `id` sont les clés canoniques de `/users.roles`. Les autres rôles (`comite`, `referee`…) sont `custom`, éditables/supprimables.
 
 ### Attendance
 - Par training, par coach de l'équipe. `present` | `absent` | `excused`.
@@ -533,6 +604,8 @@ Couche email + paiement manuel ajoutée à la couche dues existante (cf. `fireba
   - **Page `/cotisations` (liste globale)** : canal "quotidien" pour confirmer les paiements reçus. Le **montant est verrouillé** au tarif plein (`row.amount`) ; pas de champ saisissable. Pour un arrangement, il faut passer par la fiche membre.
   - **Page `/members/{id}` → tab Cotisations** : canal "arrangement". Le dialog "Marquer payé" expose en haut un switch "Cotisation payée intégralement" (ON par défaut), **visible uniquement aux rootAdmin / treasurer**. OFF → un champ "Montant versé" apparaît, capé à `due.amount`. Admin standard : le switch est masqué, le dialog reste figé sur le plein tarif (cohérent avec la liste globale).
 - **Refus d'une registration → archive du member lié** : la callable `refuseRegistration` (Phase E du chantier inscriptions) consulte `registration.matchedMemberId` ; si présent **et** que le member a été créé via ce flow d'inscription (et non préexistant), elle pose `member.status = 'archived'`, `archivedAt`, `archivedReason` (motif du refus), `archivedByUid` (coach/admin). Cohérent avec le principe "pas de delete physique" (audit + reprise possible via `unarchiveMember` futur).
+
+- **Réinscription → réactivation du member (`confirmRegistration`)** : quand `confirmRegistration` réutilise un **membre existant** (matched par dédup stricte AVS ou nom+date de naissance, cf. `project_member_dedup_on_confirm`), elle repose `member.active = true`. Si ce membre était archivé (`status === 'archived'`), elle repose aussi `status = 'active'` et efface `archivedAt` / `archivedReason` / `archivedByUid`. C'est le mécanisme qui sort un compte de l'état "suspendu" (cf. section "Membre actif / inactif") : un joueur parti, redevenu inactif, retrouve l'accès à l'app club une fois sa nouvelle inscription confirmée. La création d'un membre neuf n'est pas concernée (il naît `active: true`, `status: 'active'`).
 
 Vue d'ensemble du déclenchement :
 

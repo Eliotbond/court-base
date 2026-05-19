@@ -457,3 +457,52 @@ export async function deleteMember(
   const result: HttpsCallableResult<DeleteMemberOutput> = await callable(input)
   return result.data
 }
+
+// -----------------------------------------------------------------------------
+// confirmLicense — confirme une licence `/licenses` (transition `pending` →
+// `active`). Côté serveur :
+//   - passe `/licenses/{id}` en `status: 'active'` + `confirmedAt` +
+//     `confirmedByUid` (uid du caller, anti-spoof).
+//   - poste une écriture comptable `/accountingEntries` : débit du compte de
+//     charge « Licences fédérales » (résolu par son nom), crédit trésorerie,
+//     pour le montant `feeSnapshot`. L'id de l'écriture est dénormalisé dans
+//     `license.accountingEntryId`.
+//   - dénormalise la réf `member.officialLicense` / `coachLicense` selon le
+//     `role` snapshotté de la licence (rend l'officiel / coach ACTIF pour la
+//     saison concernée).
+// Côté functions : functions/src/licenses/confirmLicense.ts
+// Auth : signed-in. Le caller doit être rootAdmin OU admin OU treasurer OU
+// secretary. Codes d'erreur typiques :
+//   - permission-denied   → caller ni rootAdmin, ni admin, ni treasurer,
+//                            ni secretary
+//   - failed-precondition → licence déjà `cancelled` (terminal)
+//   - not-found           → licenseId inexistant
+//   - internal            → compte « Licences fédérales » introuvable côté
+//                            plan comptable (seed manquant)
+//
+// Idempotence : appeler `confirmLicense` sur une licence déjà `active` ne
+// re-poste PAS d'écriture comptable — le serveur renvoie `alreadyActive: true`
+// avec l'`accountingEntryId` existant.
+// -----------------------------------------------------------------------------
+export interface ConfirmLicenseInput {
+  licenseId: string
+}
+
+export interface ConfirmLicenseOutput {
+  ok: true
+  /** `true` si la licence était déjà `active` (aucune écriture re-postée). */
+  alreadyActive: boolean
+  /** Id de l'écriture comptable de la charge (`/accountingEntries`). */
+  accountingEntryId: string
+}
+
+export async function confirmLicense(
+  input: ConfirmLicenseInput,
+): Promise<ConfirmLicenseOutput> {
+  const callable = httpsCallable<ConfirmLicenseInput, ConfirmLicenseOutput>(
+    functions,
+    'confirmLicense',
+  )
+  const result: HttpsCallableResult<ConfirmLicenseOutput> = await callable(input)
+  return result.data
+}

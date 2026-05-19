@@ -165,6 +165,7 @@ export async function processBookingForOfficialsNeeded(
     relatedMatchId: booking.matchId ?? null,
     createdAt: serverTimestamp(),
     readBy: [],
+    pushedAt: null,
   }
   await col<NotificationData>('notifications').add(notification)
   return true
@@ -272,6 +273,7 @@ export async function processAwayMatchForOfficialsNeeded(
     relatedMatchId: matchId,
     createdAt: serverTimestamp(),
     readBy: [],
+    pushedAt: null,
   }
   await col<NotificationData>('notifications').add(notification)
   return true

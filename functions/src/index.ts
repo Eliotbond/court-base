@@ -24,6 +24,10 @@ export { applyClosurePeriod } from './bookings/applyClosurePeriod'
 
 // Matches
 export { handleMatchSlotChange } from './matches/handleMatchSlotChange'
+export { coachCreateAwayMatch } from './matches/coachCreateAwayMatch'
+
+// Notifications
+export { fanoutNotification } from './notifications/fanoutNotification'
 
 // Officials
 export { autoOfficialsNeededNotification } from './officials/autoOfficialsNeeded'
@@ -43,6 +47,7 @@ export {
   applyPaymentExceptionOnCreate,
 } from './exceptions/applyPaymentException'
 export { applyLicenseRequest } from './licenses/applyLicenseRequest'
+export { confirmLicense } from './licenses/confirmLicense'
 
 // Majority transition
 export { onMajorityReached } from './majority/onMajorityReached'
@@ -59,6 +64,10 @@ export { acceptInvitation } from './admin/acceptInvitation'
 
 // Members (operations admin sur /members)
 export { deleteMember } from './members/deleteMember'
+export { coachCreateMember } from './members/coachCreateMember'
+export { coachUpdateMember } from './members/coachUpdateMember'
+export { coachDeactivateMember } from './members/coachDeactivateMember'
+export { syncUserRolesFromMember } from './members/syncUserRolesFromMember'
 
 // Registrations (app courtbase-register)
 export { matchExistingMember } from './registrations/matchExistingMember'

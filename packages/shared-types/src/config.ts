@@ -110,29 +110,12 @@ export interface ClubConfigPatch {
 
 // ---------------------------------------------------------------------------
 // Types adjacents lus / écrits par l'écran Settings — collections séparées
-// dans Firestore mais regroupées ici parce que `role.ts` est vide et qu'on
-// n'ouvre pas de nouveau fichier de types tant que les autres screens ne le
-// nécessitent pas (cf. consigne agent Settings).
+// dans Firestore mais regroupées ici parce qu'on n'ouvre pas de nouveau
+// fichier de types tant que les autres screens ne le nécessitent pas.
 //
-// Quand `role.ts` sera implémenté (ou `closurePeriod.ts` créé) ces types
-// migreront — pour l'instant ils vivent ici, `index.ts` les ré-exporte déjà
-// via `export * from './config'`.
+// `RoleData` / `Role` ont migré vers `role.ts` (cf. provisioning de la vraie
+// collection `/roles`) — `index.ts` les ré-exporte depuis là.
 // ---------------------------------------------------------------------------
-
-/** Document `/roles/{roleId}` — voir docs/firebase.md section /roles. */
-export type RoleType = 'system' | 'custom'
-
-export interface RoleData {
-  /** Nom affiché (ex. "Comité"). */
-  name: string
-  /** `system` = `player|official|coach|referee` (non-supprimables). */
-  type: RoleType
-  /** Couleur hex pour le badge UI (palette tokens design). */
-  color: string
-  createdAt: Timestamp
-}
-
-export type Role = RoleData & { id: string }
 
 /** Document `/closurePeriods/{periodId}` — voir docs/firebase.md. */
 export type ClosurePeriodType = 'holiday' | 'custom'

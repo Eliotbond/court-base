@@ -28,10 +28,26 @@ import { db } from '@/services/firebase'
  *    paiement.
  *
  * Permissions (cf. `firestore.rules` §dues) : `read` autorisé au membre lié
- * (`/members/{memberId}.linkedUserId == request.auth.uid`) et aux tuteurs
- * (`/members/{memberId}.guardianUserIds` contient `request.auth.uid`). La
- * query client filtre `where memberId in [...]` — Firestore vérifie la rule
- * par doc retourné.
+ * (`/members/{memberId}.linkedUserId == request.auth.uid`), aux tuteurs
+ * (`/members/{memberId}.guardianUserIds` contient `request.auth.uid`) ET au
+ * compte ayant soumis l'inscription d'origine
+ * (`resource.data.get('registeredByUid', null) == request.auth.uid`).
+ *
+ * Stratégie de lecture côté register — UNION de deux critères :
+ *  1. `where memberId in [...]`        → couvre les cotisations dont le user
+ *     est membre lié / tuteur (le binding a pris).
+ *  2. `where registeredByUid == uid`   → couvre le cas où le binding membre
+ *     n'a PAS pris : inscription `for: 'self'` sur un member déjà lié à un
+ *     autre compte. Le submitter reste alors l'`registeredByUid` de la
+ *     cotisation sans devenir `linkedUserId` (cf. `docs/firebase.md` §dues).
+ * Les deux jeux de résultats sont fusionnés et dédupliqués par `doc.id` avant
+ * le filtre status + tri. Aucun index composite requis : `memberId in [...]`
+ * et `registeredByUid == uid` sont chacun une égalité simple (cf. CLAUDE.md
+ * racine §10).
+ *
+ * `registeredByUid` vaut `null` pour les cotisations legacy et les joueurs
+ * ajoutés hors flux d'inscription — la query `== uid` ne les remonte jamais,
+ * mais le critère `memberId in [...]` les couvre.
  */
 
 const DUES = 'dues'
@@ -89,30 +105,33 @@ function snapToDue(snap: { id: string; data: () => unknown }): DueRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Reads
+// Fetch unifié (union memberId-in + registeredByUid)
 // ---------------------------------------------------------------------------
 
 /**
- * Récupère les dues actifs (`pending_grace` / `issued` / `overdue`) liés à
- * une liste de memberIds.
+ * Récupère TOUS les docs `/dues` accessibles au user signed-in, sans filtre
+ * status — base commune des trois fonctions de liste publiques.
  *
- * Pattern simple query + tri JS (cf. CLAUDE.md racine point 10) : on évite un
- * index composite `(memberId IN, status IN, dueAt DESC)` au profit d'un filtre
- * côté serveur sur `memberId in [...]` puis d'un filtre status + tri en mémoire.
+ * Réalise l'UNION de deux critères de lecture (cf. doc de tête de fichier) :
+ *  1. `where memberId in [chunk]` — chunks de 30 (limite Firestore `in`),
+ *     exécutés en parallèle. Couvre les cotisations dont le user est membre
+ *     lié / tuteur.
+ *  2. `where registeredByUid == uid` — une égalité simple, couvre le cas où
+ *     le binding membre n'a pas pris (inscription `for: 'self'`).
  *
- * Limites Firestore :
- *  - `where in [...]` : max 30 valeurs. Si `memberIds.length > 30`, on
- *    chunke en plusieurs queries parallèles.
- *  - Tableau vide → on shortcut sans query (Firestore rejette `in []`).
+ * Déduplication par `doc.id` : un doc peut satisfaire les deux critères à la
+ * fois (user à la fois tuteur ET auteur de l'inscription) — on ne le compte
+ * qu'une fois. Aucun index composite : chaque query est une égalité simple.
  *
- * Tri : `dueAt asc` (les plus urgents en premier), avec fallback `createdAt`
- * pour les dues encore en `pending_grace` (pas encore de `dueAt`).
+ * `uid` peut être vide (`''`) — dans ce cas la query `registeredByUid` est
+ * omise et seul le critère `memberId in [...]` s'applique (rétro-compat / appel
+ * sans contexte auth). Si `memberIds` est vide ET `uid` est vide → aucune
+ * query, retour `[]` (Firestore rejette `in []`).
  */
-export async function listActiveDuesForMembers(
+async function fetchAccessibleDues(
   memberIds: string[],
+  uid: string,
 ): Promise<DueRecord[]> {
-  if (memberIds.length === 0) return []
-
   // Dédoublonnage + chunk de 30 (limite Firestore `in`).
   const unique = Array.from(new Set(memberIds))
   const chunks: string[][] = []
@@ -120,21 +139,62 @@ export async function listActiveDuesForMembers(
     chunks.push(unique.slice(i, i + 30))
   }
 
-  const snaps = await Promise.all(
-    chunks.map((chunk) =>
-      getDocs(query(collection(db, DUES), where('memberId', 'in', chunk))),
-    ),
+  const queries = chunks.map((chunk) =>
+    getDocs(query(collection(db, DUES), where('memberId', 'in', chunk))),
   )
+  if (uid) {
+    queries.push(
+      getDocs(
+        query(collection(db, DUES), where('registeredByUid', '==', uid)),
+      ),
+    )
+  }
 
-  const items: DueRecord[] = []
+  if (queries.length === 0) return []
+
+  const snaps = await Promise.all(queries)
+
+  // Déduplication par doc.id (un doc peut matcher memberId-in ET
+  // registeredByUid). Une Map garantit une seule occurrence par id.
+  const byId = new Map<string, DueRecord>()
   for (const snap of snaps) {
     for (const d of snap.docs) {
-      const due = snapToDue(d)
-      if (ACTIVE_COTISATION_STATUSES.includes(due.status)) {
-        items.push(due)
-      }
+      if (!byId.has(d.id)) byId.set(d.id, snapToDue(d))
     }
   }
+  return Array.from(byId.values())
+}
+
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
+
+/**
+ * Récupère les dues actifs (`pending_grace` / `issued` / `overdue`) accessibles
+ * au user signed-in.
+ *
+ * Lecture en UNION (cf. `fetchAccessibleDues`) : `memberId in [...]` (membre
+ * lié / tuteur) ∪ `registeredByUid == uid` (auteur de l'inscription). Pattern
+ * simple query + tri JS (cf. CLAUDE.md racine §10) — aucun index composite.
+ *
+ * Filtre status + tri en mémoire après fusion dédupliquée.
+ *
+ * Tri : `dueAt asc` (les plus urgents en premier), avec fallback `createdAt`
+ * pour les dues encore en `pending_grace` (pas encore de `dueAt`).
+ *
+ * @param memberIds members où le user est membre lié / tuteur.
+ * @param uid       uid du user signed-in (pour la query `registeredByUid`).
+ *                  Optionnel — `''` omet la query d'union.
+ */
+export async function listActiveDuesForMembers(
+  memberIds: string[],
+  uid = '',
+): Promise<DueRecord[]> {
+  const all = await fetchAccessibleDues(memberIds, uid)
+
+  const items = all.filter((due) =>
+    ACTIVE_COTISATION_STATUSES.includes(due.status),
+  )
 
   // Tri en mémoire : dueAt asc (plus urgents en premier), fallback createdAt.
   items.sort((a, b) => {
@@ -147,45 +207,33 @@ export async function listActiveDuesForMembers(
 }
 
 /**
- * Récupère les dues payés (`status === 'paid'`) liés à une liste de memberIds.
+ * Récupère les dues payés (`status === 'paid'`) accessibles au user signed-in.
  *
- * Même pattern que `listActiveDuesForMembers` :
- *  - Chunk de 30 sur `memberId in [...]` (limite Firestore).
- *  - Filtre status côté client.
- *  - Tri en mémoire : `paidAt desc` (le plus récent en tête), fallback
- *    `createdAt` pour les lignes legacy sans `paidAt` (cas pathologique mais
- *    on dégrade au lieu de crasher).
+ * Même pattern que `listActiveDuesForMembers` : UNION `memberId in [...]` ∪
+ * `registeredByUid == uid` via `fetchAccessibleDues`, puis filtre status +
+ * tri en mémoire.
  *
  * Utilisé pour afficher l'historique de paiement sur la home register et le
  * reçu sur `PaymentInstructions.vue`. Lecture autorisée par les rules au
- * membre lié + tuteurs (cf. `firestore.rules` §dues).
+ * membre lié, aux tuteurs et à l'auteur de l'inscription (cf. `firestore.rules`
+ * §dues).
+ *
+ * Tri : `paidAt desc` (le plus récent en tête), fallback `createdAt` pour les
+ * lignes legacy sans `paidAt` (cas pathologique mais on dégrade au lieu de
+ * crasher).
+ *
+ * @param memberIds members où le user est membre lié / tuteur.
+ * @param uid       uid du user signed-in. Optionnel — `''` omet la query d'union.
  */
 export async function listPaidDuesForMembers(
   memberIds: string[],
+  uid = '',
 ): Promise<DueRecord[]> {
-  if (memberIds.length === 0) return []
+  const all = await fetchAccessibleDues(memberIds, uid)
 
-  const unique = Array.from(new Set(memberIds))
-  const chunks: string[][] = []
-  for (let i = 0; i < unique.length; i += 30) {
-    chunks.push(unique.slice(i, i + 30))
-  }
-
-  const snaps = await Promise.all(
-    chunks.map((chunk) =>
-      getDocs(query(collection(db, DUES), where('memberId', 'in', chunk))),
-    ),
+  const items = all.filter((due) =>
+    PAID_COTISATION_STATUSES.includes(due.status),
   )
-
-  const items: DueRecord[] = []
-  for (const snap of snaps) {
-    for (const d of snap.docs) {
-      const due = snapToDue(d)
-      if (PAID_COTISATION_STATUSES.includes(due.status)) {
-        items.push(due)
-      }
-    }
-  }
 
   // Tri paidAt desc (paiement le plus récent en premier), fallback createdAt.
   items.sort((a, b) => {
@@ -198,47 +246,31 @@ export async function listPaidDuesForMembers(
 }
 
 /**
- * Récupère les dues "soldés" (`paid | cancelled | excepted`) liés à une liste
- * de memberIds — destiné au panneau "Historique" côté parent.
+ * Récupère les dues "soldés" (`paid | cancelled | excepted`) accessibles au
+ * user signed-in — destiné au panneau "Historique" côté parent.
  *
- * Même pattern que `listPaidDuesForMembers` :
- *  - Chunk de 30 sur `memberId in [...]` (limite Firestore `in`).
- *  - Filtre statuts côté client (évite un index composite).
- *  - Catch défensif `FirestoreError` rethrown pour les cas non-`permission-denied`
- *    (index manquant, réseau) — le store loggue le code d'erreur.
+ * Même pattern que `listPaidDuesForMembers` : UNION `memberId in [...]` ∪
+ * `registeredByUid == uid` via `fetchAccessibleDues`, puis filtre statuts +
+ * tri en mémoire (évite un index composite).
  *
  * Tri desc par date la plus pertinente :
  *  - `paidAt` si dispo (dues `paid`)
  *  - sinon `dueAt` (dues `cancelled` / `excepted` qui avaient une échéance)
  *  - sinon `createdAt` (fallback défensif)
  * → le plus récent en tête.
+ *
+ * @param memberIds members où le user est membre lié / tuteur.
+ * @param uid       uid du user signed-in. Optionnel — `''` omet la query d'union.
  */
 export async function listSettledDuesForMembers(
   memberIds: string[],
+  uid = '',
 ): Promise<DueRecord[]> {
-  if (memberIds.length === 0) return []
+  const all = await fetchAccessibleDues(memberIds, uid)
 
-  const unique = Array.from(new Set(memberIds))
-  const chunks: string[][] = []
-  for (let i = 0; i < unique.length; i += 30) {
-    chunks.push(unique.slice(i, i + 30))
-  }
-
-  const snaps = await Promise.all(
-    chunks.map((chunk) =>
-      getDocs(query(collection(db, DUES), where('memberId', 'in', chunk))),
-    ),
+  const items = all.filter((due) =>
+    SETTLED_COTISATION_STATUSES.includes(due.status),
   )
-
-  const items: DueRecord[] = []
-  for (const snap of snaps) {
-    for (const d of snap.docs) {
-      const due = snapToDue(d)
-      if (SETTLED_COTISATION_STATUSES.includes(due.status)) {
-        items.push(due)
-      }
-    }
-  }
 
   // Tri desc : paidAt > dueAt > createdAt (plus récent en tête).
   items.sort((a, b) => {
@@ -267,15 +299,24 @@ export function sortDuesByCotisationDateDesc(items: DueRecord[]): DueRecord[] {
   return [...items].sort((a, b) => cotisationSeconds(b) - cotisationSeconds(a))
 }
 
-/** Récupère un due par son id. Retourne `null` si le doc n'existe pas ou si l'accès est refusé (le user n'est pas tuteur du member concerné). */
+/**
+ * Récupère un due par son id. Retourne `null` si le doc n'existe pas ou si
+ * l'accès est refusé.
+ *
+ * Pas de changement lié à `registeredByUid` : la lecture single-doc est
+ * autorisée par les rules dès que l'une des clauses `read` §dues est
+ * satisfaite — membre lié, tuteur, OU `registeredByUid == auth.uid`. La
+ * nouvelle clause couvre donc déjà le compte ayant soumis l'inscription.
+ */
 export async function getDue(dueId: string): Promise<DueRecord | null> {
   try {
     const snap = await getDoc(doc(db, DUES, dueId))
     if (!snap.exists()) return null
     return snapToDue(snap)
   } catch (err) {
-    // `permission-denied` ici signifie : ce user n'a pas accès à ce due (pas
-    // tuteur du member, pas admin). On dégrade en `null` plutôt que de
+    // `permission-denied` ici signifie : ce user n'a aucun droit de lecture
+    // sur ce due (ni membre lié, ni tuteur, ni auteur de l'inscription, ni
+    // admin). On dégrade en `null` plutôt que de
     // propager — la vue affichera "introuvable".
     if (err instanceof FirestoreError && err.code === 'permission-denied') {
       return null

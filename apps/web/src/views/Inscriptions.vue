@@ -12,10 +12,12 @@ import {
   Search,
   ShieldCheck,
   ShieldX,
+  Trash2,
   TriangleAlert,
 } from 'lucide-vue-next'
 import Dialog from 'primevue/dialog'
 import Drawer from 'primevue/drawer'
+import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Textarea from 'primevue/textarea'
 import {
@@ -27,6 +29,7 @@ import {
   isConfirmable,
   isMarkTrialPossible,
   isRefusable,
+  registrationHasMemberDependency,
   registrationStatusLabel,
   registrationStatusVariant,
   type RegistrationRow,
@@ -256,6 +259,52 @@ async function submitConfirm(): Promise<void> {
   if (!id) return
   const ok = await store.confirmToDues(id)
   if (ok) closeConfirmDialog()
+}
+
+// ---------------------------------------------------------------------------
+// Delete dialog — suppression définitive (admin only). Garde-fou UX
+// type-to-confirm, aligné sur le dialog de suppression des cotisations.
+// ---------------------------------------------------------------------------
+
+const DELETE_CONFIRM_TOKEN = 'SUPPRIMER'
+
+const deleteDialogOpen = ref(false)
+const deleteTargetId = ref<string | null>(null)
+const deleteConfirmInput = ref('')
+
+const deleteTargetRegistration = computed<RegistrationRow | null>(() => {
+  const id = deleteTargetId.value
+  if (!id) return null
+  return store.items.find((r) => r.id === id) ?? null
+})
+
+const canSubmitDelete = computed<boolean>(() => {
+  if (store.actionPendingId !== null) return false
+  return deleteConfirmInput.value.trim().toUpperCase() === DELETE_CONFIRM_TOKEN
+})
+
+function openDeleteDialog(id: string): void {
+  deleteTargetId.value = id
+  deleteConfirmInput.value = ''
+  deleteDialogOpen.value = true
+}
+
+function closeDeleteDialog(): void {
+  if (store.actionPendingId !== null) return
+  deleteDialogOpen.value = false
+  deleteTargetId.value = null
+  deleteConfirmInput.value = ''
+}
+
+async function submitDelete(): Promise<void> {
+  const id = deleteTargetId.value
+  if (!id || !canSubmitDelete.value) return
+  const ok = await store.remove(id)
+  if (ok) {
+    deleteDialogOpen.value = false
+    deleteTargetId.value = null
+    deleteConfirmInput.value = ''
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +551,20 @@ const totalsLine = computed(() => {
                   />
                   Refuser
                 </button>
+                <button
+                  v-if="store.isAdminScope"
+                  type="button"
+                  class="btn btn-ghost btn-sm !px-1.5 text-rose-600"
+                  :disabled="store.actionPendingId === row.id"
+                  title="Supprimer définitivement l'inscription"
+                  aria-label="Supprimer l'inscription"
+                  @click.stop="openDeleteDialog(row.id)"
+                >
+                  <Trash2
+                    :size="13"
+                    :stroke-width="2"
+                  />
+                </button>
               </div>
             </td>
           </tr>
@@ -669,9 +732,6 @@ const totalsLine = computed(() => {
                   <template v-if="store.selectedRegistration.player.avs">
                     {{ store.selectedRegistration.player.avs }}
                   </template>
-                  <template v-else-if="store.selectedRegistration.player.avsUnavailable">
-                    Non communiqué
-                  </template>
                   <template v-else>
                     —
                   </template>
@@ -791,6 +851,19 @@ const totalsLine = computed(() => {
           <!-- Drawer footer -->
           <footer class="flex items-center justify-end gap-2 px-5 py-3 border-t border-surface-200 flex-wrap">
             <button
+              v-if="store.isAdminScope"
+              type="button"
+              class="btn btn-ghost btn-sm text-rose-600 mr-auto"
+              :disabled="store.actionPendingId === store.selectedRegistration.id"
+              @click="openDeleteDialog(store.selectedRegistration.id)"
+            >
+              <Trash2
+                :size="14"
+                :stroke-width="2"
+              />
+              Supprimer
+            </button>
+            <button
               v-if="isMarkTrialPossible(store.selectedRegistration.status)"
               type="button"
               class="btn btn-secondary btn-sm"
@@ -832,7 +905,8 @@ const totalsLine = computed(() => {
             <button
               v-if="!isMarkTrialPossible(store.selectedRegistration.status)
                 && !isConfirmable(store.selectedRegistration.status)
-                && !isRefusable(store.selectedRegistration.status)"
+                && !isRefusable(store.selectedRegistration.status)
+                && !store.isAdminScope"
               type="button"
               class="btn btn-secondary btn-sm"
               disabled
@@ -1061,6 +1135,127 @@ const totalsLine = computed(() => {
           </template>
           <template v-else>
             Confirmer et émettre la cotisation
+          </template>
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- ================= Delete registration dialog =================== -->
+    <Dialog
+      v-model:visible="deleteDialogOpen"
+      modal
+      :draggable="false"
+      :closable="store.actionPendingId === null"
+      :close-on-escape="store.actionPendingId === null"
+      :style="{ width: '480px' }"
+    >
+      <template #header>
+        <span class="flex items-center gap-2 text-rose-700 font-semibold">
+          <TriangleAlert
+            :size="16"
+            :stroke-width="2"
+          />
+          Supprimer l'inscription
+        </span>
+      </template>
+
+      <div
+        v-if="deleteTargetRegistration"
+        class="space-y-3 pt-1 text-[13px]"
+      >
+        <div class="card bg-amber-50 border-amber-200 px-3 py-2 text-[12px] text-amber-900 flex items-start gap-2">
+          <TriangleAlert
+            :size="14"
+            :stroke-width="2"
+            class="mt-0.5 shrink-0"
+          />
+          <p class="leading-snug">
+            Cette action est destinée à corriger une
+            <strong>erreur de création</strong>. Pour clôturer proprement une
+            inscription soumise, préférez <strong>Refuser</strong> — le motif et
+            l'audit trail sont conservés.
+          </p>
+        </div>
+
+        <div
+          v-if="registrationHasMemberDependency(deleteTargetRegistration.status)"
+          class="card bg-rose-50 border-rose-200 px-3 py-2 text-[12px] text-rose-800 flex items-start gap-2"
+        >
+          <ShieldX
+            :size="14"
+            :stroke-width="2"
+            class="mt-0.5 shrink-0"
+          />
+          <p class="leading-snug">
+            Cette inscription est <strong>confirmée</strong> : un membre et une
+            cotisation ont déjà été créés. Les supprimer ici
+            <strong>ne nettoie pas</strong> ces documents — ils resteront
+            orphelins. Pour un retrait complet, supprimez plutôt le membre
+            concerné (page Détail membre).
+          </p>
+        </div>
+
+        <div class="card bg-surface-50 border-surface-200 px-3 py-2 text-[12px] text-surface-700 space-y-0.5">
+          <div>
+            Joueur :
+            <strong>{{ deleteTargetRegistration.playerFullName || '— inconnu —' }}</strong>
+          </div>
+          <div>
+            Équipe :
+            <span>{{ deleteTargetRegistration.team?.name ?? '— inconnue —' }}</span>
+          </div>
+          <div>
+            Statut actuel :
+            <Pill :variant="registrationStatusVariant(deleteTargetRegistration.status)">
+              {{ registrationStatusLabel(deleteTargetRegistration.status) }}
+            </Pill>
+          </div>
+          <div class="text-rose-700 pt-1">
+            <strong>Action irréversible.</strong>
+          </div>
+        </div>
+
+        <label class="block">
+          <span class="text-[12px] text-surface-700">
+            Tapez
+            <code class="font-mono text-rose-700">{{ DELETE_CONFIRM_TOKEN }}</code>
+            pour confirmer
+          </span>
+          <InputText
+            v-model="deleteConfirmInput"
+            class="mt-1 w-full"
+            :placeholder="DELETE_CONFIRM_TOKEN"
+            :disabled="store.actionPendingId !== null"
+            autocomplete="off"
+            @keyup.enter="submitDelete"
+          />
+        </label>
+      </div>
+
+      <template #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          :disabled="store.actionPendingId !== null"
+          @click="closeDeleteDialog"
+        >
+          Retour
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm !bg-rose-600 hover:!bg-rose-700 disabled:!bg-rose-300"
+          :disabled="!canSubmitDelete"
+          @click="submitDelete"
+        >
+          <Trash2
+            :size="14"
+            :stroke-width="2"
+          />
+          <template v-if="store.actionPendingId !== null">
+            Suppression…
+          </template>
+          <template v-else>
+            Supprimer définitivement
           </template>
         </button>
       </template>

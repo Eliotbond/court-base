@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "773496960848",
+    "project_id": "court-base-44878",
+    "storage_bucket": "court-base-44878.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:773496960848:android:dbaf274a28096a95089e55",
+        "android_client_info": {
+          "package_name": "ch.alpinedigital.courtbase.courtbase_mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "773496960848-42u7l7nrm0c7vrr5kd26l0f742sirobo.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBjVpjbjjfGDInufND_BdPiKSeW-tyCf4w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "773496960848-42u7l7nrm0c7vrr5kd26l0f742sirobo.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "773496960848-5i6gasqk04u9h2bn206ecd2hvfgn69qg.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "io.flutter.flutter.app"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

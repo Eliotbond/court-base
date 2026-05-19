@@ -1,5 +1,7 @@
 import {
   collection,
+  deleteDoc,
+  doc,
   getDocs,
   limit,
   orderBy,
@@ -8,6 +10,7 @@ import {
   type DocumentSnapshot,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore'
+import { FirebaseError } from 'firebase/app'
 import { db } from '@/services/firebase'
 import type {
   Registration,
@@ -323,6 +326,48 @@ export function isMarkTrialPossible(status: RegistrationStatus): boolean {
  */
 export function isConfirmable(status: RegistrationStatus): boolean {
   return status === 'trial_in_progress'
+}
+
+/**
+ * True si la registration a déjà déclenché la création d'un `/members/{id}`
+ * + l'émission d'une cotisation (statuts `confirmed_pending_dues` / `active`).
+ *
+ * N'EMPÊCHE PAS la suppression — l'admin peut supprimer n'importe quel statut.
+ * Sert uniquement à l'UI : afficher un avertissement renforcé (le member + la
+ * cotisation déjà créés ne sont PAS nettoyés par la suppression de la
+ * registration — le nettoyage propre passe par `deleteMember`).
+ */
+export function registrationHasMemberDependency(
+  status: RegistrationStatus,
+): boolean {
+  return status === 'confirmed_pending_dues' || status === 'active'
+}
+
+// ---------------------------------------------------------------------------
+// Suppression définitive — vue admin
+// ---------------------------------------------------------------------------
+
+/**
+ * Supprime définitivement une registration (`deleteDoc /registrations/{id}`).
+ *
+ * Réservé à l'admin / rootAdmin (cf. `firestore.rules` §registrations — clause
+ * `delete`). Destiné à la **correction d'erreur de création** : la voie
+ * normale d'extinction d'une inscription soumise reste `cancelRegistration`
+ * (callable, conserve le motif + l'audit trail).
+ *
+ * Pas de garde-fou de statut : l'admin peut supprimer n'importe quelle
+ * registration. Pour un statut confirmé (`registrationHasMemberDependency`),
+ * le member + la cotisation déjà créés ne sont PAS nettoyés — l'UI affiche un
+ * avertissement explicite avant confirmation.
+ */
+export async function deleteRegistration(registrationId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, REGISTRATIONS, registrationId))
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`deleteRegistration failed [${code}]`, err)
+    throw err
+  }
 }
 
 void MEMBERS
