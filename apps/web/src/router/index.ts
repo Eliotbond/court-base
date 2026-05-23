@@ -143,9 +143,77 @@ const routes: RouteRecordRaw[] = [
       },
       {
         path: 'settings',
-        name: 'settings',
-        component: () => import('@/views/Settings.vue'),
+        component: () => import('@/components/layout/SettingsLayout.vue'),
         meta: { title: 'Settings', allowedRoles: ADMIN_ONLY },
+        children: [
+          { path: '', redirect: { name: 'settings-club' } },
+          {
+            path: 'club',
+            name: 'settings-club',
+            component: () => import('@/views/settings/Club.vue'),
+            meta: { title: 'Club info', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'admin-team',
+            name: 'settings-admin-team',
+            component: () => import('@/views/settings/AdminTeam.vue'),
+            meta: { title: 'Admin team', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'categories',
+            name: 'settings-categories',
+            component: () => import('@/views/settings/Categories.vue'),
+            meta: { title: 'Catégories', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'tags',
+            name: 'settings-tags',
+            component: () => import('@/views/settings/Tags.vue'),
+            meta: { title: 'Tags', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'cotisations',
+            name: 'settings-cotisations',
+            component: () => import('@/views/settings/Cotisations.vue'),
+            meta: { title: 'Types de cotisation', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'roles',
+            name: 'settings-roles',
+            component: () => import('@/views/settings/Roles.vue'),
+            meta: { title: 'Member roles', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'officials',
+            name: 'settings-officials',
+            component: () => import('@/views/settings/Officials.vue'),
+            meta: { title: 'Officials', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'match-types',
+            name: 'settings-match-types',
+            component: () => import('@/views/settings/MatchTypes.vue'),
+            meta: { title: 'Match types', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'closure-periods',
+            name: 'settings-closure-periods',
+            component: () => import('@/views/settings/ClosurePeriods.vue'),
+            meta: { title: 'Closure periods', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'license-types',
+            name: 'settings-license-types',
+            component: () => import('@/views/settings/LicenseTypes.vue'),
+            meta: { title: 'Types de licence', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'dues',
+            name: 'settings-dues',
+            component: () => import('@/views/settings/Dues.vue'),
+            meta: { title: 'Dues config', allowedRoles: ADMIN_ONLY },
+          },
+        ],
       },
       // --- Module Comptabilité (treasurer + rootAdmin) -----------------------
       {
