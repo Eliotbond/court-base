@@ -5,9 +5,14 @@ import {
   getDoc,
   getDocs,
   query,
+  setDoc,
   where,
 } from 'firebase/firestore'
-import type { Member, MemberData } from '@club-app/shared-types'
+import type {
+  Member,
+  MemberContactData,
+  MemberData,
+} from '@club-app/shared-types'
 import { db } from '@/services/firebase'
 
 /**
@@ -83,6 +88,50 @@ export async function listMyDependents(uid: string): Promise<Member[]> {
     }
     throw err
   }
+}
+
+/**
+ * Lecture du contact privé d'un member (`/members/{id}/private/contact`).
+ *
+ * Permissions (cf. `firestore.rules` §members.private.contact) : lecture
+ * autorisée pour admin / coach / linked member / guardians. Côté register, le
+ * caller est soit linkedMember (sa propre fiche), soit guardian (pupille).
+ *
+ * Retourne `null` si la sub-collection n'a jamais été écrite ou si la lecture
+ * est rejetée (dégradation silencieuse — l'UI affichera juste un champ vide).
+ */
+export async function getMemberContact(
+  memberId: string,
+): Promise<MemberContactData | null> {
+  try {
+    const snap = await getDoc(doc(db, MEMBERS, memberId, 'private', 'contact'))
+    if (!snap.exists()) return null
+    return snap.data() as MemberContactData
+  } catch (err) {
+    if (err instanceof FirestoreError && err.code === 'permission-denied') {
+      return null
+    }
+    throw err
+  }
+}
+
+/**
+ * Écrit le contact privé d'un member (`/members/{id}/private/contact`).
+ *
+ * Utilisé exclusivement par le linked member lui-même depuis Account.vue.
+ * Rules (`firestore.rules` §members.private.contact) : write par
+ * `isLinkedMember(memberId)` autorisé — donc le caller doit avoir
+ * `userDoc.memberId === memberId`. Les guardians ne sont PAS autorisés à
+ * écrire ici en v1 (ils contactent l'admin si besoin).
+ *
+ * `setDoc` avec ID fixe `contact` : crée le doc si absent, écrase sinon.
+ * Idempotent. Pas de `merge` : on attend que l'UI fournisse les deux champs.
+ */
+export async function updateMemberContact(
+  memberId: string,
+  data: MemberContactData,
+): Promise<void> {
+  await setDoc(doc(db, MEMBERS, memberId, 'private', 'contact'), data)
 }
 
 /**

@@ -66,7 +66,16 @@ Les routes ne portent pas de `meta.allowedRoles`. Le seul gating est : signed-in
 - Toucher au flow auth de `apps/web` pour aligner avec ici — les deux apps gèrent l'auth différemment **par design** (deny-orphan vs accept-orphan).
 - Ajouter `roles: ['parent']` directement à la création de `/users/{uid}` côté client — c'est la callable `submitRegistration` qui s'en charge serveur-side.
 
-## État actuel (2026-05-14)
+## État actuel (2026-05-23)
+
+**Self-service compte / RGPD livré** (2026-05-23) — page `/account` :
+
+- Vue `views/Account.vue` accessible depuis le menu user du Home.
+- 4 sections : "Mes informations" (édition user doc), "Mon profil joueur" (read-only sur linked member + édition contact privé), "Mes enfants" (liste pupilles + bouton "Délier"), "Zone dangereuse" (suppression complète du compte).
+- 2 nouvelles callables backend : `unlinkGuardian` (retire le caller des `guardianUserIds`) et `deleteMyAccount` (cascade Firestore + `admin.auth().deleteUser`).
+- Wrappers typés ajoutés dans `services/cloudFunctions.ts`.
+- Helper de lecture/écriture du contact privé : `getMemberContact` / `updateMemberContact` dans `repositories/members.repo.ts`.
+- Détails : `docs/chantier-registrations.md` → "Self-service compte / RGPD".
 
 **Phase C livrée** (cf. `docs/chantier-registrations.md` §12) :
 

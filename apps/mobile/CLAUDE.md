@@ -1,5 +1,13 @@
 # Claude Code — `apps/mobile`
 
+> ⚠️ **DÉPRÉCIÉ le 2026-05-23 — ne pas continuer à développer ici.** Le chantier Flutter est abandonné (coût de packaging stores trop élevé). Remplacé par **`apps/courtbase-app/`** (Vue 3 + PrimeVue, PWA mobile-first). Voir `docs/courtbase-app.md`.
+>
+> Ce dossier reste dans le repo comme **référence fonctionnelle** pendant la migration. Sera supprimé dans une PR de clean-up séparée une fois la nouvelle app stable en prod.
+>
+> ---
+>
+> _Le reste du doc est conservé en l'état pour référence historique._
+>
 > App Flutter (iOS + Android). **Phase 2 du roadmap** — pas avant que la web app soit livrée.
 
 ## À lire pour bosser ici

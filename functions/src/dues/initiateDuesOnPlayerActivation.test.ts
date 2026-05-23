@@ -178,7 +178,18 @@ describe('createDuesIfMissing', () => {
     return { txSet, txUpdate, newDueRef }
   }
 
-  it('creates a dues doc and updates member when none exists (idempotent path)', async () => {
+  /** Helper : ctx "vide" (path B / hors flux register). */
+  const emptyCtx = (): {
+    registeredByUid: string | null
+    status: null
+    trialStartedAt: null
+  } => ({
+    registeredByUid: null,
+    status: null,
+    trialStartedAt: null,
+  })
+
+  it('path B: creates pending_grace dues when no registration context', async () => {
     const { txSet, txUpdate } = setupColAndTx({ existingDuesEmpty: true })
     const result = await mod.createDuesIfMissing({
       memberId: 'm1',
@@ -186,9 +197,12 @@ describe('createDuesIfMissing', () => {
       seasonId: 's1',
       duesAmount: 250,
       gracePeriodDays: 21,
-      registeredByUid: 'reg-user-1',
+      paymentDueDays: 14,
+      regCtx: { ...emptyCtx(), registeredByUid: 'reg-user-1' },
     })
-    expect(result).toBe('created')
+    expect(result.outcome).toBe('created')
+    expect(result.needsImmediateEmail).toBe(false)
+    expect(result.dueId).toBe('new-due-id')
     expect(txSet).toHaveBeenCalledOnce()
     const [, dueDoc] = txSet.mock.calls[0]
     expect(dueDoc).toMatchObject({
@@ -199,6 +213,7 @@ describe('createDuesIfMissing', () => {
       status: 'pending_grace',
       paidAt: null,
       dueAt: null,
+      emailedAt: null,
       registeredByUid: 'reg-user-1',
     })
     // issuedAt = activatedAt + 21 days
@@ -209,6 +224,111 @@ describe('createDuesIfMissing', () => {
     })
   })
 
+  it('path A: creates issued dues with dueAt=trialStartedAt+paymentDueDays when status=trial_in_progress', async () => {
+    const { txSet, txUpdate } = setupColAndTx({ existingDuesEmpty: true })
+    // trialStartedAt = day 0, paymentDueDays = 14 → dueAt = day 14
+    const trialSeconds = 500_000
+    const result = await mod.createDuesIfMissing({
+      memberId: 'm1',
+      teamId: 't1',
+      seasonId: 's1',
+      duesAmount: 300,
+      gracePeriodDays: 21,
+      paymentDueDays: 14,
+      regCtx: {
+        registeredByUid: 'parent-1',
+        status: 'trial_in_progress',
+        trialStartedAt: { seconds: trialSeconds, nanoseconds: 0 },
+      },
+    })
+    expect(result.outcome).toBe('created')
+    expect(result.needsImmediateEmail).toBe(true)
+    expect(result.dueId).toBe('new-due-id')
+
+    const [, dueDoc] = txSet.mock.calls[0]
+    expect(dueDoc).toMatchObject({
+      status: 'issued',
+      registeredByUid: 'parent-1',
+    })
+    // dueAt = trialStartedAt + 14 days
+    expect(dueDoc.dueAt.seconds).toBe(trialSeconds + 14 * 86_400)
+    // issuedAt = now (path A)
+    expect(dueDoc.issuedAt.seconds).toBe(1_000_000)
+    // emailedAt = now (path A)
+    expect(dueDoc.emailedAt.seconds).toBe(1_000_000)
+    expect(txUpdate.mock.calls[0][1]).toMatchObject({
+      duesStatus: 'due',
+    })
+  })
+
+  it('path A: confirm tardif → dueAt dans le passé (immédiatement overdue)', async () => {
+    const { txSet } = setupColAndTx({ existingDuesEmpty: true })
+    // trialStartedAt = now - 30 days, paymentDueDays = 14 → dueAt = now - 16 days
+    const trialSeconds = 1_000_000 - 30 * 86_400
+    const result = await mod.createDuesIfMissing({
+      memberId: 'm1',
+      teamId: 't1',
+      seasonId: 's1',
+      duesAmount: 250,
+      gracePeriodDays: 21,
+      paymentDueDays: 14,
+      regCtx: {
+        registeredByUid: 'parent-1',
+        status: 'confirmed_pending_dues',
+        trialStartedAt: { seconds: trialSeconds, nanoseconds: 0 },
+      },
+    })
+    expect(result.outcome).toBe('created')
+    expect(result.needsImmediateEmail).toBe(true)
+    const [, dueDoc] = txSet.mock.calls[0]
+    expect(dueDoc.status).toBe('issued')
+    expect(dueDoc.dueAt.seconds).toBe(trialSeconds + 14 * 86_400)
+    // Sanity-check : dueAt < now → immédiatement overdue
+    expect(dueDoc.dueAt.seconds).toBeLessThan(1_000_000)
+  })
+
+  it('path B: status=submitted does NOT trigger path A even if trialStartedAt present', async () => {
+    const { txSet } = setupColAndTx({ existingDuesEmpty: true })
+    const result = await mod.createDuesIfMissing({
+      memberId: 'm1',
+      teamId: 't1',
+      seasonId: 's1',
+      duesAmount: 250,
+      gracePeriodDays: 21,
+      paymentDueDays: 14,
+      regCtx: {
+        registeredByUid: 'parent-1',
+        status: 'submitted',
+        trialStartedAt: { seconds: 500_000, nanoseconds: 0 },
+      },
+    })
+    expect(result.needsImmediateEmail).toBe(false)
+    const [, dueDoc] = txSet.mock.calls[0]
+    expect(dueDoc.status).toBe('pending_grace')
+    expect(dueDoc.dueAt).toBeNull()
+    expect(dueDoc.emailedAt).toBeNull()
+  })
+
+  it('path B: status=trial_in_progress without trialStartedAt falls back to pending_grace', async () => {
+    const { txSet } = setupColAndTx({ existingDuesEmpty: true })
+    const result = await mod.createDuesIfMissing({
+      memberId: 'm1',
+      teamId: 't1',
+      seasonId: 's1',
+      duesAmount: 250,
+      gracePeriodDays: 21,
+      paymentDueDays: 14,
+      regCtx: {
+        registeredByUid: 'parent-1',
+        status: 'trial_in_progress',
+        trialStartedAt: null, // missing
+      },
+    })
+    expect(result.needsImmediateEmail).toBe(false)
+    const [, dueDoc] = txSet.mock.calls[0]
+    expect(dueDoc.status).toBe('pending_grace')
+  })
+
   it('skips creation when a dues doc already exists (idempotent retrigger)', async () => {
     const { txSet, txUpdate } = setupColAndTx({ existingDuesEmpty: false })
     const result = await mod.createDuesIfMissing({
@@ -217,18 +337,91 @@ describe('createDuesIfMissing', () => {
       seasonId: 's1',
       duesAmount: 250,
       gracePeriodDays: 21,
-      registeredByUid: null,
+      paymentDueDays: 14,
+      regCtx: emptyCtx(),
     })
-    expect(result).toBe('already-exists')
+    expect(result.outcome).toBe('already-exists')
+    expect(result.needsImmediateEmail).toBe(false)
+    expect(result.dueId).toBeNull()
     expect(txSet).not.toHaveBeenCalled()
     expect(txUpdate).not.toHaveBeenCalled()
   })
 })
 
-// ---------- findRegisteredByUid ----------
-describe('findRegisteredByUid', () => {
+// ---------- shouldIssueImmediately ----------
+describe('shouldIssueImmediately', () => {
+  const ts = { seconds: 100, nanoseconds: 0 }
+
+  it('returns true for trial_in_progress with trialStartedAt', () => {
+    expect(
+      mod.shouldIssueImmediately({
+        registeredByUid: 'x',
+        status: 'trial_in_progress',
+        trialStartedAt: ts,
+      }),
+    ).toBe(true)
+  })
+
+  it('returns true for confirmed_pending_dues with trialStartedAt', () => {
+    expect(
+      mod.shouldIssueImmediately({
+        registeredByUid: 'x',
+        status: 'confirmed_pending_dues',
+        trialStartedAt: ts,
+      }),
+    ).toBe(true)
+  })
+
+  it('returns false for trial_in_progress without trialStartedAt', () => {
+    expect(
+      mod.shouldIssueImmediately({
+        registeredByUid: 'x',
+        status: 'trial_in_progress',
+        trialStartedAt: null,
+      }),
+    ).toBe(false)
+  })
+
+  it('returns false for submitted (out-of-window)', () => {
+    expect(
+      mod.shouldIssueImmediately({
+        registeredByUid: 'x',
+        status: 'submitted',
+        trialStartedAt: ts,
+      }),
+    ).toBe(false)
+  })
+
+  it('returns false when status is null (no registration matched)', () => {
+    expect(
+      mod.shouldIssueImmediately({
+        registeredByUid: null,
+        status: null,
+        trialStartedAt: null,
+      }),
+    ).toBe(false)
+  })
+
+  it('returns false for active (player already integrated — would be a re-trigger)', () => {
+    expect(
+      mod.shouldIssueImmediately({
+        registeredByUid: 'x',
+        status: 'active',
+        trialStartedAt: ts,
+      }),
+    ).toBe(false)
+  })
+})
+
+// ---------- findRegistrationContext / findRegisteredByUid ----------
+describe('findRegistrationContext', () => {
   function buildRegistrationsCol(
-    docs: { submittedByUid: string; createdAt: { seconds: number } }[],
+    docs: Array<{
+      submittedByUid: string
+      status?: string
+      trialStartedAt?: { seconds: number; nanoseconds: number } | null
+      createdAt: { seconds: number }
+    }>,
   ): void {
     const snap: FakeSnapshot = {
       empty: docs.length === 0,
@@ -246,28 +439,84 @@ describe('findRegisteredByUid', () => {
     })
   }
 
-  it('returns null when no registration matches', async () => {
+  it('returns empty context when no registration matches', async () => {
     buildRegistrationsCol([])
-    expect(await mod.findRegisteredByUid('m1', 't1')).toBeNull()
+    expect(await mod.findRegistrationContext('m1', 't1')).toEqual({
+      registeredByUid: null,
+      status: null,
+      trialStartedAt: null,
+    })
   })
 
-  it('returns submittedByUid of the single matching registration', async () => {
-    buildRegistrationsCol([{ submittedByUid: 'user-a', createdAt: { seconds: 100 } }])
-    expect(await mod.findRegisteredByUid('m1', 't1')).toBe('user-a')
+  it('extracts submittedByUid + status + trialStartedAt from single match', async () => {
+    buildRegistrationsCol([
+      {
+        submittedByUid: 'user-a',
+        status: 'trial_in_progress',
+        trialStartedAt: { seconds: 500_000, nanoseconds: 0 },
+        createdAt: { seconds: 100 },
+      },
+    ])
+    expect(await mod.findRegistrationContext('m1', 't1')).toEqual({
+      registeredByUid: 'user-a',
+      status: 'trial_in_progress',
+      trialStartedAt: { seconds: 500_000, nanoseconds: 0 },
+    })
   })
 
   it('keeps the most recent registration when several match', async () => {
     buildRegistrationsCol([
-      { submittedByUid: 'old-user', createdAt: { seconds: 100 } },
-      { submittedByUid: 'recent-user', createdAt: { seconds: 999 } },
+      {
+        submittedByUid: 'old-user',
+        status: 'cancelled',
+        trialStartedAt: null,
+        createdAt: { seconds: 100 },
+      },
+      {
+        submittedByUid: 'recent-user',
+        status: 'confirmed_pending_dues',
+        trialStartedAt: { seconds: 999_000, nanoseconds: 0 },
+        createdAt: { seconds: 999 },
+      },
     ])
-    expect(await mod.findRegisteredByUid('m1', 't1')).toBe('recent-user')
+    const ctx = await mod.findRegistrationContext('m1', 't1')
+    expect(ctx.registeredByUid).toBe('recent-user')
+    expect(ctx.status).toBe('confirmed_pending_dues')
   })
 
-  it('returns null (does not throw) when the lookup fails', async () => {
+  it('returns empty context (does not throw) when the lookup fails', async () => {
     fakeCol.mockImplementation(() => {
       throw new Error('firestore exploded')
     })
-    expect(await mod.findRegisteredByUid('m1', 't1')).toBeNull()
+    expect(await mod.findRegistrationContext('m1', 't1')).toEqual({
+      registeredByUid: null,
+      status: null,
+      trialStartedAt: null,
+    })
+  })
+})
+
+describe('findRegisteredByUid (backward-compat shim)', () => {
+  it('returns submittedByUid via findRegistrationContext', async () => {
+    const snap: FakeSnapshot = {
+      empty: false,
+      size: 1,
+      docs: [
+        {
+          id: 'reg-0',
+          data: () => ({
+            submittedByUid: 'user-a',
+            status: 'trial_in_progress',
+            trialStartedAt: { seconds: 1, nanoseconds: 0 },
+            createdAt: { seconds: 100 },
+          }),
+        },
+      ],
+    }
+    fakeCol.mockImplementation(() => ({
+      where: vi.fn().mockReturnThis(),
+      get: vi.fn().mockResolvedValue(snap),
+    }))
+    expect(await mod.findRegisteredByUid('m1', 't1')).toBe('user-a')
   })
 })

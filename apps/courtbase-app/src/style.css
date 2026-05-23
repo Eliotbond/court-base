@@ -1,0 +1,8 @@
+/* Design tokens + classes utilitaires `.cb-*`. `@import` doit précéder
+ * toute autre règle CSS (spec) — déplacé avant les directives @tailwind
+ * sinon le navigateur l'ignore et les classes .cb-* ne s'appliquent pas. */
+@import './assets/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

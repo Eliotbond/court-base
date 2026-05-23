@@ -13,18 +13,25 @@ import {
   Info,
   LogOut,
   Plus,
+  Settings,
   Sparkles,
   Trash2,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useDuesStore } from '@/stores/dues'
+import { useLicenseRequestsStore } from '@/stores/licenseRequests'
 import { useRegistrationsStore } from '@/stores/registrations'
 import MyCotisationsPanel from '@/components/MyCotisationsPanel.vue'
+import LicenseRequestBanner from '@/components/LicenseRequestBanner.vue'
 
 const auth = useAuthStore()
 const registrations = useRegistrationsStore()
 const dues = useDuesStore()
+const licenseRequests = useLicenseRequestsStore()
 const router = useRouter()
+
+/** True en mode dev local — branche le bouton "Simuler demande coach". */
+const isDev = import.meta.env.DEV
 
 const menuOpen = ref(false)
 
@@ -68,7 +75,37 @@ onMounted(async () => {
     // fetch dues plante, l'écran continue de fonctionner pour le reste.
     await dues.loadMyDues()
   }
+  // Demandes de licence parent (mock-only) — charge fixtures + overrides
+  // sessionStorage. Synchrone côté repo, donc instantané. Indépendant des
+  // autres fetches (pas de pré-condition uid).
+  await licenseRequests.loadAll()
 })
+
+/**
+ * Bouton dev — seed une demande de licence factice pour le premier
+ * pupille (ou self linked member). Permet de démontrer le banner et le
+ * formulaire sans devoir passer par l'app coach. Visible uniquement en
+ * mode `import.meta.env.DEV`.
+ */
+function onSeedMockLicenseRequest(): void {
+  // Pioche un member parmi les inscriptions actives pour récupérer un
+  // first/last name réaliste. Fallback : noms génériques.
+  const reg = activeList.value[0]
+  const memberId = reg?.matchedMemberId ?? 'm-demo'
+  const firstName = reg?.player.firstName ?? 'Démo'
+  const lastName = reg?.player.lastName ?? 'Joueur'
+  const created = licenseRequests.seedMock({
+    memberId,
+    teamId: 'team-demo',
+    memberFirstName: firstName,
+    memberLastName: lastName,
+    teamName: 'Équipe (dev)',
+    coachName: 'Coach Démo',
+    requiredDocs: ['id_front', 'id_back'],
+  })
+  // eslint-disable-next-line no-console
+  console.info('[dev] seeded license request', created.id)
+}
 
 interface StatusVisual {
   pillClass: string
@@ -286,6 +323,13 @@ async function onSignOut() {
         </button>
         <button
           type="button"
+          class="header__menu-action header__menu-action--neutral"
+          @click="() => { menuOpen = false; void router.push({ name: 'account' }) }"
+        >
+          <Settings :size="14" /> Mon compte
+        </button>
+        <button
+          type="button"
           class="header__menu-action"
           @click="onSignOut"
         >
@@ -305,11 +349,33 @@ async function onSignOut() {
       </div>
 
       <!--
+        Banner "Demandes de licence à compléter" — affiché tout en haut quand
+        au moins une demande est en attente de docs parent. Tap ligne → vue
+        détail `LicenseRequestForm`. En tête car le délai fédéral peut être
+        contraignant (et plus urgent qu'une cotisation en cours).
+      -->
+      <LicenseRequestBanner
+        v-if="licenseRequests.hasPending"
+        :requests="licenseRequests.pendingRequests"
+      />
+
+      <!--
         Panneau "Mes cotisations". Rend uniquement si `dues.hasActiveDues` ;
         sinon le composant ne rend rien (pas de carte vide). Positionné en
         tête pour que l'utilisateur voit l'action à faire dès l'arrivée.
       -->
       <MyCotisationsPanel v-if="dues.hasActiveDues" />
+
+      <!-- Bouton dev — uniquement en mode DEV (import.meta.env.DEV). -->
+      <div v-if="isDev" class="home__dev">
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          @click="onSeedMockLicenseRequest"
+        >
+          🧪 Simuler demande coach
+        </button>
+      </div>
 
       <!-- Erreur de chargement (ex. index Firestore manquant, rules trop strictes). -->
       <!-- L'utilisateur ne peut pas corriger ça lui-même : on l'informe pour qu'il -->
@@ -949,6 +1015,13 @@ async function onSignOut() {
   color: #64748b;
   margin: 6px 12px 0;
   line-height: 1.6;
+}
+
+.home__dev {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  opacity: 0.7;
 }
 
 .home__bottom {

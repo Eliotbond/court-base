@@ -578,13 +578,18 @@ async function submitCreate(): Promise<void> {
                   >
                     Mineur
                   </Pill>
+                  <Pill
+                    :variant="data.linkedUserId ? 'emerald' : 'slate'"
+                  >
+                    {{ data.linkedUserId ? 'Compte lié' : 'Pas de compte lié' }}
+                  </Pill>
                 </div>
                 <div class="text-[11px] text-surface-500">
                   <template v-if="data.email">
                     {{ data.email }}
                   </template>
                   <template v-else>
-                    — pas de compte lié
+                    <span class="text-surface-400">—</span>
                   </template>
                   <template v-if="data.licenseNumber">
                     ·

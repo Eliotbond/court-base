@@ -165,3 +165,69 @@ export async function refuseRegistration(
   const result: HttpsCallableResult<RefuseRegistrationOutput> = await callable(input)
   return result.data
 }
+
+// ---------------------------------------------------------------------------
+// unlinkGuardian — détache le caller d'un member dont il est tuteur.
+// Source : functions/src/account/unlinkGuardian.ts
+// Auth : signed-in (la callable vérifie que le caller est dans
+// `guardianUserIds` du member ciblé).
+// ---------------------------------------------------------------------------
+
+export interface UnlinkGuardianInput {
+  memberId: string
+}
+
+export interface UnlinkGuardianOutput {
+  ok: true
+  memberId: string
+  /** `true` si le caller a été retiré ; `false` si déjà absent (idempotence). */
+  removed: boolean
+}
+
+export async function unlinkGuardian(
+  input: UnlinkGuardianInput,
+): Promise<UnlinkGuardianOutput> {
+  const callable = httpsCallable<UnlinkGuardianInput, UnlinkGuardianOutput>(
+    functions,
+    'unlinkGuardian',
+  )
+  const result: HttpsCallableResult<UnlinkGuardianOutput> = await callable(input)
+  return result.data
+}
+
+// ---------------------------------------------------------------------------
+// deleteMyAccount — supprime intégralement le compte du caller : Firebase
+// Auth + /users/{uid} + linked /members/{id} (en cascade dues/teams/registrations).
+// Source : functions/src/account/deleteMyAccount.ts
+// Auth : signed-in. Refuse si pupilles restants ou si linked member a des
+// dues `paid` (préservation comptable).
+// ---------------------------------------------------------------------------
+
+export interface DeleteMyAccountInput {
+  /** Doit valoir exactement `"SUPPRIMER"` (anti-fat-finger). */
+  confirmText: string
+}
+
+export interface DeleteMyAccountOutput {
+  ok: true
+  deletedUid: string
+  hadLinkedMember: boolean
+  removedFromTeamsCount: number
+  unlinkedRegistrationsCount: number
+  deletedDuesCount: number
+  deletedDraftsCount: number
+  deletedFcmTokensCount: number
+  /** `false` si le cleanup Firestore a réussi mais que l'API Auth a échoué. */
+  authDeleted: boolean
+}
+
+export async function deleteMyAccount(
+  input: DeleteMyAccountInput,
+): Promise<DeleteMyAccountOutput> {
+  const callable = httpsCallable<DeleteMyAccountInput, DeleteMyAccountOutput>(
+    functions,
+    'deleteMyAccount',
+  )
+  const result: HttpsCallableResult<DeleteMyAccountOutput> = await callable(input)
+  return result.data
+}

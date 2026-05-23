@@ -156,6 +156,8 @@ Référentiel éditable par l'admin (Settings → Cotisations). Schéma : voir `
 
 Sert à **standardiser les montants** annuels appliqués aux équipes. Une équipe **référence** une cotisation (`team.cotisationId`) — pas de montant libre côté équipe, le prix vient du référentiel. Permet de renommer / repricer une cotisation à un seul endroit (les équipes reflètent automatiquement la modif).
 
+**Garantie 14 jours max** — quand une cotisation naît suite au flux d'inscription (registration en `confirmed_pending_dues`), le compteur 14j court depuis `registration.trialStartedAt` (pas depuis la création du due). Le `due` est créé directement `status = 'issued'` avec `dueAt = trialStartedAt + 14j` et `emailedAt = now` (email demande de paiement envoyé immédiatement, pas via `issueDuesScheduled`). Garantit qu'un joueur ne peut pas faire plus de 14 jours d'essai sans avoir reçu une demande de paiement. Cas legacy (joueur ajouté à `team.playerIds` hors flux d'inscription) : path historique `pending_grace 21j → issued 14j` préservé. Cf. `docs/registrations/lifecycle.md` §9 et `docs/registrations/functions.md` §3.4.
+
 ### Lifecycle
 
 1. **Création** — admin crée une cotisation depuis Settings : `name` (libellé court), `description` (texte libre), `price` (CHF/an/joueur). `active: true` par défaut, `displayOrder` auto-assigné en queue de liste.
@@ -278,10 +280,10 @@ Pilote l'affichage du TeamPicker côté app register (`team.registrationStatus`)
 
 ```
 draft → submitted → (open_pending_trial | conditional_pending_review → trial_in_progress → confirmed_pending_dues → active)
-                  ↘ refused (terminal, sauf auto-rerouting vers une autre équipe `open` de la même catégorie)
+                  ↘ refused (terminal — auto-rerouting différé en Phase F)
 ```
 
-Toutes les transitions post-`submitted` passent par callables (`refuseRegistration`, `onRegistrationStatusChanged`, etc.) — pas d'écriture client directe sur le status. Détail produit complet + plan d'implémentation : `docs/chantier-registrations.md`.
+Toutes les transitions post-`submitted` passent par callables (`markTrialInProgress`, `confirmRegistration`, `refuseRegistration`, `cancelRegistration`) ou par triggers serveur — pas d'écriture client directe sur le status. Le passage `confirmed_pending_dues → active` est **automatique** au paiement de la cotisation, posé par le trigger `transitionRegistrationOnDuePaid` (Firestore onUpdate sur `/dues/{id}` quand `status → 'paid'`). Détail produit complet + plan d'implémentation : `docs/chantier-registrations.md` ; détail des transitions : `docs/registrations/lifecycle.md`.
 
 ### Membre actif / inactif
 
@@ -362,6 +364,16 @@ Un doc `/licenses/{id}` est une **instance concrète** de licence fédérale, é
 **Effet sur les droits d'accès app** : un officiel **sans licence officiel active** ne peut **pas s'auto-inscrire à un match** — `firestore.rules` gate la création d'un `officialAssignment` self-register sur `member.officialLicense != null` (le check saison-précis est porté côté UI/callable). Voir `firebase.md` → Security rules.
 
 > **Reste hors scope (Phase 2 non terminée)** : le refactor de `member.licensed` / `officialLevel` en dérivés des licences actives (cf. `project_members_creation_roadmap`), et le rebranchement du workflow `/licenseRequests` (demande mobile coach → admin) sur la création d'une `/licenses` au lieu de flipper `member.licensed`. Aujourd'hui `member.licensed` reste maintenu en l'état.
+
+### Workflow étendu coach → parent (mock 2026-05-23, à brancher backend)
+
+Au-delà du toggle simple "demander licence" historique, le workflow étendu intercale une **complétion de dossier par le parent** entre la demande coach et la validation admin :
+
+1. **Coach** déclenche depuis l'app `courtbase-app` (gate cotisation `duesStatus ∈ {paid, pending_grace, excepted}` + joueur non encore licencié).
+2. **Parent** (ou joueur majeur) reçoit un email avec lien vers `courtbase-register/account/license-requests/{id}` et complète : pièce d'identité recto/verso (passeport ou carte d'identité — pas de permis de conduire ni de permis de séjour), AVS si manquant, lettre de sortie si club précédent suisse, contexte transfert si club précédent étranger (procédure FIBA gérée hors-plateforme par l'admin).
+3. **Admin** valide ou refuse → création `/licenses` pending pour confirmation ultérieure via `confirmLicense`.
+
+Statuts étendus (mock) : `pending_parent_docs` → `parent_docs_submitted` → `approved` / `rejected`. Détail complet : [`docs/licenses/parent-completion-workflow.md`](licenses/parent-completion-workflow.md).
 
 ### Distinction avec les concepts voisins
 
@@ -589,12 +601,14 @@ Config (`config/club.duesConfig`) : `gracePeriodDays` (21), `paymentDueDays` (14
 Couche email + paiement manuel ajoutée à la couche dues existante (cf. `firebase.md` → `/dues`, `/pendingEmails`, `/users.roles` `treasurer`).
 
 - **Email "à payer"** déclenché :
-  - à la transition `pending_grace → issued` (cas standard, `issueDuesScheduled` daily), OU
-  - immédiatement à la création du due si celui-ci naît déjà `issued` (cas `gracePeriodDays === 0`).
+  - immédiatement à la création du due si celui-ci naît déjà `issued` — cas du **flux d'inscription** (registration `confirmed_pending_dues` → `initiateDuesOnPlayerActivation` résout `registeredByUid` + `trialStartedAt` → due émis directement `issued` avec `dueAt = trialStartedAt + 14j`, `emailedAt = now`), ou cas du `gracePeriodDays === 0`.
+  - à la transition `pending_grace → issued` (cas legacy uniquement — joueur ajouté à `team.playerIds` hors flux d'inscription, `issueDuesScheduled` daily).
   - Idempotence garantie par `due.emailedAt` (non-null ⇒ déjà envoyé, on skip).
   - Destinataires : `member.comms.billingRecipients` (membre lui-même si majeur, tuteurs si mineur).
   - Doc émis dans `/pendingEmails` avec `templateKey = 'dues_payment_request'`, contexte incluant `amount`, `paymentReference`, `banking` snapshotté depuis `/config/club.banking`.
 - **Marquer un due payé** : callable serveur `markDuePaid({ dueId, paidAmount, paymentMethod, paidAt? })`. Accessible aux rôles `admin` **ET** `treasurer` (cf. `project_roles_additifs`, rôles additifs). Pose `status='paid'`, `paidAt`, `paidAmount`, `paymentMethod`, `recordedBy = caller.uid`. Émet un doc `/pendingEmails` `dues_payment_confirmed` aux `billingRecipients`. Treasurer **n'a pas** d'écriture directe Firestore — la rule `/dues` reste serrée sur admin (filets de sécurité) + le canal callable garantit l'audit centralisé.
+
+- **Activation automatique d'une inscription au paiement** : le trigger Firestore `transitionRegistrationOnDuePaid` (sur `/dues/{id}` update à `status='paid'`) cherche la registration `(matchedMemberId == memberId, teamId == teamId)`. Si elle est en `confirmed_pending_dues`, il passe la registration en `active`, append l'`actionLog` et repose `member.active = true`. Idempotent (skip si déjà `active`). Effet utilisateur : un parent qui paie depuis `apps/courtbase-register` n'a pas besoin d'attendre une intervention manuelle — l'inscription s'active automatiquement. Cf. `docs/registrations/functions.md` §3.4.
 
 - **Arrangement comité (montant partiel)** : par défaut `markDuePaid` enregistre le montant intégral (`paidAmount = due.amount`). Un montant partiel (`paidAmount < due.amount`) ne peut être posé que par un **rootAdmin** (claim Auth) ou un **treasurer** (rôle `/users.roles`). Le callable rejette tout admin standard qui tenterait un partial en `permission-denied` (helper `assertCanRecordPartial` dans `markDuePaid.ts`). Cas d'usage : arrangement in extremis pour débloquer une licence rapidement quand un joueur ne peut pas payer immédiatement le plein tarif. Le manque à gagner (`amount - paidAmount`) n'est pas comptabilisé séparément — la cotisation est simplement marquée `paid` avec le montant réellement reçu.
 

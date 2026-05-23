@@ -115,6 +115,21 @@ body {
   color: #065f46;
   text-decoration: underline;
 }
+.btn-danger {
+  background: #e11d48;
+  color: white;
+  border-color: #be123c;
+}
+.btn-danger:hover:not(:disabled):not([disabled]) {
+  background: #be123c;
+}
+.btn-danger:disabled,
+.btn-danger[disabled],
+.btn-danger.disabled {
+  background: #fecaca;
+  color: #fda4af;
+  border-color: #fecaca;
+}
 .btn-sm {
   height: 32px;
   padding: 0 11px;

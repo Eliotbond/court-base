@@ -9,6 +9,30 @@ import '../core/app_exception.dart';
 import '../core/logger.dart';
 import '../firebase/firebase_refs.dart';
 
+/// Vue immuable et simple du compte Firebase Auth courant — exposée aux
+/// couches supérieures pour qu'elles n'aient jamais à importer `firebase_auth`.
+///
+/// Tous les champs sauf [uid] peuvent être vides selon le provider OAuth
+/// (Apple notamment masque souvent l'email après le premier login).
+class AuthAccountInfo {
+  const AuthAccountInfo({
+    required this.uid,
+    required this.email,
+    required this.displayName,
+    required this.photoURL,
+    required this.providerIds,
+  });
+
+  final String uid;
+  final String email;
+  final String displayName;
+  final String photoURL;
+
+  /// IDs des providers OAuth (`google.com`, `apple.com`…) utilisés par ce
+  /// compte. Permet à l'UI d'afficher « Connecté via Google ».
+  final List<String> providerIds;
+}
+
 /// Repository d'authentification — encapsule Firebase Auth, Google Sign-In et
 /// Sign in with Apple. SEULE couche (avec `firebase/`) à importer ces SDK.
 class AuthRepository {
@@ -27,6 +51,23 @@ class AuthRepository {
 
   /// Uid Firebase courant (synchrone), `null` si déconnecté.
   String? get currentUid => FirebaseRefs.auth.currentUser?.uid;
+
+  /// Snapshot synchrone du compte Firebase Auth courant — `null` si
+  /// déconnecté. Frontière étanche : aucun type `User` du SDK ne fuit.
+  AuthAccountInfo? get currentAccountInfo {
+    final user = FirebaseRefs.auth.currentUser;
+    if (user == null) return null;
+    return AuthAccountInfo(
+      uid: user.uid,
+      email: user.email ?? '',
+      displayName: user.displayName ?? '',
+      photoURL: user.photoURL ?? '',
+      providerIds: user.providerData
+          .map((p) => p.providerId)
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false),
+    );
+  }
 
   /// Récupère les custom claims du token (ex. `rootAdmin`). Best-effort.
   Future<Map<String, dynamic>> idTokenClaims({bool forceRefresh = false}) async {

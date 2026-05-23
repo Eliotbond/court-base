@@ -1,5 +1,15 @@
 # Mobile App — Flutter
 
+> ⚠️ **DÉPRÉCIÉ le 2026-05-23.** Le chantier Flutter est abandonné : le coût de packaging stores (App Store + Play Store, signing iOS, APNs `.p8`, soumissions, mises à jour) est jugé trop élevé pour la valeur livrée. Remplacé par **`docs/courtbase-app.md`** — même scope, stack web (Vue 3 + PrimeVue), distribué en PWA mobile-first.
+>
+> Le code `apps/mobile/` reste dans le repo comme **référence fonctionnelle** pendant la migration vers `courtbase-app`. À supprimer dans une PR de clean-up séparée une fois la nouvelle app stable en prod sur le projet pilote.
+>
+> **Ne pas continuer à développer** sur `apps/mobile/`. Toute nouvelle feature → `apps/courtbase-app/`.
+>
+> ---
+>
+> _Le reste du doc est conservé en l'état pour référence historique._
+>
 > Phase 2 du roadmap. Ce doc est un guide minimal ; les détails Flutter seront ajoutés au démarrage du dev mobile.
 
 ## Stack (planifiée)

@@ -52,25 +52,41 @@ submitted → cancelled (par le user avant validation coach, terminal)
 
 Une fois la registration en `open_pending_trial` OU `conditional_pending_trial` :
 
-1. Le coach marque "essai en cours" → `trial_in_progress` (démarre le compteur 14j).
-2. Le coach valide l'intégration → `confirmed_pending_dues` (trigger Function émet la cotisation).
-3. Le paiement de la cotisation arrive → `active` (set par Function, `member.active = true`, ajouté au `team.playerIds`).
+1. Le coach marque "essai en cours" → `trial_in_progress` (set `trialStartedAt = now`, démarre le compteur 14j).
+2. Le coach valide l'intégration → `confirmed_pending_dues` (le trigger `initiateDuesOnPlayerActivation` crée la cotisation).
+3. Le paiement de la cotisation arrive → `active` (posé automatiquement par le trigger `transitionRegistrationOnDuePaid` sur l'update `/dues/{id}.status` → `'paid'`. Le trigger set aussi `member.active = true` ; le membre est déjà dans `team.playerIds` depuis `confirmRegistration`).
 
-## 5. Auto-rerouting après refus
+**Cotisation née directement `issued` (flux inscription)** — quand le due est créé via `initiateDuesOnPlayerActivation` à la suite d'une `confirmRegistration` (lookup `registeredByUid` réussi sur la registration), la cotisation **bypasse** la grace period :
 
-Si une registration passe en `refused` ET qu'une autre équipe `open` existe dans la même `categoryId`, la Function `onRegistrationRefused` déclenche :
+- `status = 'issued'` directement (pas de `pending_grace`).
+- `dueAt = registration.trialStartedAt + 14j` (pas `now + paymentDueDays` — l'ancrage est l'essai, pas la création du due).
+- `emailedAt = now` posé en même temps : l'email `dues_payment_request` est écrit dans `/pendingEmails` immédiatement à la création, pas au passage `pending_grace → issued`.
 
-- Une `/notifications` pour le coach de l'équipe ouverte avec contexte : "{firstName} {lastName} ({age} ans) a été refusé par {team source}. Souhaitez-vous le contacter ?"
-- Une `/notifications` (ou email via `/pendingEmails`) pour le parent : "L'équipe X ne peut pas vous accueillir cette saison, mais l'équipe Y est ouverte. Le coach Y vous contactera."
-- Bascule la `registration` vers la nouvelle équipe (set `teamId`) avec `status: 'open_pending_trial'`. L'historique du transfert vit dans `registration.actionLog`.
+Cas legacy (joueur ajouté à `team.playerIds` directement par un admin, sans inscription) : path historique préservé — `status = 'pending_grace'`, `issuedAt = now + gracePeriodDays`, `dueAt = issuedAt + paymentDueDays`. Cf. `docs/firebase.md` → `/dues.registeredByUid` (détails du lookup) et [`functions.md`](./functions.md#34-transitionregistrationonduepaid) (trigger de transition).
 
-Voir [`functions.md`](./functions.md#32-onregistrationrefused) pour le détail du trigger.
+## 5. Auto-rerouting après refus 🔜 Phase F (différé)
+
+**Pas implémenté en MVP.** Le trigger `onRegistrationRefused` est repoussé en Phase F. Un refus reste terminal côté lifecycle. Comportement utilisateur actuel : si l'admin/coach veut rediriger un joueur refusé vers une autre équipe, il le fait manuellement (échange par email / téléphone, le parent re-soumet une registration vers l'autre équipe).
+
+Spec cible (pour mémoire, à réactiver Phase F) :
+
+- Si une registration passe en `refused` ET qu'une autre équipe `open` existe dans la même `categoryId`, le trigger déclenche :
+  - Une `/notifications` pour le coach de l'équipe ouverte : *"{firstName} {lastName} ({age} ans) a été refusé par {team source}. Souhaitez-vous le contacter ?"*
+  - Une `/notifications` (ou email via `/pendingEmails`) pour le parent : *"L'équipe X ne peut pas vous accueillir cette saison, mais l'équipe Y est ouverte."*
+  - Bascule la `registration` vers la nouvelle équipe (set `teamId`) avec `status: 'open_pending_trial'`. L'historique du transfert vit dans `registration.actionLog`.
+
+Voir [`functions.md`](./functions.md#32-onregistrationrefused--phase-f-différé) pour le détail.
 
 ## 6. Auto-expiration de l'essai (14 j)
 
-Function scheduled `onTrialExpired` (daily 03:00 zurich) — toute registration en `trial_in_progress` depuis ≥ 14 jours sans transition → notif coach + parent : *"L'essai arrive à terme. Le joueur doit soit interrompre, soit la cotisation doit être payée."*.
+Function scheduled `onTrialExpired` (daily 03:00 zurich) — toute registration en `trial_in_progress` depuis ≥ 14 jours sans transition déclenche **deux notifications** (IDs déterministes pour idempotence) :
 
-**Pas** de bascule automatique vers `refused` — c'est au coach de trancher. La registration reste en `trial_in_progress` jusqu'à action manuelle.
+- Une notification coach (`registration_trial_expired_coach`) : *"L'essai de {joueur} arrive à terme. Confirmer l'intégration ou refuser."*
+- Une notification parent / joueur (`registration_trial_expired_user`) : *"L'essai arrive à terme. La cotisation doit être payée pour activer l'inscription, sinon le coach va trancher."*
+
+Le trigger **ne bascule pas** automatiquement vers `refused` — la registration reste en `trial_in_progress` jusqu'à action manuelle du coach (`confirmRegistration` ou `refuseRegistration`). C'est aussi le rôle de cette alerte de débloquer les inscriptions oubliées.
+
+Une fois la registration `confirmed_pending_dues`, le passage automatique en `active` est porté par le trigger `transitionRegistrationOnDuePaid` (cf. [`functions.md`](./functions.md#34-transitionregistrationonduepaid)) — déclenché à l'écriture du `paid` sur la cotisation correspondante.
 
 ## 7. Flag transverse
 
@@ -80,8 +96,16 @@ Quand `previousClubAbroad == true` est saisi à l'étape "ancien club", le flag 
 
 ## 8. États terminaux
 
-- `active` — fin heureuse du flow.
-- `refused` — terminal sauf si auto-rerouting génère une nouvelle registration (qui est une autre instance, pas la même).
+- `active` — fin heureuse du flow. Posé automatiquement par `transitionRegistrationOnDuePaid` au paiement.
+- `refused` — terminal sauf si l'auto-rerouting (Phase F) génère une nouvelle registration (qui est une autre instance, pas la même).
 - `cancelled` — terminal.
 
-Les transitions `update` sont **toutes interdites côté rules** (`allow update: if false`) — elles passent toutes par callables (voir [`functions.md`](./functions.md)) qui garantissent l'intégrité du lifecycle et l'écriture cohérente de `actionLog`.
+Les transitions de status sont posées par **callables** (`submitRegistration`, `markTrialInProgress`, `confirmRegistration`, `refuseRegistration`, `cancelRegistration`) ou par **triggers serveur** (`transitionRegistrationOnDuePaid`) — pas d'écriture client directe sur `status` une fois la registration soumise (cf. rule `/registrations` update qui n'ouvre que les drafts à l'auteur). Tout traversée porte une entrée `actionLog` cohérente.
+
+## 9. Garantie 14 jours max
+
+**Contrat business** : un joueur ne peut pas faire **plus de 14 jours** d'essai sans avoir reçu une demande de paiement de cotisation.
+
+**Implémentation** : la cotisation `/dues` créée via `confirmRegistration` (puis `initiateDuesOnPlayerActivation`) naît directement `status = 'issued'` avec `dueAt = registration.trialStartedAt + 14j` et `emailedAt = now` (l'email part immédiatement). On ne chaîne plus `pending_grace 21j → issued 14j` (qui empilait potentiellement 35j d'attente avant le premier mail). Le compteur 14j est donc ancré sur le démarrage de l'essai, **pas** sur la création du due.
+
+Cas non-couvert : un joueur ajouté à `team.playerIds` directement par un admin (création de membre hors registration). Path legacy préservé (grace + issued chaînés). À traiter au cas par cas si le besoin se confirme.

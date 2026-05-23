@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/app_user.dart';
 import '../models/enums.dart';
+import '../repositories/auth_repository.dart';
 import '../repositories/user_repository.dart';
 import 'firebase_providers.dart';
 
@@ -97,6 +98,17 @@ final sessionStateProvider = Provider<AsyncValue<SessionState>>((ref) {
 final appUserProvider = Provider<AppUser?>((ref) {
   final session = ref.watch(sessionStateProvider).value;
   return session is SessionValid ? session.user : null;
+});
+
+/// Snapshot des infos du compte Firebase Auth courant (email, displayName,
+/// photo…). `null` si déconnecté.
+///
+/// Rebuilt à chaque changement d'uid pour rester en phase avec la session ;
+/// on dépend volontairement de [authStateChangesProvider] pour invalider le
+/// cache sur sign-in / sign-out.
+final currentAccountInfoProvider = Provider<AuthAccountInfo?>((ref) {
+  ref.watch(authStateChangesProvider);
+  return ref.watch(authRepositoryProvider).currentAccountInfo;
 });
 
 /// Ensemble des rôles applicatifs reconnus du user courant (vide si pas de

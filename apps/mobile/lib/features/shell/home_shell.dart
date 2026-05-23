@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/notification_providers.dart';
 import '../../router/role_guard.dart';
+import '../auth/no_club_space_screen.dart';
 
 /// Description statique d'un onglet du shell.
 class _TabSpec {
@@ -81,19 +82,10 @@ class HomeShell extends ConsumerWidget {
         .toList(growable: false);
 
     // Cas limite : aucune capacité app. Le redirect du router empêche en
-    // principe d'arriver ici, mais on rend un fallback sûr.
+    // principe d'arriver ici, mais on rend un écran dédié qui permet au
+    // moins à l'utilisateur de voir son compte et de se déconnecter.
     if (visibleSpecs.isEmpty) {
-      return const Scaffold(
-        body: Center(
-          child: Padding(
-            padding: EdgeInsets.all(32),
-            child: Text(
-              'Aucun espace disponible pour votre compte.',
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ),
-      );
+      return const NoClubSpaceScreen();
     }
 
     // Index visible (barre) sélectionné = position du spec dont la branche

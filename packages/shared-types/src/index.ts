@@ -22,8 +22,10 @@ export * from './fcmToken'
 export * from './cotisation'
 export * from './accounting'
 export * from './license'
+export * from './license-extended'
 export * from './registration'
 export * from './meta'
+export * from './mock-fixtures'
 
 /**
  * Représentation neutre d'un Firestore Timestamp,

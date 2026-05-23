@@ -51,3 +51,26 @@ Quand tu changes un type :
 2. Run `npm run typecheck` à la racine — corrige les erreurs dans les consumers.
 3. MAJ `docs/firebase.md` si le schéma change.
 4. Commit unique `refactor(types): ...` ou `feat(types): ...`.
+
+## `mock-fixtures/` — fixtures de démo (mock-only)
+
+Exception ciblée à la règle "pas de logique" : ce dossier contient des
+**objets littéraux** (et de purs helpers `find` / `filter` sans état) destinés
+à être partagés entre apps pour garantir la cohérence des démos sans Firebase
+(ex. un `id` figé `lr-leo-2025` consommé à la fois par `apps/courtbase-app`
+et `apps/courtbase-register`).
+
+Règles :
+- Objets littéraux + helpers `find` / `filter` synchrones uniquement — pas
+  d'I/O, pas d'état, pas de mutation runtime.
+- IDs figés. Toute mutation runtime se fait côté store de chaque app
+  (sessionStorage ou log-only), jamais sur les fixtures source.
+- Pas de dépendance Firebase (cohérent avec le reste du package).
+- À **supprimer** quand le backend correspondant land — les fixtures
+  deviennent alors des seeds Firestore versionnés ailleurs.
+
+Drafts associés :
+- `license-extended.ts` — types étendus du workflow "demande de licence
+  parent". À promouvoir vers `license.ts` (fusion avec `LicenseRequestData`
+  + conversion `number` → `Timestamp` + retrait de `denorm`) quand la Phase
+  backend land. Supprimer le fichier après promotion.

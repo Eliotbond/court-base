@@ -40,6 +40,7 @@ export { markOverdueScheduled } from './dues/markOverdueScheduled'
 export { syncMemberDuesStatus } from './dues/syncMemberDuesStatus'
 export { markDuePaid } from './dues/markDuePaid'
 export { updateDue } from './dues/updateDue'
+export { transitionRegistrationOnDuePaid } from './dues/transitionRegistrationOnDuePaid'
 
 // Exceptions / Licenses
 export {
@@ -62,6 +63,10 @@ export { setRootAdminClaim } from './admin/setRootAdminClaim'
 export { listRootAdminUids } from './admin/listRootAdminUids'
 export { acceptInvitation } from './admin/acceptInvitation'
 
+// Account (self-service user — app courtbase-register)
+export { unlinkGuardian } from './account/unlinkGuardian'
+export { deleteMyAccount } from './account/deleteMyAccount'
+
 // Members (operations admin sur /members)
 export { deleteMember } from './members/deleteMember'
 export { coachCreateMember } from './members/coachCreateMember'
@@ -76,5 +81,7 @@ export { refuseRegistration } from './registrations/refuseRegistration'
 export { cancelRegistration } from './registrations/cancelRegistration'
 export { markTrialInProgress } from './registrations/markTrialInProgress'
 export { confirmRegistration } from './registrations/confirmRegistration'
+export { onRegistrationStatusChanged } from './registrations/onRegistrationStatusChanged'
+export { onTrialExpired } from './registrations/onTrialExpired'
 
 export const ping = () => 'pong'

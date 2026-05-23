@@ -8,13 +8,16 @@ Avant toute tâche, identifie où elle se passe et ouvre **uniquement** les fich
 
 | Tu travailles sur… | Lis d'abord |
 |---|---|
-| L'app web (Vue) | `apps/web/CLAUDE.md` + `docs/frontend-desktop.md` |
+| L'app web admin (Vue) | `apps/web/CLAUDE.md` + `docs/frontend-desktop.md` |
 | L'app d'inscription parents (Vue) | `apps/courtbase-register/CLAUDE.md` + `docs/chantier-registrations.md` + `docs/design-to-vue-register.md` |
-| L'app mobile (Flutter) | `apps/mobile/CLAUDE.md` + `docs/mobile-app.md` |
+| L'app companion coach/officiel/admin (Vue, PWA mobile-first) | `apps/courtbase-app/CLAUDE.md` + `docs/courtbase-app.md` + `docs/design-brief-courtbase-app.md` |
+| L'app mobile (Flutter) ⚠️ **DÉPRÉCIÉE 2026-05-23** | `apps/mobile/CLAUDE.md` + `docs/mobile-app.md` (référence uniquement) |
 | Le control-plane éditeur | `apps/control-plane/CLAUDE.md` + `docs/deployment.md` |
 | Cloud Functions | `functions/CLAUDE.md` + `docs/firebase.md` |
 | Types partagés | `packages/shared-types/CLAUDE.md` |
 | Le module compta | `docs/compta.md` + `docs/firebase.md` |
+| Intégration Basketplan (Swiss Basketball) | `docs/basketplan-integration.md` (brief) + `docs/chantier-basketplan.md` (plan PRs) |
+| Workflow demande de licence (coach → parent → admin) | `docs/licenses/parent-completion-workflow.md` |
 | Schéma Firestore / rules / Auth | `docs/firebase.md` |
 | Règles métier du domaine | `docs/main.md` |
 | Déploiement multi-projet | `docs/deployment.md` |

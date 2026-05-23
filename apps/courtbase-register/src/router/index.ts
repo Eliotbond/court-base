@@ -127,6 +127,30 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/Factures.vue'),
     meta: { requiresAuth: true, requiresProfile: true },
   },
+  // Mon compte — édition profil, lecture profil joueur lié, gestion enfants
+  // liés, suppression de compte (self-service RGPD).
+  {
+    path: '/account',
+    name: 'account',
+    component: () => import('@/views/Account.vue'),
+    meta: { requiresAuth: true, requiresProfile: true },
+  },
+  // Demandes de licence (workflow parent mock) — la liste utilise la même vue
+  // que le détail : le banner Home reste la porte d'entrée principale. La
+  // route liste sert de fallback (deep-link, marque-page) et redirige vers
+  // Home si aucune demande active n'existe.
+  {
+    path: '/account/license-requests',
+    name: 'license-requests-list',
+    component: () => import('@/views/LicenseRequestForm.vue'),
+    meta: { requiresAuth: true, requiresProfile: true },
+  },
+  {
+    path: '/account/license-requests/:requestId',
+    name: 'license-request',
+    component: () => import('@/views/LicenseRequestForm.vue'),
+    meta: { requiresAuth: true, requiresProfile: true },
+  },
   {
     path: '/:pathMatch(.*)*',
     redirect: { name: 'landing' },

@@ -16,9 +16,10 @@
 | `becomeOwnerOfMyMember` | Callable (user) | Quand le pupille devient majeur ET que la majorité transition est résolue avec consent, permet au membre de prendre la main : crée `member.linkedUserId = uid`, retire `member.guardianUserIds`. Garde-fous : nécessite âge ≥ 18 ans ET state `majorityTransition.resolvedAt != null`. |
 | `generateLicenseForm` | Callable (admin ou coach) | Génère le PDF de formulaire pré-rempli pour une `/licenseRequests/{id}` ; renvoie un Storage path. |
 | `respondLicenseDocReview` | Callable (admin) | Accepte / refuse un document de licence, notifie le user. |
-| `onRegistrationStatusChanged` | Firestore trigger | Crée notifs (`new_registration`, `registration_accepted`, `registration_refused`, `trial_started`), maintient `member.duesStatus` lifecycle si on atteint `confirmed_pending_dues`. |
-| `onRegistrationRefused` | Firestore trigger | Auto-rerouting après refus : si une autre équipe `open` existe dans la catégorie, transfère la registration et notifie le nouveau coach + le parent. |
-| `onTrialExpired` | Scheduled (daily 03:00 zurich) | Notifs aux registrations en `trial_in_progress` depuis ≥ 14j sans transition. |
+| `onRegistrationStatusChanged` | Firestore trigger | Crée notifs lifecycle (`new_registration_*`, `registration_accepted`, `registration_refused`, `trial_started`, `registration_dues_pending`, `registration_active`) à chaque transition. IDs déterministes pour idempotence. |
+| `onRegistrationRefused` | Firestore trigger | 🔜 **Phase F (différé)** — auto-rerouting après refus. Non implémenté. |
+| `onTrialExpired` | Scheduled (daily 03:00 zurich) | Notifs (coach + parent) sur registrations en `trial_in_progress` depuis ≥ 14j sans transition. Pas de bascule automatique. |
+| `transitionRegistrationOnDuePaid` | Firestore trigger (`/dues/{id}` update → `paid`) | Lookup registration `(matchedMemberId, teamId)`. Si `confirmed_pending_dues` → set `active`, `member.active = true`, append actionLog. Idempotent. |
 
 ## 2. Callables — détails
 
@@ -88,10 +89,12 @@ L'UI affiche un prompt de confirmation explicite avant de set `registration.matc
 
 **Effets** (transaction) :
 - Set `status = 'trial_in_progress'`, `statusUpdatedAt = now`.
-- Set `trialStartedAt = now` UNIQUEMENT si pas déjà défini (idempotence : un re-call ne réinitialise pas le compteur 14j — le scheduled `onTrialExpired` reste calé sur la 1ère démarrage).
+- Set `trialStartedAt = now` UNIQUEMENT si pas déjà défini (idempotence : un re-call ne réinitialise pas le compteur 14j — le scheduled `onTrialExpired` reste calé sur le 1er démarrage). Pas de paramètre optionnel pour forcer une date — décision design assumée, le coach doit marquer l'essai au moment où il commence pour rester source de vérité.
 - Append entrée `actionLog` (`action: 'status_changed'`, note: "trial started").
 
 **Note design** : depuis `conditional_pending_review`, on autorise la transition directe vers `trial_in_progress` (collapse l'étape "accept" intermédiaire). Si un coach veut juste accepter sans démarrer l'essai, il faut une callable séparée — pas dans le scope MVP.
+
+`trialStartedAt` est aussi l'**ancre du compteur 14j de la cotisation** : `confirmRegistration` (cf. §2.6) émet la due avec `dueAt = trialStartedAt + 14j`. Cf. [`lifecycle.md`](./lifecycle.md#9-garantie-14-jours-max).
 
 ### 2.6 `confirmRegistration`
 
@@ -110,8 +113,10 @@ L'UI affiche un prompt de confirmation explicite avant de set `registration.matc
      - `for: 'self'`     → `linkedUserId = submittedByUid`, `guardianUserIds = []`.
      - `for: 'dependent'`→ `linkedUserId = null`, `guardianUserIds = [submittedByUid]`.
    - `comms` : recipients `['member']` si `for: 'self'` OU si majeur ; `['guardians']` si `for: 'dependent'` ET mineur.
-2. `arrayUnion(memberId)` sur `team.playerIds` — déclenche le trigger `initiateDuesOnPlayerActivation` (création `/dues/{id}` + `member.duesStatus = 'pending_grace'`).
+2. `arrayUnion(memberId)` sur `team.playerIds` — déclenche le trigger `initiateDuesOnPlayerActivation`.
 3. Update registration : `status = 'confirmed_pending_dues'`, `statusUpdatedAt`, `matchedMemberId = memberId` (dénormalisé pour ne pas perdre la trace si on a créé un nouveau member), append actionLog.
+
+**Note cotisation émise (cf. §3.4 et [`lifecycle.md`](./lifecycle.md#9-garantie-14-jours-max))** : la due créée par `initiateDuesOnPlayerActivation` à la suite de cette confirmation naît directement `status='issued'` avec `dueAt = registration.trialStartedAt + 14j` et `emailedAt = now` (email envoyé immédiatement). Le compteur 14j est donc ancré sur le démarrage de l'essai, pas sur la création du due — bypass du chaînage `pending_grace 21j → issued 14j` qui pouvait étirer la première demande de paiement à J+35 dans l'ancien modèle.
 
 **Limitation v1** : le linking inverse `/users/{submittedByUid}.memberId` n'est pas mis à jour ici (write rules `users.memberId` admin-only — un futur callable `linkUserToMember` le portera). Pour l'instant la liaison est portée uniquement par `member.linkedUserId` / `guardianUserIds`.
 
@@ -146,32 +151,56 @@ Peut commencer en stub HTML→PDF en Phase E.
 
 ### 3.1 `onRegistrationStatusChanged`
 
-**Trigger** : `onUpdate` sur `/registrations/{registrationId}` quand `status` change.
+**Trigger** : `onUpdate` sur `/registrations/{registrationId}` filtré sur changement de `status` (`before.status !== after.status`).
 
-**Effets** :
-- Crée des `/notifications` selon le nouveau status :
-  - `new_registration_open` / `new_registration_conditional` → head coach + admin.
-  - `registration_accepted` → submittedByUid.
-  - `registration_refused` → submittedByUid.
-  - `trial_started` → submittedByUid + coach.
-- Si `status === 'confirmed_pending_dues'` : maintient `member.duesStatus` (lifecycle cotisation).
+**Effets** : crée une notification par transition. IDs déterministes `${registrationId}_${newStatus}` pour idempotence — un re-fire de l'event n'écrit pas deux notifs.
 
-### 3.2 `onRegistrationRefused`
+| Transition entrante | `notification.type` | Audience | Doc ID |
+|---|---|---|---|
+| `submitted` → `open_pending_trial` | `new_registration_open` | head coach + admin | `${regId}_open_pending_trial` |
+| `submitted` → `conditional_pending_review` | `new_registration_conditional` | head coach + admin | `${regId}_conditional_pending_review` |
+| `conditional_pending_review` → `conditional_pending_trial` | `registration_accepted` | submittedByUid | `${regId}_conditional_pending_trial` |
+| `*_pending_*` → `trial_in_progress` | `trial_started` | submittedByUid + coach | `${regId}_trial_in_progress` |
+| `*` → `confirmed_pending_dues` | `registration_dues_pending` | submittedByUid | `${regId}_confirmed_pending_dues` |
+| `*` → `refused` | `registration_refused` | submittedByUid | `${regId}_refused` |
+| `confirmed_pending_dues` → `active` | `registration_active` | submittedByUid + coach | `${regId}_active` |
 
-**Trigger** : `onUpdate` filtré sur `status === 'refused'`.
+`confirmed_pending_dues` → `active` est posée par le trigger `transitionRegistrationOnDuePaid` (§3.4) — `onRegistrationStatusChanged` se contente d'observer cette transition pour émettre la notif.
 
-**Logique auto-rerouting** : si une autre équipe `open` existe dans la même `categoryId` ET que le user n'a pas explicitement refusé :
-- Crée une `/notifications` pour le coach de l'équipe ouverte avec contexte : "{firstName} {lastName} ({age} ans) a été refusé par {team source}. Souhaitez-vous le contacter ?"
-- Crée une `/notifications` (ou email via `/pendingEmails`) pour le parent : "L'équipe X ne peut pas vous accueillir cette saison, mais l'équipe Y est ouverte. Le coach Y vous contactera."
-- Bascule la `registration` vers la nouvelle équipe (set `teamId`) avec `status: 'open_pending_trial'`. L'historique du transfert vit dans `registration.actionLog`.
+### 3.2 `onRegistrationRefused` 🔜 Phase F (différé)
+
+**Pas implémenté en MVP.** Auto-rerouting (transfert d'une registration refusée vers une autre équipe `open` de la même catégorie + notif au coach cible + email parent) déféré à Phase F. Comportement actuel : un refus reste terminal côté lifecycle, l'admin remet en main propre s'il veut rerouter.
+
+Spec cible (pour mémoire, à réactiver Phase F) : `onUpdate` filtré sur `status === 'refused'`. Si une autre équipe `open` existe dans la même `categoryId`, bascule la registration vers la nouvelle équipe (set `teamId`, `status: 'open_pending_trial'`), notifie le coach de l'équipe cible et le parent.
 
 ### 3.3 `onTrialExpired`
 
-**Trigger** : scheduled daily 03:00 zurich.
+**Trigger** : scheduled daily 03:00 Europe/Zurich.
 
-**Logique** : balaie toutes les registrations en `trial_in_progress` depuis ≥ 14 jours sans transition. Pour chacune :
-- Notifie coach + parent : *"L'essai arrive à terme. Le joueur doit soit interrompre, soit la cotisation doit être payée."*.
-- **Pas** de bascule automatique vers `refused` — c'est au coach de trancher.
+**Logique** : query Firestore `where status == 'trial_in_progress' && trialStartedAt <= now - 14d`. Pour chaque registration matchée, écrit **deux** notifications (IDs déterministes pour idempotence — un re-run quotidien ne re-spamme pas) :
+
+| Audience | `notification.type` | Doc ID |
+|---|---|---|
+| Coach de la team | `registration_trial_expired_coach` | `${regId}_trial_expired_coach` |
+| `submittedByUid` (parent / joueur) | `registration_trial_expired_user` | `${regId}_trial_expired_user` |
+
+**Pas** de bascule automatique vers `refused` — c'est au coach de trancher (confirmer l'intégration ou refuser explicitement).
+
+**Index Firestore requis** : composite `(status ASC, trialStartedAt ASC)` sur `/registrations` — à **ajouter dans `firestore.indexes.json`**. Sans cet index, la query plante en `failed-precondition` au premier run.
+
+### 3.4 `transitionRegistrationOnDuePaid`
+
+**Trigger** : `onUpdate` sur `/dues/{dueId}` filtré sur `before.status !== 'paid' && after.status === 'paid'`.
+
+**Logique** :
+
+1. Lookup `/registrations where matchedMemberId == due.memberId && teamId == due.teamId` (simple query, tri JS si plusieurs hits — la plus récente gagne).
+2. Si trouvée ET `registration.status === 'confirmed_pending_dues'` :
+   - Update registration : `status = 'active'`, `statusUpdatedAt = now`, append `actionLog` (`action: 'status_changed'`, `previousStatus: 'confirmed_pending_dues'`, `newStatus: 'active'`, `note: 'Cotisation payée'`).
+   - Update `/members/{memberId}` : `active = true` (sortie de suspension app club si applicable, cf. `firebase.md` → "Membre inactif").
+3. Si registration introuvable, ou déjà `active`, ou autre status (sécurité) → skip silencieux. **Idempotent** : un re-fire qui voit `registration.status === 'active'` ne fait rien.
+
+Effet utilisateur : un parent qui paie la cotisation depuis `apps/courtbase-register` voit sa registration basculer **automatiquement** en `active` sans intervention coach — la notif `registration_active` part dans la foulée via `onRegistrationStatusChanged` (§3.1).
 
 ## 4. Anti-abus refus
 

@@ -14,12 +14,13 @@ L'app `web` est faite pour les **admins et coachs**. Les **parents et joueurs** 
 | Phase A — Schéma + rules + types | ✅ Livrée |
 | Phase B — Scaffolding + auth + E1–E4 | ✅ Livrée |
 | **Phase C — Wizard E5–E14** | ✅ **DONE 2026-05-14** |
-| **Phase D — Workflow coach (`apps/web`)** | 🟡 **En cours 2026-05-14** (vue Inscriptions + refus + binding member/user livrés) |
-| **Phase E — Cotisation + email + paiement manuel + archive** | 🟡 **En cours 2026-05-14** |
+| **Phase D — Workflow coach (`apps/web`)** | ✅ **DONE 2026-05-23** (vue Inscriptions complète + 6 callables + 3 triggers serveur) |
+| **Phase D bis — UI Coach mobile (`courtbase-app`)** | 🔜 Brief écrit, en attente impl autre session |
+| **Phase E — Cotisation + email + paiement manuel + archive** | ✅ **Livrée 2026-05-15** |
 | Phase E bis — Licences post-inscription (E15) | 🔜 Pas commencée |
-| Phase F — Maturité (cron, becomeOwner, vendor mail) | 🔜 Pas commencée |
+| Phase F — Maturité (auto-rerouting, becomeOwner, vendor mail, anti-abus refus) | 🔜 Pas commencée |
 
-### Phase E — En cours (2026-05-14)
+### Phase E — Livrée (2026-05-15)
 
 Couche cotisation/email/paiement manuel autour des registrations confirmées. Trigger : (a) parent clique "Payer" dans `apps/courtbase-register`, (b) coach confirme une registration après essai via `confirmRegistration`. Dans les deux cas le trigger `initiateDuesOnPlayerActivation` crée un `/dues`.
 
@@ -38,19 +39,33 @@ Couche cotisation/email/paiement manuel autour des registrations confirmées. Tr
   - `docs/firebase.md` → sections `/config/club.banking`, `/users` `treasurer`, `/members.status`, `/dues.paymentReference + emailedAt`, `/pendingEmails` templates `dues_payment_request` et `dues_payment_confirmed`.
   - `docs/main.md` → bloc "Cotisations — email à payer, paiement, archive" (déclencheurs, autorisations `markDuePaid`, archive on refuse).
 
-**Pièces à livrer (côté Functions + apps web/register, autres agents)** :
+**Pièces livrées côté Functions + apps web** :
 
 - Callable `markDuePaid({ dueId, paidAmount, paymentMethod, paidAt? })` — pose `paid` + `/pendingEmails` confirmation. Validation `admin || treasurer` côté serveur.
-- Extension `initiateDuesOnPlayerActivation` pour poser `paymentReference` à la création.
-- Trigger (ou call inline depuis `issueDuesScheduled`) qui produit le doc `/pendingEmails` `dues_payment_request` (idempotent via `due.emailedAt`).
-- Extension `refuseRegistration` pour archiver le member lié (`status='archived'` + champs `archived*`) quand `matchedMemberId` a été créé via ce flow.
-- UI web : carte "Paiements" Settings → role treasurer assignable, table `/dues` filtrable, action "Marquer payé".
+- Extension `initiateDuesOnPlayerActivation` — pose `paymentReference` à la création + lookup `registeredByUid` depuis la registration. Quand cette ancre est résolue, la cotisation naît `status='issued'` avec `dueAt = registration.trialStartedAt + 14j` et `emailedAt = now` (cf. `registrations/lifecycle.md` §9 — garantie 14 jours max).
+- Extension `refuseRegistration` — archive le member lié (`status='archived'` + champs `archived*`) quand `matchedMemberId` a été créé via ce flow.
+- UI web : carte "Paiements" Settings → rôle treasurer assignable, table `/dues` filtrable, action "Marquer payé".
 - UI register : écran "Payer" affichant `banking` + référence + bouton confirmation.
 
 **Pièces livrées côté register UI (2026-05-15)** :
 
 - Affichage cotisations payées sur la home — badge vert "Cotisation payée · {montant} · le {date}" + CTA "Voir le reçu" sur les cards registration une fois le due `paid` (extension `apps/courtbase-register/src/repositories/dues.repo.ts` + `stores/dues.ts` avec `myPaidDues`/`findPaidDueForMember`).
 - Reçu sur `PaymentInstructions.vue` état `paid` : carte récap montant versé (`paidAmount`), date (`paidAt`), méthode, référence + note explicite si arrangement comité (`paidAmount < amount`).
+
+### Self-service compte / RGPD (2026-05-23)
+
+Nouvelle page `/account` (`apps/courtbase-register/src/views/Account.vue`) accessible depuis le menu user du Home. Quatre sections :
+
+1. **Mes informations** — édition `displayName`, `phone`, `address` du `/users/{uid}` via `auth.saveProfile` (rule register déjà ouverte). `email` reste read-only (lié au compte Auth, change via club).
+2. **Mon profil joueur** (si `userDoc.memberId`) — read-only sur `/members/{id}` (firstName, lastName, birthDate, AVS, licenseNumber) avec helper "Pour modifier, contactez le club" ; édition du contact privé `/members/{id}/private/contact` (rule autorise `isLinkedMember`).
+3. **Mes enfants** — liste `/members where guardianUserIds array-contains uid` ; chaque ligne porte un bouton "Délier" qui appelle la callable `unlinkGuardian` (le caller se retire de `guardianUserIds`). Le member enfant est laissé en l'état côté club.
+4. **Zone dangereuse** — bouton "Supprimer mon compte". Disabled tant qu'il reste un pupille, ou qu'un due `paid` est lié au linked member. Sur clic : modal avec saisie obligatoire `"SUPPRIMER"` puis appel callable `deleteMyAccount` qui :
+   - Vérifie côté serveur l'absence de pupille + l'absence de due `paid`.
+   - Cleanup transactionnel : member lié (+ dues non-paid + retrait teams + unlink registrations en gardant l'audit) + drafts de registrations du caller + sub `/users/{uid}/fcmTokens/*` + `/users/{uid}`.
+   - Hors tx : `admin.auth().deleteUser(uid)` (best-effort ; `authDeleted: false` signale un cleanup partiel à reporter à l'admin).
+   - Au retour : sign-out client + redirect `/?account_deleted=1`.
+
+Pas de modif `firestore.rules` : tout passe par les deux callables. Côté Functions : `account/unlinkGuardian.ts` + `account/deleteMyAccount.ts` exportées depuis `functions/src/index.ts`. Penser au binding IAM `allUsers/run.invoker` post-deploy (cf. `[[deploy-functions-v2-invoker-binding]]`).
 
 ## Les 5 briefs thématiques
 
@@ -76,6 +91,7 @@ Couche cotisation/email/paiement manuel autour des registrations confirmées. Tr
 - [`design-to-vue-register.md`](./design-to-vue-register.md) — Mapping prototype claude.design → Vue (atoms CSS portés, conversion HTML→template).
 - [`design-brief-register.md`](./design-brief-register.md) — Brief design produit côté visual.
 - [`prompt-phase-c-wizard.md`](./prompt-phase-c-wizard.md) — Playbook step-by-step Phase C (référence historique).
+- [`registrations/coach-app-screens.md`](./registrations/coach-app-screens.md) — Brief Phase D bis : 3 écrans coach dans `courtbase-app` (liste / détail / dialog d'action).
 - [`main.md`](./main.md) — Domaine global.
 - [`firebase.md`](./firebase.md) — Schéma Firestore complet du projet.
 - [`apps/courtbase-register/CLAUDE.md`](../apps/courtbase-register/CLAUDE.md) — Règles app register (à lire en début de session).

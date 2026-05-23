@@ -10,9 +10,10 @@
 | Phase A — Schéma + rules + types | ✅ Livrée |
 | Phase B — Scaffolding + auth + E1–E4 (Landing / SignIn / Profile / Home) | ✅ Livrée |
 | **Phase C — Wizard E5–E14** | ✅ **DONE 2026-05-14** |
-| **Phase D — Workflow coach côté `apps/web`** | 🟡 **En cours 2026-05-14** (refus motivé + binding member/user livrés) |
+| **Phase D — Workflow coach côté `apps/web`** | ✅ **DONE 2026-05-23** (vue Inscriptions complète + 6 callables + 3 triggers serveur) |
+| **Phase D bis — UI Coach mobile (`courtbase-app`)** | 🔜 Brief écrit, impl autre session |
 | Phase E — Licences post-inscription (E15) | 🔜 Pas commencée |
-| Phase F — Maturité (cron trial, becomeOwner, vendor mail) | 🔜 Pas commencée |
+| Phase F — Maturité (auto-rerouting, becomeOwner, vendor mail, anti-abus refus) | 🔜 Pas commencée |
 
 ## Phase A — Foundations ✅ Livrée
 
@@ -93,7 +94,7 @@
 - [x] Test manuel bout-en-bout : créer compte → profil → wizard → confirmation → Home affiche la registration soumise.
 - [x] `firestore.rules` : writes drafts passent (re-déployées — cf. mémoire `deploy_firestore_rules_required`).
 
-## Phase D — Workflow coach (app web) 🟡 En cours
+## Phase D — Workflow coach (app web) ✅ DONE 2026-05-23
 
 ### Livrables Phase D (2026-05-14 — première tranche)
 
@@ -141,23 +142,50 @@ Quand un parent s'inscrit via `apps/courtbase-register`, un `/users/{uid}` est c
 
 **Pas de modif rules nécessaire** : `/members.linkedUserId` est admin-write (rule existante `allow write: if isRootAdmin() || isAdmin()`), et `/users.memberId` reste admin-only (la rule self-update whitelist explicitement `displayName/photoURL/phone/address/profileCompletedAt` et exclut `memberId`).
 
-### Restant Phase D
+### Livrables Phase D (2026-05-23 — clôture)
 
-24. Callables manquantes côté `functions/src/registrations/` :
-   - `acceptRegistration` — transition `conditional_pending_review` → `conditional_pending_trial` (cas branche conditional).
-   - `markTrialInProgress` — transition vers `trial_in_progress` (démarre compteur 14j).
-   - `confirmRegistration` — transition vers `confirmed_pending_dues` (déclenche `createDuesForRegistration`).
-   - `adminCancelRegistration` — annulation par admin/coach d'une registration tierce.
-25. Branchement de ces callables dans `useRegistrationsStore` (handlers `accept` / `markTrial` / `confirm` déjà esquissés côté vue — voir todos `Inscriptions.vue` lignes ~5 / ~11 / ~27).
-26. Auto-rerouting via Function `onRegistrationRefused` (trigger Firestore, pas une callable).
-27. **Fix legacy** : admin UI pour poser `registrationStatus` sur les teams pré-existantes au chantier (cf. leçon Phase C §4).
+**Callables livrées + déployées + testées** (`functions/src/registrations/`) :
 
-**Critère de done Phase D (final)** :
-- Un coach voit la liste de ses inscriptions et peut accept/refuse/mark-trial/confirm depuis l'app web.
-- L'auto-rerouting fonctionne quand une équipe `open` existe dans la catégorie.
-- L'admin a une vue globale "Toutes inscriptions" avec filtres status/team/age (✅ livré).
-- L'admin peut lier un member existant à un compte d'inscription via la page détail membre (✅ livré).
-- L'admin voit les données complètes (phone + adresse) des tuteurs sur la page détail membre (✅ livré).
+| Callable | Tests unitaires | Notes |
+|---|---|---|
+| `submitRegistration` | ✅ | Phase A, ré-éprouvée Phase D. |
+| `cancelRegistration` | 🟡 Pas de test dédié | Path utilisateur final couvert via tests d'intégration manuels. |
+| `refuseRegistration` | ✅ | Refus motivé + RefusalLog. |
+| `markTrialInProgress` | 🟡 Pas de test dédié | Idempotence vérifiée manuellement (re-call ne réinitialise pas `trialStartedAt`). |
+| `confirmRegistration` | ✅ | Cas member créé + member matché. |
+| `matchExistingMember` | 🟡 Pas de test dédié | Match AVS exact, fallback `licenseNumber`. |
+
+**Triggers serveur livrés** (en fin de chantier, état cible) :
+
+- `onRegistrationStatusChanged` — Firestore trigger sur `/registrations/{id}` update, dispatch des notifs lifecycle (sept transitions documentées dans [`functions.md`](./functions.md#31-onregistrationstatuschanged)). IDs déterministes pour idempotence.
+- `onTrialExpired` — scheduled daily 03:00 zurich, deux notifications (coach + parent) sur les essais ≥ 14j sans transition. **Index composite `(status, trialStartedAt)` à ajouter dans `firestore.indexes.json`**.
+- `transitionRegistrationOnDuePaid` — Firestore trigger sur `/dues/{id}` update à `paid`, passe la registration en `active` + `member.active = true`. Boucle automatique paiement → activation sans intervention coach.
+
+**Vue `apps/web/src/views/Inscriptions.vue`** : 100 % câblée — refus + markTrial + confirm + cancel + delete (admin). Drawer détail in-page avec journal d'actions, contexte soumission, identité joueur, historique sportif.
+
+**Hors scope Phase D, repoussé en Phase F** :
+- `onRegistrationRefused` (auto-rerouting) — non implémenté.
+- `acceptRegistration` callable séparée — collapse via `markTrialInProgress` toujours valide (cf. spec §2.5).
+- `adminCancelRegistration` callable séparée — la voie normale d'extinction est `cancelRegistration` (auteur) ; l'admin utilise `deleteDoc` direct sur la registration (cf. [`schema.md`](./schema.md) → rule delete).
+
+**Critère de done Phase D (atteint)** :
+- ✅ Un coach voit la liste de ses inscriptions et peut refuse / markTrial / confirm depuis l'app web.
+- ✅ L'admin a une vue globale "Toutes inscriptions" avec filtres status / team / search.
+- ✅ L'admin peut supprimer une registration (dialog type-to-confirm, tous statuts).
+- ✅ L'admin peut lier un member existant à un compte d'inscription via la page détail membre.
+- ✅ L'admin voit les données complètes (phone + adresse) des tuteurs sur la page détail membre.
+- ✅ Le paiement de la cotisation passe la registration en `active` **sans intervention coach** (trigger `transitionRegistrationOnDuePaid`).
+- ✅ La cotisation émise depuis `confirmRegistration` cale `dueAt` sur `trialStartedAt + 14j` (garantie 14 jours max — cf. [`lifecycle.md`](./lifecycle.md#9-garantie-14-jours-max)).
+
+## Phase D bis — UI Coach mobile (`courtbase-app`) 🔜
+
+Brief produit livré : [`coach-app-screens.md`](./coach-app-screens.md) — 3 écrans dans l'app Flutter coach (`courtbase-app`) :
+
+1. **Liste des inscriptions** scopée aux équipes du coach (registrations actives + historique).
+2. **Détail d'une inscription** (résumé joueur, statut, journal d'actions, CTAs).
+3. **Dialog d'action** (mark trial / confirm / refuse) avec validation motif obligatoire pour le refus.
+
+**Owner** : autre session côté `courtbase-app`. Ce chantier ne documente que le **brief** ; l'implémentation Flutter (repos, providers, écrans, callables wrappers) est tracée séparément.
 
 ## Phase E — Licences (post-inscription) 🔜
 
@@ -173,14 +201,15 @@ Quand un parent s'inscrit via `apps/courtbase-register`, un `/users/{uid}` est c
 
 ## Phase F — Maturité 🔜
 
-33. Cron `onTrialExpired` + notifs.
-34. Toggle `becomeOwnerOfMyMember` à la majorité — `BecomeMajorDialog.vue` (E16).
-35. Indicateur "coach trop refusant" (vue admin).
+33. Toggle `becomeOwnerOfMyMember` à la majorité — `BecomeMajorDialog.vue` (E16).
+34. **Auto-rerouting** (`onRegistrationRefused`) — réactiver le trigger Firestore : registration refusée + équipe `open` dans la même catégorie → transfert + notif coach cible + email parent.
+35. **Indicateur "coach trop refusant"** (vue admin) — alerte si un coach dépasse `> N` refus sur la saison.
 36. Vendor email réel (commun avec `pendingEmails`).
 
 **Critère de done Phase F** :
-- Le cron trial tourne et envoie ses notifs.
+- Le rerouting fonctionne sur refus quand une équipe `open` existe dans la catégorie.
 - Un pupille majeur peut prendre la main sur son membre.
 - Les emails partent réellement via un vendor (SendGrid/Resend).
+- L'admin voit un indicateur des coachs avec trop de refus.
 
-Chaque phase = une PR distincte. Phases A–C ont été merged sans Phase D côté coach — il faut valider manuellement via Firestore console le temps de finir D.
+Chaque phase = une PR distincte. Phases A–D mergées en plusieurs PRs incrémentales (foundations → wizard → workflow coach + triggers).
