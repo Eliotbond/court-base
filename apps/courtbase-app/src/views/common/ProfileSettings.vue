@@ -2,31 +2,42 @@
 /**
  * C5 — Profil utilisateur.
  *
- * Vue companion (mobile-first + desktop ≥1024px) qui affiche les infos perso
- * du user connecté, ses rôles, le membre lié (si applicable), les
- * préférences notifications (toggle push + lien test) et le bouton de
- * déconnexion.
+ * Vue companion (mobile-first + desktop >=1024px) qui affiche les infos
+ * perso du user connecté, ses roles, le membre lie (si applicable), les
+ * preferences notifications et le bouton de deconnexion.
  *
- * Source de données : `useAuthStore()` (qui projette `MOCK_SESSION`) +
- * `getMember()` / `getTeam()` pour résoudre le membre lié et ses équipes.
+ * Sources de donnees :
+ *  - `useAuthStore()` : Firebase Auth REEL pour identite (uid, email,
+ *    displayName, roles via userDoc).
+ *  - `useMyProfileStore()` : Firestore REEL pour le linked member
+ *    (`/members/{id}`), son contact prive (`/members/{id}/private/contact`)
+ *    et ses equipes (`listTeamsForMember`).
+ *  - `auth.officialLevel` : encore fallback mock pour l'instant (le
+ *    champ n'est pas projete dans le member Firestore minimaliste de la
+ *    coach app — voir TODO).
  *
- * **Mock only** — `logMockAction(...)` pour test-notif et signout. Le wiring
- * réel (callable + redirect) sera fait quand on branchera Firebase Auth.
+ * Edition du contact prive (`/members/{id}/private/contact`) : write client
+ * direct via `myProfile.saveContact()` — autorise par les rules pour
+ * `isLinkedMember(memberId)`. Sinon dégradation UI (helper text + bouton
+ * désactivé).
+ *
+ * Notifications push : toggle local-only — l'enregistrement FCM web sera
+ * branché en Phase 5 (cf. docs/courtbase-app.md). Désactivé visuellement
+ * tant que non câblé pour éviter de laisser croire qu'il est fonctionnel.
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Bell,
-  BellRing,
-  Calendar,
+  AlertCircle,
+  Check,
   ChevronRight,
-  Clipboard,
+  Loader2,
   LogOut,
   Mail,
   MapPin,
   Phone,
+  Save,
   Send,
-  Users,
 } from 'lucide-vue-next'
 import ToggleSwitch from 'primevue/toggleswitch'
 
@@ -35,75 +46,85 @@ import CbDesktopShell from '@/components/ui/CbDesktopShell.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
 import CbPill from '@/components/ui/CbPill.vue'
-import type { CbTab } from '@/components/ui/CbTabBar.vue'
-import type { CbNavItem } from '@/components/ui/CbSidebar.vue'
+import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
-import {
-  getMember,
-  getTeam,
-  logMockAction,
-  type MockMember,
-  type MockTeam,
-} from '@/repositories/mock'
 import { useAuthStore } from '@/stores/auth'
+import { useMyProfileStore } from '@/stores/myProfile'
 import type { AppRole } from '@/types/roles'
 
 const router = useRouter()
 const auth = useAuthStore()
+const myProfile = useMyProfileStore()
 const { isDesktop } = useViewport()
+const { tabs, nav, primaryRoleLabel } = useShellNav()
 
-// ───────────────────────────────────────────────────────────────
-// Données dérivées du store auth
-// ───────────────────────────────────────────────────────────────
-
-/**
- * Adresse fictive utilisée pour le mock-up — `MOCK_SESSION` ne porte pas
- * d'adresse pour l'instant (le champ vivra dans `/users/{uid}` quand on
- * branchera Firestore). C'est inliné ici sans toucher au seed.
- */
-const MOCK_ADDRESS = 'Rue du Lac 12, 1700 Fribourg, Suisse'
+// ---------------------------------------------------------------
+// Identite : 100% Firebase Auth via useAuthStore (uid, displayName, email)
+// ---------------------------------------------------------------
 
 const displayName = computed(() => auth.displayName)
-const email = computed(() => auth.session.email)
-const phone = computed(() => auth.session.phone)
-const address = MOCK_ADDRESS
+const email = computed(() => auth.email)
+
+/**
+ * Telephone et adresse du USER (pas du member) — viennent du userDoc
+ * `/users/{uid}` quand ils sont posés. Adresse est un objet structure cote
+ * userDoc (cf. `users.repo.ts`) — on serialise en string pour l'affichage.
+ */
+const userPhone = computed(() => {
+  const p = auth.userDoc?.phone
+  if (typeof p === 'string' && p.length > 0) return p
+  return ''
+})
+
+const userAddress = computed(() => {
+  const a = auth.userDoc?.address as
+    | {
+        street?: string | null
+        zip?: string | null
+        city?: string | null
+        country?: string | null
+      }
+    | undefined
+    | null
+  if (!a) return ''
+  const street = (a.street ?? '').trim()
+  const zip = (a.zip ?? '').trim()
+  const city = (a.city ?? '').trim()
+  const country = (a.country ?? '').trim()
+  // "Rue du Lac 12, 1700 Fribourg, Suisse"
+  const left = street
+  const middle = [zip, city].filter(Boolean).join(' ')
+  const right = country
+  return [left, middle, right].filter((s) => s.length > 0).join(', ')
+})
 
 const roles = computed<AppRole[]>(() => auth.roles)
 
-const linkedMember = computed<MockMember | null>(() => {
-  const id = auth.session.linkedMemberId
-  return id ? getMember(id) : null
-})
+// ---------------------------------------------------------------
+// Member lie : 100% Firestore via useMyProfileStore (load au mount)
+// ---------------------------------------------------------------
 
-const linkedMemberTeams = computed<MockTeam[]>(() => {
-  const m = linkedMember.value
-  if (!m) return []
-  return m.teamIds
-    .map((id) => getTeam(id))
-    .filter((t): t is MockTeam => t != null)
-})
-
-const linkedMemberFullName = computed(() => {
-  const m = linkedMember.value
-  return m ? `${m.firstName} ${m.lastName}` : ''
-})
-
-const linkedMemberTeamsLabel = computed(() => {
-  const teams = linkedMemberTeams.value
-  if (teams.length === 0) return 'Aucune équipe assignée'
-  return teams.map((t) => t.name).join(' · ')
-})
-
-const officialLicenseLabel = computed(() => {
-  const lic = linkedMember.value?.officialLicense
-  if (!lic) return null
-  return `Officiel niveau ${lic.level} actif`
-})
+const linkedMember = computed(() => myProfile.member)
+const linkedMemberFullName = computed(() => myProfile.fullName)
+const linkedMemberTeamsLabel = computed(() => myProfile.teamsLabel)
+const loadingMember = computed(() => myProfile.loading)
 
 /**
- * Label FR par rôle. Pour `official` on enrichit avec le niveau quand il
- * est connu (ex. "Officiel niveau 2"). Les chips restent read-only.
+ * Le member Firestore minimaliste de la coach app n'expose pas
+ * `officialLicense.level` consistant (le champ est lu mais le mock-only
+ * fallback de useAuthStore reste utilise tant qu'un seed/migration n'a
+ * pas peuple). On garde donc ici `auth.officialLevel` qui pioche dans
+ * `MOCK_SESSION` jusqu'a la phase 2.
+ *
+ * TODO Phase 2 : remplacer par `linkedMember.value?.officialLicense?.level`
+ * une fois le champ peuplé en prod.
  */
+const officialLicenseLabel = computed(() => {
+  const lvl = auth.officialLevel
+  if (lvl == null) return null
+  return `Officiel niveau ${lvl} actif`
+})
+
 function roleLabel(role: AppRole): string {
   switch (role) {
     case 'admin':
@@ -114,146 +135,113 @@ function roleLabel(role: AppRole): string {
       const lvl = auth.officialLevel
       return lvl != null ? `Officiel niveau ${lvl}` : 'Officiel'
     }
+    case 'player':
+      return 'Joueur'
   }
 }
 
-// ───────────────────────────────────────────────────────────────
-// Préférence notifications push (mock — pas de persistance)
-// ───────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------
+// Edition du contact prive du member (`/members/{id}/private/contact`)
+// ---------------------------------------------------------------
 
-const pushEnabled = ref(true)
+const contactEditMode = ref(false)
+const contactEmail = ref('')
+const contactPhone = ref('')
+const contactSavedFlash = ref(false)
 
-function onTestNotification(): void {
-  // Phase 5 wiring TBD — déclenchera une notif test via FCM côté serveur.
-  logMockAction('c5.test-notif')
+/** Pre-remplit le form quand le contact arrive depuis le store. */
+watch(
+  () => myProfile.contact,
+  (c) => {
+    if (!c) {
+      contactEmail.value = ''
+      contactPhone.value = ''
+      return
+    }
+    contactEmail.value = c.email ?? ''
+    contactPhone.value = c.phone ?? ''
+  },
+  { immediate: true },
+)
+
+const canEditContact = computed(() => {
+  // Le user est le linked member <=> userDoc.memberId est posé. Sans ça, la
+  // rule refusera le write.
+  return Boolean(auth.userDoc?.memberId)
+})
+
+function onEditContact(): void {
+  contactEditMode.value = true
+  contactSavedFlash.value = false
 }
 
-// ───────────────────────────────────────────────────────────────
-// Sign-out
-// ───────────────────────────────────────────────────────────────
+function onCancelEditContact(): void {
+  contactEditMode.value = false
+  // Restore depuis le store.
+  const c = myProfile.contact
+  contactEmail.value = c?.email ?? ''
+  contactPhone.value = c?.phone ?? ''
+}
+
+async function onSaveContact(): Promise<void> {
+  contactSavedFlash.value = false
+  const ok = await myProfile.saveContact({
+    email: contactEmail.value.trim(),
+    phone: contactPhone.value.trim(),
+  })
+  if (ok) {
+    contactEditMode.value = false
+    contactSavedFlash.value = true
+    window.setTimeout(() => {
+      contactSavedFlash.value = false
+    }, 2500)
+  }
+}
+
+// ---------------------------------------------------------------
+// Notifications push — local-only (Phase 5 wiring FCM à venir)
+// ---------------------------------------------------------------
+
+/**
+ * Toggle de preference locale (pas de persistance). L'enregistrement FCM
+ * cote serveur (`/users/{uid}/fcmTokens/{tokenId}`) est out-of-scope tant
+ * que le service worker FCM n'est pas branche (Phase 5, cf.
+ * docs/courtbase-app.md). On expose le toggle en disabled + helper text
+ * pour ne pas laisser croire que c'est cable.
+ */
+const pushEnabled = ref(true)
+const pushAvailable = false
+
+function onTestNotification(): void {
+  // Phase 5 wiring TBD — declenchera une notif test via FCM cote serveur.
+  // No-op silencieux tant que c'est désactivé.
+}
+
+// ---------------------------------------------------------------
+// Sign-out (deja Firebase reel via auth.signOut())
+// ---------------------------------------------------------------
 
 async function onSignOut(): Promise<void> {
-  // `auth.signOut()` appelle Firebase `signOut()` — async. On attend la
-  // résolution avant de naviguer, sinon le router beforeEach voit encore
-  // `authSnap !== null` et bypass le redirect vers sign-in.
-  logMockAction('c5.signout')
   try {
     await auth.signOut()
+    // Reset du store profil au passage (sinon le prochain user verrait
+    // brievement le profil precedent en cache).
+    myProfile.reset()
   } catch (err) {
     console.error('[ProfileSettings] signOut failed', err)
   }
   await router.push({ name: 'sign-in' })
 }
 
-// ───────────────────────────────────────────────────────────────
-// Sub-role label pour la sidebar desktop (ex. "Coach · Officiel · Admin")
-// ───────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------
+// Sub-role label détaillé pour la card user desktop ("Coach · Officiel niveau 2")
+// — distinct de `primaryRoleLabel` qui affiche le rôle prioritaire seul
+// dans l'avatar de la sidebar.
+// ---------------------------------------------------------------
 
 const userRoleLabel = computed(() => roles.value.map(roleLabel).join(' · '))
 
-// ───────────────────────────────────────────────────────────────
-// Tab bar + nav — on prend la variante coach par défaut (cf. Home.vue).
-// Le profile est ouvert depuis le header (cloche/avatar) — il n'a pas de
-// tab dédié dans la barre du bas, on laisse l'indicateur sur l'item le plus
-// pertinent du rôle du user (Coach = "Équipes").
-// ───────────────────────────────────────────────────────────────
-
-const tabsCoach: CbTab[] = [
-  { icon: Users, label: 'Équipes' },
-  { icon: Calendar, label: 'Planning' },
-  { icon: Clipboard, label: 'Inscriptions', badge: 3 },
-  { icon: Bell, label: 'Notifs', badge: 2 },
-]
-
-const tabsOfficial: CbTab[] = [
-  { icon: BellRing, label: 'À pourvoir' },
-  { icon: Calendar, label: 'Mes matchs' },
-  { icon: Bell, label: 'Notifs', badge: 1 },
-]
-
-const tabsAdmin: CbTab[] = [
-  { icon: BellRing, label: 'Staffing' },
-  { icon: Clipboard, label: 'Demandes', badge: 5 },
-  { icon: Bell, label: 'Notifs' },
-]
-
-/**
- * Tab bar à rendre selon le rôle primaire (coach > official > admin),
- * miroir de la priorité utilisée par le store auth pour la home.
- */
-const activeTabs = computed<CbTab[]>(() => {
-  if (auth.isCoach) return tabsCoach
-  if (auth.isOfficial) return tabsOfficial
-  return tabsAdmin
-})
-
-const navCoach: CbNavItem[] = [
-  { icon: Users, label: 'Mes équipes' },
-  { icon: Calendar, label: 'Planning' },
-  { icon: Clipboard, label: 'Inscriptions', badge: 3 },
-  { icon: Bell, label: 'Notifications', badge: 2 },
-]
-
-const navOfficial: CbNavItem[] = [
-  { icon: BellRing, label: 'Matchs à pourvoir' },
-  { icon: Calendar, label: 'Mes assignations' },
-  { icon: Bell, label: 'Notifications', badge: 1 },
-]
-
-const navAdmin: CbNavItem[] = [
-  { icon: BellRing, label: 'Staffing' },
-  { icon: Clipboard, label: 'Demandes', badge: 5 },
-  { icon: Bell, label: 'Notifications' },
-]
-
-const activeNav = computed<CbNavItem[]>(() => {
-  if (auth.isCoach) return navCoach
-  if (auth.isOfficial) return navOfficial
-  return navAdmin
-})
-
-// ───────────────────────────────────────────────────────────────
-// Handlers tab bar / nav (re-routent vers les pages correspondantes)
-// ───────────────────────────────────────────────────────────────
-
-function onMobileTab(i: number): void {
-  if (auth.isCoach) {
-    if (i === 0) router.push({ name: 'team' })
-    else if (i === 3) router.push({ name: 'notifications' })
-    return
-  }
-  if (auth.isOfficial) {
-    if (i === 0) router.push({ name: 'matches-open' })
-    else if (i === 1) router.push({ name: 'my-assignments' })
-    else if (i === 2) router.push({ name: 'notifications' })
-    return
-  }
-  // admin
-  if (i === 0) router.push({ name: 'staffing' })
-  else if (i === 1) router.push({ name: 'requests' })
-  else if (i === 2) router.push({ name: 'notifications' })
-}
-
-function onDesktopNav(i: number): void {
-  if (auth.isCoach) {
-    if (i === 0) router.push({ name: 'team' })
-    else if (i === 3) router.push({ name: 'notifications' })
-    return
-  }
-  if (auth.isOfficial) {
-    if (i === 0) router.push({ name: 'matches-open' })
-    else if (i === 1) router.push({ name: 'my-assignments' })
-    else if (i === 2) router.push({ name: 'notifications' })
-    return
-  }
-  if (i === 0) router.push({ name: 'staffing' })
-  else if (i === 1) router.push({ name: 'requests' })
-  else if (i === 2) router.push({ name: 'notifications' })
-}
-
 function onBack(): void {
-  // Retour intelligent : si l'historique a une entrée précédente on l'utilise,
-  // sinon fallback sur la home.
   if (window.history.length > 1) router.back()
   else router.push({ name: 'home' })
 }
@@ -262,33 +250,34 @@ function goNotifications(): void {
   router.push({ name: 'notifications' })
 }
 
-// ───────────────────────────────────────────────────────────────
-// Action "Modifier mes infos" — placeholder. À terme la même vue
-// ProfileSetup sera réutilisée en mode "edit".
-// ───────────────────────────────────────────────────────────────
-
 function onEditProfile(): void {
-  logMockAction('c5.editProfile')
+  // Reuse ProfileSetup en mode "edit" pour la prochaine itération.
   router.push({ name: 'profile-setup' })
 }
+
+// ---------------------------------------------------------------
+// Mount : charge le profil reel
+// ---------------------------------------------------------------
+
+onMounted(async () => {
+  await myProfile.load()
+})
 </script>
 
 <template>
-  <!-- ─── Mobile shell ──────────────────────────────────────────── -->
+  <!-- Mobile shell -->
   <CbMobileShell
     v-if="!isDesktop"
     title="Mon profil"
     club="BCA"
     show-back
     notif-badge
-    :tabs="activeTabs"
-    :active-tab="-1"
+    :tabs="tabs"
     @back="onBack"
     @notif-click="goNotifications"
-    @tab-select="onMobileTab"
   >
     <div class="cb-page profile-page">
-      <!-- ─── Card user ──────────────────────────────────────── -->
+      <!-- Card user -->
       <article class="cb-card profile-user-card">
         <div class="profile-user-head">
           <CbAvatar :name="displayName" size="lg" tone="emerald" />
@@ -309,20 +298,20 @@ function onEditProfile(): void {
         <ul class="profile-contact">
           <li>
             <Mail :size="16" />
-            <span class="profile-contact-value">{{ email }}</span>
+            <span class="profile-contact-value">{{ email || '—' }}</span>
           </li>
           <li>
             <Phone :size="16" />
-            <span class="profile-contact-value">{{ phone }}</span>
+            <span class="profile-contact-value">{{ userPhone || '—' }}</span>
           </li>
           <li>
             <MapPin :size="16" />
-            <span class="profile-contact-value">{{ address }}</span>
+            <span class="profile-contact-value">{{ userAddress || '—' }}</span>
           </li>
         </ul>
       </article>
 
-      <!-- ─── Section "Rôles" ────────────────────────────────── -->
+      <!-- Roles -->
       <div class="cb-section-label profile-section-label">Rôles</div>
       <div class="profile-roles">
         <CbPill v-for="r in roles" :key="r" tone="violet">
@@ -330,14 +319,24 @@ function onEditProfile(): void {
         </CbPill>
       </div>
 
-      <!-- ─── Section "Membre lié" ──────────────────────────── -->
-      <template v-if="linkedMember">
+      <!-- Membre lié (loading + content) -->
+      <template v-if="loadingMember && !linkedMember">
+        <div class="cb-section-label profile-section-label">Membre lié</div>
+        <article class="cb-card profile-linked-card">
+          <div class="profile-linked-loading">
+            <Loader2 :size="14" class="profile-spin" />
+            <span>Chargement du profil joueur…</span>
+          </div>
+        </article>
+      </template>
+
+      <template v-else-if="linkedMember">
         <div class="cb-section-label profile-section-label">Membre lié</div>
         <article class="cb-card profile-linked-card">
           <div class="profile-linked-head">
             <CbAvatar
               :name="linkedMemberFullName"
-              :tone="linkedMember.avatarTone ?? 'emerald'"
+              tone="emerald"
             />
             <div class="profile-linked-meta">
               <div class="profile-linked-name">{{ linkedMemberFullName }}</div>
@@ -358,9 +357,126 @@ function onEditProfile(): void {
             Contactez votre admin pour toute modification.
           </p>
         </article>
+
+        <!-- Contact privé du joueur — éditable si canEditContact -->
+        <div class="cb-section-label profile-section-label">
+          Contact joueur (privé)
+        </div>
+        <article class="cb-card profile-contact-card">
+          <p class="cb-sub profile-contact-hint">
+            Ces coordonnées peuvent différer de celles de votre compte (ex. téléphone direct du joueur).
+          </p>
+
+          <template v-if="!contactEditMode">
+            <ul class="profile-contact profile-contact-readonly">
+              <li>
+                <Mail :size="16" />
+                <span class="profile-contact-value">
+                  {{ (myProfile.contact?.email) || '—' }}
+                </span>
+              </li>
+              <li>
+                <Phone :size="16" />
+                <span class="profile-contact-value">
+                  {{ (myProfile.contact?.phone) || '—' }}
+                </span>
+              </li>
+            </ul>
+            <p v-if="contactSavedFlash" class="profile-flash-success">
+              <Check :size="14" /> Contact enregistré.
+            </p>
+            <button
+              v-if="canEditContact && !myProfile.contactWriteDenied"
+              type="button"
+              class="cb-btn outline sm profile-contact-edit-btn"
+              :disabled="loadingMember"
+              @click="onEditContact"
+            >
+              Modifier
+            </button>
+            <p
+              v-else-if="!canEditContact"
+              class="cb-sub profile-contact-locked"
+            >
+              Cette section ne peut être modifiée que par le joueur lié à ce compte.
+            </p>
+          </template>
+
+          <form
+            v-else
+            class="profile-contact-form"
+            @submit.prevent="onSaveContact"
+          >
+            <div class="profile-contact-field">
+              <label class="cb-section-label" for="contact-email">Email</label>
+              <input
+                id="contact-email"
+                v-model="contactEmail"
+                type="email"
+                class="cb-input"
+                :disabled="myProfile.savingContact"
+                placeholder="exemple@email.com"
+                autocomplete="email"
+              />
+            </div>
+            <div class="profile-contact-field">
+              <label class="cb-section-label" for="contact-phone">Téléphone</label>
+              <input
+                id="contact-phone"
+                v-model="contactPhone"
+                type="tel"
+                class="cb-input"
+                :disabled="myProfile.savingContact"
+                placeholder="+41 78 123 45 67"
+                autocomplete="tel"
+              />
+            </div>
+
+            <p
+              v-if="myProfile.saveError"
+              class="profile-flash-error"
+            >
+              <AlertCircle :size="14" />
+              <span>{{ myProfile.saveError }}</span>
+            </p>
+
+            <div class="profile-contact-actions">
+              <button
+                type="button"
+                class="cb-btn ghost sm"
+                :disabled="myProfile.savingContact"
+                @click="onCancelEditContact"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                class="cb-btn primary sm"
+                :disabled="myProfile.savingContact"
+              >
+                <Loader2
+                  v-if="myProfile.savingContact"
+                  :size="14"
+                  class="profile-spin"
+                />
+                <Save v-else :size="14" />
+                <span>Enregistrer</span>
+              </button>
+            </div>
+          </form>
+        </article>
       </template>
 
-      <!-- ─── Section "Préférences notifications" ────────────── -->
+      <!-- Bandeau erreur de chargement profile (rare) -->
+      <p
+        v-if="myProfile.loadError"
+        class="profile-flash-error profile-load-error"
+      >
+        <AlertCircle :size="14" />
+        <span>{{ myProfile.loadError }}</span>
+      </p>
+
+      <!-- Préférences notifications -->
       <div class="cb-section-label profile-section-label">
         Préférences notifications
       </div>
@@ -368,9 +484,19 @@ function onEditProfile(): void {
         <div class="profile-pref-row">
           <div class="profile-pref-text">
             <div class="profile-pref-title">Notifications push</div>
-            <div class="cb-sub">Recevez les rappels match et les urgences.</div>
+            <div class="cb-sub">
+              Recevez les rappels match et les urgences.
+              <template v-if="!pushAvailable">
+                <br />
+                <em>Bientôt disponible.</em>
+              </template>
+            </div>
           </div>
-          <ToggleSwitch v-model="pushEnabled" aria-label="Activer les notifications push" />
+          <ToggleSwitch
+            v-model="pushEnabled"
+            :disabled="!pushAvailable"
+            aria-label="Activer les notifications push"
+          />
         </div>
 
         <div class="cb-div" />
@@ -378,6 +504,7 @@ function onEditProfile(): void {
         <button
           type="button"
           class="profile-test-btn"
+          :disabled="!pushAvailable"
           @click="onTestNotification"
         >
           <Send :size="16" />
@@ -386,7 +513,7 @@ function onEditProfile(): void {
         </button>
       </div>
 
-      <!-- ─── Bouton déconnexion (rose) ──────────────────────── -->
+      <!-- Sign-out -->
       <button type="button" class="cb-btn ghost block profile-signout" @click="onSignOut">
         <LogOut :size="16" />
         <span>Se déconnecter</span>
@@ -394,17 +521,15 @@ function onEditProfile(): void {
     </div>
   </CbMobileShell>
 
-  <!-- ─── Desktop shell ─────────────────────────────────────────── -->
+  <!-- Desktop shell -->
   <CbDesktopShell
     v-else
-    :items="activeNav"
-    :active="-1"
+    :items="nav"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
     :user-name="displayName"
-    :user-role="userRoleLabel"
-    @nav-select="onDesktopNav"
+    :user-role="primaryRoleLabel"
   >
     <CbPageHead title="Mon profil" subtitle="Vos informations personnelles et vos préférences." />
 
@@ -425,15 +550,15 @@ function onEditProfile(): void {
           <ul class="profile-contact">
             <li>
               <Mail :size="16" />
-              <span class="profile-contact-value">{{ email }}</span>
+              <span class="profile-contact-value">{{ email || '—' }}</span>
             </li>
             <li>
               <Phone :size="16" />
-              <span class="profile-contact-value">{{ phone }}</span>
+              <span class="profile-contact-value">{{ userPhone || '—' }}</span>
             </li>
             <li>
               <MapPin :size="16" />
-              <span class="profile-contact-value">{{ address }}</span>
+              <span class="profile-contact-value">{{ userAddress || '—' }}</span>
             </li>
           </ul>
 
@@ -459,13 +584,23 @@ function onEditProfile(): void {
           </section>
 
           <!-- Membre lié -->
-          <section v-if="linkedMember">
+          <section v-if="loadingMember && !linkedMember">
+            <div class="cb-section-label profile-section-label desktop">Membre lié</div>
+            <article class="cb-card profile-linked-card">
+              <div class="profile-linked-loading">
+                <Loader2 :size="14" class="profile-spin" />
+                <span>Chargement du profil joueur…</span>
+              </div>
+            </article>
+          </section>
+
+          <section v-else-if="linkedMember">
             <div class="cb-section-label profile-section-label desktop">Membre lié</div>
             <article class="cb-card profile-linked-card">
               <div class="profile-linked-head">
                 <CbAvatar
                   :name="linkedMemberFullName"
-                  :tone="linkedMember.avatarTone ?? 'emerald'"
+                  tone="emerald"
                 />
                 <div class="profile-linked-meta">
                   <div class="profile-linked-name">{{ linkedMemberFullName }}</div>
@@ -488,6 +623,125 @@ function onEditProfile(): void {
             </article>
           </section>
 
+          <!-- Contact privé éditable (desktop) -->
+          <section v-if="linkedMember">
+            <div class="cb-section-label profile-section-label desktop">
+              Contact joueur (privé)
+            </div>
+            <article class="cb-card profile-contact-card">
+              <p class="cb-sub profile-contact-hint">
+                Ces coordonnées peuvent différer de celles de votre compte (ex. téléphone direct du joueur).
+              </p>
+
+              <template v-if="!contactEditMode">
+                <ul class="profile-contact profile-contact-readonly">
+                  <li>
+                    <Mail :size="16" />
+                    <span class="profile-contact-value">
+                      {{ (myProfile.contact?.email) || '—' }}
+                    </span>
+                  </li>
+                  <li>
+                    <Phone :size="16" />
+                    <span class="profile-contact-value">
+                      {{ (myProfile.contact?.phone) || '—' }}
+                    </span>
+                  </li>
+                </ul>
+                <p v-if="contactSavedFlash" class="profile-flash-success">
+                  <Check :size="14" /> Contact enregistré.
+                </p>
+                <button
+                  v-if="canEditContact && !myProfile.contactWriteDenied"
+                  type="button"
+                  class="cb-btn outline sm profile-contact-edit-btn"
+                  :disabled="loadingMember"
+                  @click="onEditContact"
+                >
+                  Modifier
+                </button>
+                <p
+                  v-else-if="!canEditContact"
+                  class="cb-sub profile-contact-locked"
+                >
+                  Cette section ne peut être modifiée que par le joueur lié à ce compte.
+                </p>
+              </template>
+
+              <form
+                v-else
+                class="profile-contact-form"
+                @submit.prevent="onSaveContact"
+              >
+                <div class="profile-contact-field">
+                  <label class="cb-section-label" for="contact-email-d">Email</label>
+                  <input
+                    id="contact-email-d"
+                    v-model="contactEmail"
+                    type="email"
+                    class="cb-input"
+                    :disabled="myProfile.savingContact"
+                    placeholder="exemple@email.com"
+                    autocomplete="email"
+                  />
+                </div>
+                <div class="profile-contact-field">
+                  <label class="cb-section-label" for="contact-phone-d">Téléphone</label>
+                  <input
+                    id="contact-phone-d"
+                    v-model="contactPhone"
+                    type="tel"
+                    class="cb-input"
+                    :disabled="myProfile.savingContact"
+                    placeholder="+41 78 123 45 67"
+                    autocomplete="tel"
+                  />
+                </div>
+
+                <p
+                  v-if="myProfile.saveError"
+                  class="profile-flash-error"
+                >
+                  <AlertCircle :size="14" />
+                  <span>{{ myProfile.saveError }}</span>
+                </p>
+
+                <div class="profile-contact-actions">
+                  <button
+                    type="button"
+                    class="cb-btn ghost sm"
+                    :disabled="myProfile.savingContact"
+                    @click="onCancelEditContact"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="submit"
+                    class="cb-btn primary sm"
+                    :disabled="myProfile.savingContact"
+                  >
+                    <Loader2
+                      v-if="myProfile.savingContact"
+                      :size="14"
+                      class="profile-spin"
+                    />
+                    <Save v-else :size="14" />
+                    <span>Enregistrer</span>
+                  </button>
+                </div>
+              </form>
+            </article>
+          </section>
+
+          <!-- Erreur de chargement -->
+          <p
+            v-if="myProfile.loadError"
+            class="profile-flash-error profile-load-error"
+          >
+            <AlertCircle :size="14" />
+            <span>{{ myProfile.loadError }}</span>
+          </p>
+
           <!-- Préférences notifications -->
           <section>
             <div class="cb-section-label profile-section-label desktop">
@@ -497,9 +751,19 @@ function onEditProfile(): void {
               <div class="profile-pref-row">
                 <div class="profile-pref-text">
                   <div class="profile-pref-title">Notifications push</div>
-                  <div class="cb-sub">Recevez les rappels match et les urgences.</div>
+                  <div class="cb-sub">
+                    Recevez les rappels match et les urgences.
+                    <template v-if="!pushAvailable">
+                      <br />
+                      <em>Bientôt disponible.</em>
+                    </template>
+                  </div>
                 </div>
-                <ToggleSwitch v-model="pushEnabled" aria-label="Activer les notifications push" />
+                <ToggleSwitch
+                  v-model="pushEnabled"
+                  :disabled="!pushAvailable"
+                  aria-label="Activer les notifications push"
+                />
               </div>
 
               <div class="cb-div" />
@@ -507,6 +771,7 @@ function onEditProfile(): void {
               <button
                 type="button"
                 class="profile-test-btn"
+                :disabled="!pushAvailable"
                 @click="onTestNotification"
               >
                 <Send :size="16" />
@@ -534,11 +799,11 @@ function onEditProfile(): void {
 </template>
 
 <style scoped>
-/* ─── Layout mobile ─────────────────────────────────────────── */
+/* Layout mobile */
 .profile-page { gap: 10px; }
 .profile-section-label { padding: 14px 0 6px; }
 
-/* ─── Card user ─────────────────────────────────────────────── */
+/* Card user */
 .profile-user-card { padding: 16px; }
 .profile-user-head {
   display: flex;
@@ -593,15 +858,18 @@ function onEditProfile(): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.profile-contact-readonly {
+  margin-bottom: 4px;
+}
 
-/* ─── Rôles ─────────────────────────────────────────────────── */
+/* Roles */
 .profile-roles {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-/* ─── Card membre lié ───────────────────────────────────────── */
+/* Card membre lié */
 .profile-linked-card {
   padding: 14px;
   display: flex;
@@ -632,8 +900,88 @@ function onEditProfile(): void {
   font-size: 12px;
   line-height: 1.5;
 }
+.profile-linked-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
 
-/* ─── Card préférences notifications ───────────────────────── */
+/* Card contact privé */
+.profile-contact-card {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.profile-contact-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.profile-contact-edit-btn {
+  align-self: flex-start;
+}
+.profile-contact-locked {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: var(--text-subtle);
+  font-style: italic;
+}
+.profile-contact-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.profile-contact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.profile-contact-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* Flash messages */
+.profile-flash-success {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--emerald-50);
+  border: 1px solid var(--emerald-200);
+  color: var(--emerald-700);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.profile-flash-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--rose-50);
+  border: 1px solid var(--rose-200);
+  color: var(--rose-700);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.profile-load-error {
+  margin-top: 10px;
+}
+.profile-spin {
+  animation: profile-spin 1s linear infinite;
+}
+@keyframes profile-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Card préférences notifications */
 .profile-prefs-card {
   padding: 0;
   overflow: hidden;
@@ -668,8 +1016,13 @@ function onEditProfile(): void {
   gap: 10px;
   text-align: left;
 }
-.profile-test-btn:hover {
+.profile-test-btn:hover:not(:disabled) {
   background: var(--slate-50);
+}
+.profile-test-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--slate-500);
 }
 .profile-test-btn > span {
   flex: 1;
@@ -678,7 +1031,7 @@ function onEditProfile(): void {
   color: var(--slate-400);
 }
 
-/* ─── Sign-out ──────────────────────────────────────────────── */
+/* Sign-out */
 .profile-signout {
   margin-top: 14px;
   color: var(--rose-600);
@@ -692,7 +1045,7 @@ function onEditProfile(): void {
   color: var(--rose-700);
 }
 
-/* ─── Desktop layout ────────────────────────────────────────── */
+/* Desktop layout */
 .profile-desktop {
   flex: 1;
   overflow: auto;
@@ -739,7 +1092,7 @@ function onEditProfile(): void {
   padding: 8px 14px;
 }
 
-/* ─── Responsive fine-tune ──────────────────────────────────── */
+/* Responsive fine-tune */
 @media (max-width: 1180px) {
   .profile-desktop-grid {
     grid-template-columns: 1fr;

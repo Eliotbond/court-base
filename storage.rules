@@ -72,11 +72,33 @@ service firebase.storage {
     // ------------------------------------------------------------------------
     // /licenseRequests/{uid}/{requestId}/{file}
     // ------------------------------------------------------------------------
-    // Path préfixé par l'UID de l'uploader (le member linked OU un guardian).
-    // L'enforcement "ce UID est bien lié au memberId du licenseRequest" se fait
-    // côté callable d'upload (uploadLicenseDocument) — les rules valident juste
-    // l'auth + la taille + le type, le mapping uid ↔ licenseRequest passe par
-    // la callable qui lit Firestore avec l'Admin SDK.
+    // Path préfixé par l'UID de l'uploader. Uploaders possibles, selon la
+    // phase du workflow `/licenseRequests` (cf. `LicenseRequestStatus` dans
+    // `packages/shared-types/src/license.ts`) :
+    //   - Parent (linked member OU guardian) :
+    //       * docs initiaux         : `id_front.{ext}`, `id_back.{ext}`,
+    //                                 `avs.{ext}`, `transfer_letter_swiss.{ext}`
+    //         (uploadés pendant `pending_parent_docs`).
+    //       * doc signé re-uploadé  : `signed.pdf`
+    //         (uploadé pendant `awaiting_parent_signature`).
+    //   - Trésorier (rôle `treasurer` OU claim `rootAdmin`) :
+    //       * `signable.pdf`        (uploadé pendant `coach_validated`).
+    //       * `payment-proof.{ext}` (uploadé pendant `form_confirmed` ou
+    //                                 plus tard, workflow asynchrone).
+    //
+    // Storage rules ne peuvent pas faire de cross-doc lookup vers Firestore :
+    // on ne peut donc PAS gater par "status courant de la /licenseRequests"
+    // ni par "le caller est-il bien trésorier" depuis Storage. La garde
+    // status + rôle est faite **côté serveur** lorsqu'une callable consomme
+    // le fichier (`treasurerUploadSignableDoc`, `treasurerMarkSentAndPaid`,
+    // `treasurerConfirmSignedDoc`, `treasurerFinalizeLicense`) — la callable
+    // refusera la transition si le caller n'est pas trésorier ou si le
+    // status n'est pas le bon.
+    //
+    // L'enforcement "ce UID est bien lié au memberId du licenseRequest"
+    // (côté parent) se fait toujours côté callable. Côté Storage on garde
+    // juste : ownership du dossier (`uid` du path == `request.auth.uid`),
+    // taille < 10 MB, type image ou PDF.
     match /licenseRequests/{uid}/{requestId}/{fileName} {
       allow read: if isSignedIn();
       allow create: if isSignedIn()
@@ -104,6 +126,44 @@ service firebase.storage {
         && request.resource.size < 10 * 1024 * 1024
         && (request.resource.contentType.matches('image/.*')
             || request.resource.contentType == 'application/pdf');
+    }
+
+    // ------------------------------------------------------------------------
+    // /members/{memberId}/{file}
+    // ------------------------------------------------------------------------
+    // Photo licence du membre (format passeport). Réutilisée par le
+    // trésorier/admin lors de la création de la licence fédérale.
+    // Cf. docs/members/license-photo.md.
+    //
+    // Read : signed-in (la photo est consommée dans la fiche membre et la vue
+    //   review de demande de licence, gated indirectement par les rules
+    //   Firestore qui scopent l'accès au doc `/members/{id}`).
+    // Write : signed-in + size/MIME contraints. **Pas de cross-doc lookup
+    //   vers Firestore** (cohérent avec le pattern de ce fichier — cf.
+    //   `/club/logo`, `/accounting/invoices`). La garde réelle "qui peut
+    //   uploader" est :
+    //     - admin/treasurer : passent par leur UI qui n'écrit que via path
+    //       direct (Storage rule + size/MIME suffisent à border l'écrasement).
+    //       Le pointeur Firestore `/members/{id}.photoStoragePath` est gated
+    //       admin/treasurer côté `firestore.rules` (PR-A.bis) — un
+    //       non-autorisé peut techniquement écrire un blob mais le pointeur
+    //       Firestore restera vide, donc la photo ne s'affichera jamais dans
+    //       l'app.
+    //     - coach : passe par une **callable serveur** (`setMemberLicensePhoto`,
+    //       à livrer en PR-B/PR-C) qui valide le scope team via l'Admin SDK
+    //       (le scope `coach → member` n'est pas exprimable dans une rule
+    //       Storage — il faudrait itérer `/teams.playerIds`, ce qui est
+    //       impossible dans une rule, et le schéma `/members` ne porte pas
+    //       de `teamIds` dénormalisé).
+    //   Contraintes : taille ≤ 5 Mo, MIME `image/(jpeg|png|webp)`.
+    // Delete : signed-in. Idem write — la garde admin-only effective est
+    //   appliquée côté UI + côté Firestore pointer.
+    match /members/{memberId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isSignedIn();
     }
 
     // ------------------------------------------------------------------------

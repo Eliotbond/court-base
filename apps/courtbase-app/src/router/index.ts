@@ -2,6 +2,7 @@ import { watch } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
+import { useClubStore } from '@/stores/club'
 import { isAllowed } from './allowlist'
 
 /**
@@ -110,6 +111,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/coach/TeamPlanning.vue'),
   },
   {
+    path: '/agenda',
+    name: 'agenda',
+    component: () => import('@/views/coach/Agenda.vue'),
+  },
+  {
     path: '/bookings/:bookingId/attendance',
     name: 'training-attendance',
     component: () => import('@/views/coach/TrainingAttendance.vue'),
@@ -133,6 +139,16 @@ const routes: RouteRecordRaw[] = [
     path: '/matches/:id/move-request',
     name: 'match-request-create',
     component: () => import('@/views/coach/MatchMoveRequest.vue'),
+  },
+  {
+    path: '/license-reviews',
+    name: 'license-reviews',
+    component: () => import('@/views/coach/LicenseRequestsToReview.vue'),
+  },
+  {
+    path: '/license-reviews/:requestId',
+    name: 'license-request-review',
+    component: () => import('@/views/coach/LicenseRequestReview.vue'),
   },
 
   // ─── Officiel (O1-O4) ────────────────────────────────────────
@@ -239,6 +255,12 @@ router.beforeEach(async (to) => {
   if (requiresProfile && !auth.hasProfile) {
     return { name: 'profile-setup' }
   }
+
+  // Branding du shell — chargement fire-and-forget de `/config/club` + saison
+  // active dès qu'on a un user signed-in avec profil. Idempotent (no-op
+  // après le premier appel). Pas d'`await` : on ne bloque pas le routing —
+  // les computed du sidebar/header se mettront à jour quand le store résout.
+  void useClubStore().load()
 
   // 4. Membre lié inactif → blocker (sauf si on est déjà dessus).
   if (auth.isMemberInactive && to.name !== 'member-inactive') {

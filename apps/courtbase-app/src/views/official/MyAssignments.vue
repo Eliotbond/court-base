@@ -2,16 +2,20 @@
 /**
  * O2 — Mes assignations (officiel).
  *
- * Transcription quasi-littérale du JSX `screens/official.jsx` (O2Mobile lignes
- * 71-125 + O2Desktop lignes 127-172). Helpers JSX `O2Section` et
- * `MiniAssignmentCard` ont été inlinés ici (équivalents Vue avec les mêmes
- * `style="..."` et `class="..."` qu'en JSX).
+ * Wiring Firestore réel via `useOfficialsStore` + `useBookingsStore` (cf.
+ * `apps/courtbase-app/CLAUDE.md` § hybride mock+réel). La structure visuelle
+ * (sections collapsibles, segmented "À venir / Passées", cards) reste la
+ * transcription littérale du JSX `O2Mobile` / `O2Desktop` — seuls les
+ * bindings data ont été branchés.
  *
- * Mock only — `logMockAction(...)` pour tous les CTAs, pas de mutation.
+ * Source unique : `officialsStore.myAssignments.{pending,confirmed,declined}`.
+ * Le filtre temporel "À venir / Passées" s'applique côté JS sur la date du
+ * parent (booking HOME ou match AWAY).
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  AlertTriangle,
   Calendar,
   CalendarPlus,
   CheckCircle2,
@@ -26,122 +30,179 @@ import CbEmptyState from '@/components/ui/CbEmptyState.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
 import CbPill from '@/components/ui/CbPill.vue'
+import CbSkel from '@/components/ui/CbSkel.vue'
+import CbAssignmentActionDialog, {
+  type CbAssignmentMatchSummary,
+} from '@/components/dialogs/CbAssignmentActionDialog.vue'
+import { useActiveSeason } from '@/composables/useSeason'
 import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
-import {
-  getMatch,
-  getTeam,
-  listMyAssignments,
-  logMockAction,
-  type MockAssignment,
-  type MockMatch,
-} from '@/repositories/mock'
 import { useAuthStore } from '@/stores/auth'
-
-// ───────────────────────────────────────────────────────────────
-// État `empty` (toggle const en haut du script, conforme au brief)
-// ───────────────────────────────────────────────────────────────
-
-const MOCK_EMPTY = false
-const empty = MOCK_EMPTY
+import { useBookingsStore } from '@/stores/bookings'
+import { useOfficialsStore, type MyAssignmentEntry } from '@/stores/officials'
+import type { Timestamp } from '@club-app/shared-types'
 
 const router = useRouter()
 const auth = useAuthStore()
+const bookingsStore = useBookingsStore()
+const officialsStore = useOfficialsStore()
+const seasonStore = useActiveSeason()
 const { isDesktop } = useViewport()
-const { officialTabs, officialNav } = useShellNav()
+const { tabs, nav, primaryRoleLabel } = useShellNav()
 
 // ───────────────────────────────────────────────────────────────
-// Source de vérité : assignations du user connecté
+// Mount : hydrate bookings + officials context
 // ───────────────────────────────────────────────────────────────
 
-/**
- * MOCK only — on étoffe les assignations seed avec 2 entrées locales pour
- * pouvoir rendre les 3 sections de la maquette (Pending + Déclinées).
- */
-const LOCAL_MOCK_EXTRA: MockAssignment[] = [
-  {
-    id: 'a-local-pending',
-    matchId: 'match-amical-devils',
-    memberId: 'm-mathieu',
-    requiredLevel: 2,
-    status: 'pending',
-    createdBy: 'admin',
-  },
-  {
-    id: 'a-local-declined',
-    matchId: 'match-csjc-meyrin',
-    memberId: 'm-mathieu',
-    requiredLevel: 2,
-    status: 'declined',
-    createdBy: 'self',
-  },
-]
+const localLoading = ref(true)
 
-const memberId = computed(() => auth.linkedMember?.id ?? auth.uid ?? null)
-
-const myAssignments = computed<MockAssignment[]>(() => {
-  if (empty) return []
-  if (!memberId.value) return []
-  return [...listMyAssignments(memberId.value), ...LOCAL_MOCK_EXTRA]
-})
-
-// ───────────────────────────────────────────────────────────────
-// Enrichissement : on joint chaque assignment au match correspondant
-// ───────────────────────────────────────────────────────────────
-
-interface AssignmentView {
-  assignment: MockAssignment
-  match: MockMatch
-  dateLabel: string
-  homeTeamName: string | null
-  isPast: boolean
-}
-
-const TODAY_MOCK = new Date('2025-10-23')
-const WEEKDAY_LABELS = ['Di', 'Lu', 'Ma', 'Me', 'Je', 'Ve', 'Sa']
-const MONTH_LABELS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
-
-function formatDateLabel(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const day = WEEKDAY_LABELS[d.getDay()] ?? ''
-  const month = MONTH_LABELS[d.getMonth()] ?? ''
-  return `${day} ${d.getDate()} ${month}`
-}
-
-const assignmentViews = computed<AssignmentView[]>(() => {
-  const out: AssignmentView[] = []
-  for (const a of myAssignments.value) {
-    const m = getMatch(a.matchId)
-    if (!m) continue
-    const team = getTeam(m.teamId)
-    out.push({
-      assignment: a,
-      match: m,
-      dateLabel: formatDateLabel(m.date),
-      homeTeamName: team?.name ?? null,
-      isPast: new Date(m.date) < TODAY_MOCK,
-    })
+onMounted(async () => {
+  try {
+    await bookingsStore.loadActiveContext()
+    // `useActiveSeason().load()` est cached + déduplique via `inFlight`.
+    // Fallback `mock-season` quand pas de saison Firestore (mode mock pur).
+    const resolvedSeasonId = (await seasonStore.load()) ?? 'mock-season'
+    await officialsStore.loadOfficialContext(resolvedSeasonId)
+  } catch (err) {
+    // Erreurs déjà loggées + stockées côté stores ; ne pas propager.
+    console.error('[MyAssignments] mount failed', err)
+  } finally {
+    localLoading.value = false
   }
-  return out.sort((a, b) => a.match.date.localeCompare(b.match.date))
 })
 
-const upcoming = computed(() => assignmentViews.value.filter((v) => !v.isPast))
-const past = computed(() => assignmentViews.value.filter((v) => v.isPast))
-
-const pendingList = computed(() => upcoming.value.filter((v) => v.assignment.status === 'pending'))
-const confirmedList = computed(() => upcoming.value.filter((v) => v.assignment.status === 'confirmed'))
-const declinedList = computed(() => upcoming.value.filter((v) => v.assignment.status === 'declined'))
-
-const upcomingCount = computed(() => upcoming.value.length)
-const pastCount = computed(() => past.value.length)
+const isLoading = computed(
+  () => localLoading.value || officialsStore.loading || bookingsStore.loading,
+)
 
 // ───────────────────────────────────────────────────────────────
-// Onglets À venir / Passées (state local, mock)
+// Helpers data
+// ───────────────────────────────────────────────────────────────
+
+/** Coerce Timestamp Firestore (structurel ou SDK) en epoch ms. */
+function tsToMs(ts: Timestamp | null | undefined): number {
+  if (!ts) return 0
+  const t = ts as { seconds?: number; toMillis?: () => number }
+  if (typeof t.toMillis === 'function') return t.toMillis()
+  if (typeof t.seconds === 'number') return t.seconds * 1000
+  return 0
+}
+
+/** Epoch ms d'une entry — booking.startMs pour HOME, Timestamp.date pour AWAY. */
+function entryStartMs(entry: MyAssignmentEntry): number {
+  return entry.parent.kind === 'home'
+    ? entry.parent.booking.startMs
+    : tsToMs(entry.parent.match.date)
+}
+
+const DATE_FMT = new Intl.DateTimeFormat('fr-CH', {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+})
+
+function dateLabel(entry: MyAssignmentEntry): string {
+  const ms = entryStartMs(entry)
+  if (!ms) return ''
+  const raw = DATE_FMT.format(new Date(ms))
+  return raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+function timeLabel(entry: MyAssignmentEntry): string {
+  return entry.parent.kind === 'home'
+    ? entry.parent.booking.startTime
+    : entry.parent.match.startTime
+}
+
+function opponentLabel(entry: MyAssignmentEntry): string {
+  const raw =
+    entry.parent.kind === 'home'
+      ? entry.parent.booking.opponentName
+      : entry.parent.match.opponentName
+  return raw ?? 'Adversaire à confirmer'
+}
+
+function venueLabel(entry: MyAssignmentEntry): string {
+  if (entry.parent.kind === 'home') {
+    const b = entry.parent.booking
+    if (b.venueName && b.courtName) return `${b.venueName} · ${b.courtName}`
+    return 'Salle non attribuée'
+  }
+  return entry.parent.match.awayAddress ?? 'Adresse à confirmer'
+}
+
+function matchTypeLabel(entry: MyAssignmentEntry): string {
+  return entry.matchType?.name ?? '—'
+}
+
+function kindBadgeLabel(entry: MyAssignmentEntry): string {
+  return entry.parent.kind === 'home' ? 'Domicile' : 'Extérieur'
+}
+
+function isPast(entry: MyAssignmentEntry): boolean {
+  return entryStartMs(entry) < Date.now()
+}
+
+// ───────────────────────────────────────────────────────────────
+// Buckets : sections × filtre À venir / Passées
 // ───────────────────────────────────────────────────────────────
 
 type TabKey = 'upcoming' | 'past'
 const activeTab = ref<TabKey>('upcoming')
+
+const pendingAll = computed<ReadonlyArray<MyAssignmentEntry>>(
+  () => officialsStore.myAssignments.pending,
+)
+const confirmedAll = computed<ReadonlyArray<MyAssignmentEntry>>(
+  () => officialsStore.myAssignments.confirmed,
+)
+const declinedAll = computed<ReadonlyArray<MyAssignmentEntry>>(
+  () => officialsStore.myAssignments.declined,
+)
+
+function filterByTab(
+  list: ReadonlyArray<MyAssignmentEntry>,
+): ReadonlyArray<MyAssignmentEntry> {
+  if (activeTab.value === 'upcoming') return list.filter((e) => !isPast(e))
+  return list.filter((e) => isPast(e))
+}
+
+const pendingList = computed(() => filterByTab(pendingAll.value))
+const confirmedList = computed(() => filterByTab(confirmedAll.value))
+const declinedList = computed(() => filterByTab(declinedAll.value))
+
+const upcomingCount = computed(
+  () =>
+    pendingAll.value.filter((e) => !isPast(e)).length +
+    confirmedAll.value.filter((e) => !isPast(e)).length +
+    declinedAll.value.filter((e) => !isPast(e)).length,
+)
+const pastCount = computed(
+  () =>
+    pendingAll.value.filter(isPast).length +
+    confirmedAll.value.filter(isPast).length +
+    declinedAll.value.filter(isPast).length,
+)
+
+const isEmpty = computed(
+  () =>
+    !isLoading.value &&
+    pendingList.value.length === 0 &&
+    confirmedList.value.length === 0 &&
+    declinedList.value.length === 0,
+)
+
+// "Passées" : on n'affiche pas les 3 sections séparées mais une liste à plat
+// (cohérent avec l'ancien JSX). On agrège ici toutes les entries passées.
+const pastEntries = computed<ReadonlyArray<MyAssignmentEntry>>(() => {
+  const out: MyAssignmentEntry[] = [
+    ...pendingAll.value.filter(isPast),
+    ...confirmedAll.value.filter(isPast),
+    ...declinedAll.value.filter(isPast),
+  ]
+  out.sort((a, b) => entryStartMs(a) - entryStartMs(b))
+  return out
+})
 
 // ───────────────────────────────────────────────────────────────
 // Sections collapsibles (state local — fidélité 1:1 au JSX `O2Section`)
@@ -152,32 +213,147 @@ const openConfirmed = ref(true)
 const openDeclined = ref(false)
 
 // ───────────────────────────────────────────────────────────────
-// Handlers (Phase 1 wiring TBD — log only)
+// Toast UX (même pattern que `LicenseRequestReview.vue`)
 // ───────────────────────────────────────────────────────────────
 
-function goToMatch(assignmentId: string, matchId: string): void {
-  logMockAction('o2.openMatch', { assignmentId, matchId })
-  router.push({ name: 'match-detail', params: { id: matchId } })
+interface ToastState {
+  tone: 'emerald' | 'rose' | 'sky'
+  message: string
+  visible: boolean
+}
+const toast = ref<ToastState>({ tone: 'sky', message: '', visible: false })
+
+function showToast(tone: ToastState['tone'], message: string): void {
+  toast.value = { tone, message, visible: true }
+  window.setTimeout(() => {
+    toast.value = { ...toast.value, visible: false }
+  }, 3500)
 }
 
-function onConfirm(assignmentId: string): void {
-  logMockAction('o2.confirm', { assignmentId })
+// ───────────────────────────────────────────────────────────────
+// Action : confirmer
+// ───────────────────────────────────────────────────────────────
+
+const submittingId = ref<string | null>(null)
+
+async function onConfirm(entry: MyAssignmentEntry): Promise<void> {
+  if (submittingId.value) return
+  submittingId.value = entry.assignment.id
+  try {
+    await officialsStore.respond({
+      kind: entry.parent.kind,
+      parentId:
+        entry.parent.kind === 'home'
+          ? entry.parent.booking.id
+          : entry.parent.match.id,
+      assignmentId: entry.assignment.id,
+      status: 'confirmed',
+    })
+    showToast('emerald', 'Assignation confirmée')
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[MyAssignments.confirm] failed', err)
+    showToast('rose', `Échec : ${message}`)
+  } finally {
+    submittingId.value = null
+  }
 }
 
-function onDecline(assignmentId: string): void {
-  logMockAction('o2.decline', { assignmentId })
+// ───────────────────────────────────────────────────────────────
+// Action : décliner (via CbAssignmentActionDialog mode='decline')
+// ───────────────────────────────────────────────────────────────
+
+const declineDialogOpen = ref(false)
+const declineTarget = ref<MyAssignmentEntry | null>(null)
+
+const declineSummary = computed<CbAssignmentMatchSummary>(() => {
+  const entry = declineTarget.value
+  if (!entry) {
+    return {
+      dateLabel: '',
+      time: '',
+      opponent: '',
+      venueLabel: '',
+      type: '',
+    }
+  }
+  return {
+    dateLabel: dateLabel(entry),
+    time: timeLabel(entry),
+    opponent: opponentLabel(entry),
+    venueLabel: venueLabel(entry),
+    type: matchTypeLabel(entry),
+  }
+})
+
+function openDecline(entry: MyAssignmentEntry): void {
+  declineTarget.value = entry
+  declineDialogOpen.value = true
 }
 
-function onAddToCalendar(assignmentId: string): void {
-  logMockAction('o2.addToCalendar', { assignmentId })
+async function submitDecline(): Promise<void> {
+  const entry = declineTarget.value
+  if (!entry || submittingId.value) return
+  // NB : le textarea du dialog reste UX-only — la callable/rule n'accepte que
+  // `[status, respondedAt]` (cf. brief). Le motif n'est PAS persisté côté store.
+  submittingId.value = entry.assignment.id
+  try {
+    await officialsStore.respond({
+      kind: entry.parent.kind,
+      parentId:
+        entry.parent.kind === 'home'
+          ? entry.parent.booking.id
+          : entry.parent.match.id,
+      assignmentId: entry.assignment.id,
+      status: 'declined',
+    })
+    declineDialogOpen.value = false
+    declineTarget.value = null
+    showToast('rose', 'Assignation refusée, admin notifié')
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[MyAssignments.decline] failed', err)
+    showToast('rose', `Échec : ${message}`)
+  } finally {
+    submittingId.value = null
+  }
 }
 
-function onReapply(assignmentId: string): void {
-  logMockAction('o2.reapply', { assignmentId })
+function cancelDecline(): void {
+  declineDialogOpen.value = false
+  declineTarget.value = null
 }
 
-function onMore(assignmentId: string): void {
-  logMockAction('o2.more', { assignmentId })
+// ───────────────────────────────────────────────────────────────
+// Autres actions
+// ───────────────────────────────────────────────────────────────
+
+function onAddToCalendar(entry: MyAssignmentEntry): void {
+  // TODO Phase 5 — exporter en .ics ou ajouter au calendrier natif via deep
+  // link. Pas de spec backend MVP, on log uniquement pour l'instant.
+  console.info('[MyAssignments] add to calendar (TBD)', entry.assignment.id)
+}
+
+function onReapply(entry: MyAssignmentEntry): void {
+  // Re-postuler : l'inscription se fait sur la vue détail (match-detail).
+  goToMatch(entry)
+}
+
+function onMore(entry: MyAssignmentEntry): void {
+  // TODO — menu kebab pas spécifié MVP. Stub pour rester fidèle au JSX.
+  console.info('[MyAssignments] kebab (TBD)', entry.assignment.id)
+}
+
+// ───────────────────────────────────────────────────────────────
+// Navigation
+// ───────────────────────────────────────────────────────────────
+
+function goToMatch(entry: MyAssignmentEntry): void {
+  const id =
+    entry.parent.kind === 'home'
+      ? entry.parent.booking.id
+      : entry.parent.match.id
+  router.push({ name: 'match-detail', params: { id } })
 }
 
 function goNotifications(): void {
@@ -194,6 +370,12 @@ function onNavSelect(i: number): void {
   else if (i === 1) router.push({ name: 'matches-open' })
   else if (i === 3) router.push({ name: 'notifications' })
 }
+
+// Sert pour de futures gates (officialLevel sous-titre desktop).
+const officialLevelLabel = computed<string>(() => {
+  const lvl = auth.officialLevel
+  return lvl ? `Niveau ${lvl}` : 'Officiel'
+})
 </script>
 
 <template>
@@ -202,12 +384,11 @@ function onNavSelect(i: number): void {
     v-if="!isDesktop"
     title="Mes assignations"
     notif-badge
-    :tabs="officialTabs"
-    :active-tab="1"
+    :tabs="tabs"
     @notif-click="goNotifications"
     @tab-select="onTabSelect"
   >
-    <!-- Segmented "À venir · 4 / Passées · 18" (JSX 73-83) -->
+    <!-- Segmented "À venir · N / Passées · N" -->
     <div style="display: flex; padding: 0 16px; background: var(--bg); gap: 16px; border-bottom: 1px solid var(--border)">
       <button
         type="button"
@@ -247,20 +428,34 @@ function onNavSelect(i: number): void {
       </button>
     </div>
 
-    <!-- Empty state (JSX 84-85) -->
+    <!-- Loading : skeletons -->
+    <div
+      v-if="isLoading"
+      style="flex: 1; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 12px"
+    >
+      <div v-for="i in 3" :key="i" class="cb-card" style="padding: 12px">
+        <CbSkel w="40%" :h="14" />
+        <div style="height: 8px" />
+        <CbSkel w="65%" :h="14" />
+        <div style="height: 8px" />
+        <CbSkel w="80%" :h="12" />
+      </div>
+    </div>
+
+    <!-- Empty state (toutes sections vides + pas de loading) -->
     <CbEmptyState
-      v-if="empty"
+      v-else-if="isEmpty"
       :icon="Calendar"
       title="Aucune assignation"
       body="Inscrivez-vous sur un match à pourvoir pour commencer."
     />
 
-    <!-- Sections (JSX 87-122) -->
+    <!-- Onglet "À venir" : 3 sections collapsibles -->
     <div
       v-else-if="activeTab === 'upcoming'"
       style="flex: 1; overflow: auto; padding: 6px 0 16px"
     >
-      <!-- O2Section "Pending" tone="amber" count="1" -->
+      <!-- O2Section "Pending" tone="amber" -->
       <div style="display: flex; flex-direction: column">
         <button
           type="button"
@@ -292,36 +487,41 @@ function onNavSelect(i: number): void {
           v-if="openPending"
           style="padding: 0 16px 6px; display: flex; flex-direction: column; gap: 10px"
         >
-          <!-- MiniAssignmentCard (JSX 89-96) -->
           <div
-            v-for="v in pendingList"
-            :key="v.assignment.id"
+            v-for="entry in pendingList"
+            :key="entry.assignment.id"
             class="cb-card"
             style="padding: 12px; cursor: pointer"
-            @click="goToMatch(v.assignment.id, v.match.id)"
+            @click="goToMatch(entry)"
           >
             <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
               <div style="flex: 1">
-                <div class="mono" style="font-weight: 700; font-size: 13px">{{ v.dateLabel }} · {{ v.match.startTime }}</div>
-                <div style="font-weight: 600; margin-top: 2px">{{ v.match.opponent }}</div>
-                <div class="cb-sub" style="margin-top: 2px">{{ v.match.venueLabel }}</div>
+                <div class="mono" style="font-weight: 700; font-size: 13px">{{ dateLabel(entry) }} · {{ timeLabel(entry) }}</div>
+                <div style="font-weight: 600; margin-top: 2px">{{ opponentLabel(entry) }}</div>
+                <div v-if="entry.team?.name" class="cb-sub" style="margin-top: 2px">{{ entry.team.name }}</div>
+                <div class="cb-sub" style="margin-top: 2px">{{ venueLabel(entry) }}</div>
               </div>
               <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
-                <CbPill tone="violet">{{ v.match.matchType }}</CbPill>
+                <CbPill tone="violet">{{ matchTypeLabel(entry) }}</CbPill>
+                <CbPill :tone="entry.parent.kind === 'home' ? 'emerald' : 'sky'">{{ kindBadgeLabel(entry) }}</CbPill>
               </div>
             </div>
             <div style="display: flex; gap: 6px; margin-top: 10px" @click.stop>
               <button
+                type="button"
                 class="cb-btn outline sm"
                 style="flex: 1"
-                @click="onDecline(v.assignment.id)"
+                :disabled="submittingId === entry.assignment.id"
+                @click="openDecline(entry)"
               >
                 <XCircle :size="14" /> Décliner
               </button>
               <button
+                type="button"
                 class="cb-btn primary sm"
                 style="flex: 2"
-                @click="onConfirm(v.assignment.id)"
+                :disabled="submittingId === entry.assignment.id"
+                @click="onConfirm(entry)"
               >
                 <CheckCircle2 :size="14" /> Confirmer
               </button>
@@ -332,7 +532,7 @@ function onNavSelect(i: number): void {
 
       <div class="cb-div" />
 
-      <!-- O2Section "Confirmées" tone="emerald" count="2" -->
+      <!-- O2Section "Confirmées" tone="emerald" -->
       <div style="display: flex; flex-direction: column">
         <button
           type="button"
@@ -365,27 +565,30 @@ function onNavSelect(i: number): void {
           style="padding: 0 16px 6px; display: flex; flex-direction: column; gap: 10px"
         >
           <div
-            v-for="v in confirmedList"
-            :key="v.assignment.id"
+            v-for="entry in confirmedList"
+            :key="entry.assignment.id"
             class="cb-card"
             style="padding: 12px; cursor: pointer"
-            @click="goToMatch(v.assignment.id, v.match.id)"
+            @click="goToMatch(entry)"
           >
             <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
               <div style="flex: 1">
-                <div class="mono" style="font-weight: 700; font-size: 13px">{{ v.dateLabel }} · {{ v.match.startTime }}</div>
-                <div style="font-weight: 600; margin-top: 2px">{{ v.match.opponent }}</div>
-                <div class="cb-sub" style="margin-top: 2px">{{ v.match.venueLabel }}</div>
+                <div class="mono" style="font-weight: 700; font-size: 13px">{{ dateLabel(entry) }} · {{ timeLabel(entry) }}</div>
+                <div style="font-weight: 600; margin-top: 2px">{{ opponentLabel(entry) }}</div>
+                <div v-if="entry.team?.name" class="cb-sub" style="margin-top: 2px">{{ entry.team.name }}</div>
+                <div class="cb-sub" style="margin-top: 2px">{{ venueLabel(entry) }}</div>
               </div>
               <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
-                <CbPill tone="violet">{{ v.match.matchType }}</CbPill>
+                <CbPill tone="violet">{{ matchTypeLabel(entry) }}</CbPill>
+                <CbPill :tone="entry.parent.kind === 'home' ? 'emerald' : 'sky'">{{ kindBadgeLabel(entry) }}</CbPill>
               </div>
             </div>
             <div style="display: flex; gap: 6px; margin-top: 10px" @click.stop>
               <button
+                type="button"
                 class="cb-btn outline sm"
                 style="flex: 1"
-                @click="onAddToCalendar(v.assignment.id)"
+                @click="onAddToCalendar(entry)"
               >
                 <CalendarPlus :size="14" /> Calendrier
               </button>
@@ -393,7 +596,7 @@ function onNavSelect(i: number): void {
                 class="cb-iconbtn"
                 type="button"
                 aria-label="Plus d'options"
-                @click="onMore(v.assignment.id)"
+                @click="onMore(entry)"
               >
                 <MoreVertical :size="16" />
               </button>
@@ -404,7 +607,7 @@ function onNavSelect(i: number): void {
 
       <div class="cb-div" />
 
-      <!-- O2Section "Déclinées" tone="slate" count="1" defaultOpen={false} -->
+      <!-- O2Section "Déclinées" tone="slate" -->
       <div style="display: flex; flex-direction: column">
         <button
           type="button"
@@ -437,24 +640,26 @@ function onNavSelect(i: number): void {
           style="padding: 0 16px 6px; display: flex; flex-direction: column; gap: 10px"
         >
           <div
-            v-for="v in declinedList"
-            :key="v.assignment.id"
+            v-for="entry in declinedList"
+            :key="entry.assignment.id"
             class="cb-card"
             style="padding: 12px; cursor: pointer"
-            @click="goToMatch(v.assignment.id, v.match.id)"
+            @click="goToMatch(entry)"
           >
             <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
               <div style="flex: 1">
-                <div class="mono" style="font-weight: 700; font-size: 13px">{{ v.dateLabel }} · {{ v.match.startTime }}</div>
-                <div style="font-weight: 600; margin-top: 2px">{{ v.match.opponent }}</div>
-                <div class="cb-sub" style="margin-top: 2px">{{ v.match.venueLabel }}</div>
+                <div class="mono" style="font-weight: 700; font-size: 13px">{{ dateLabel(entry) }} · {{ timeLabel(entry) }}</div>
+                <div style="font-weight: 600; margin-top: 2px">{{ opponentLabel(entry) }}</div>
+                <div v-if="entry.team?.name" class="cb-sub" style="margin-top: 2px">{{ entry.team.name }}</div>
+                <div class="cb-sub" style="margin-top: 2px">{{ venueLabel(entry) }}</div>
               </div>
               <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
-                <CbPill tone="violet">{{ v.match.matchType }}</CbPill>
+                <CbPill tone="violet">{{ matchTypeLabel(entry) }}</CbPill>
+                <CbPill :tone="entry.parent.kind === 'home' ? 'emerald' : 'sky'">{{ kindBadgeLabel(entry) }}</CbPill>
               </div>
             </div>
             <div style="display: flex; gap: 6px; margin-top: 10px" @click.stop>
-              <button class="cb-btn ghost sm" @click="onReapply(v.assignment.id)">
+              <button type="button" class="cb-btn ghost sm" @click="onReapply(entry)">
                 Re-postuler
               </button>
             </div>
@@ -463,26 +668,34 @@ function onNavSelect(i: number): void {
       </div>
     </div>
 
-    <!-- Onglet "Passées" (hors JSX d'origine, mais cohérent avec le segmented) -->
+    <!-- Onglet "Passées" : liste à plat -->
     <div
       v-else
       style="flex: 1; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px"
     >
+      <CbEmptyState
+        v-if="pastEntries.length === 0"
+        :icon="Calendar"
+        title="Aucune assignation passée"
+        body="L'historique de vos assignations apparaîtra ici."
+      />
       <div
-        v-for="v in past"
-        :key="v.assignment.id"
+        v-for="entry in pastEntries"
+        :key="entry.assignment.id"
         class="cb-card"
         style="padding: 12px; cursor: pointer"
-        @click="goToMatch(v.assignment.id, v.match.id)"
+        @click="goToMatch(entry)"
       >
         <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
           <div style="flex: 1">
-            <div class="mono" style="font-weight: 700; font-size: 13px">{{ v.dateLabel }} · {{ v.match.startTime }}</div>
-            <div style="font-weight: 600; margin-top: 2px">{{ v.match.opponent }}</div>
-            <div class="cb-sub" style="margin-top: 2px">{{ v.match.venueLabel }}</div>
+            <div class="mono" style="font-weight: 700; font-size: 13px">{{ dateLabel(entry) }} · {{ timeLabel(entry) }}</div>
+            <div style="font-weight: 600; margin-top: 2px">{{ opponentLabel(entry) }}</div>
+            <div v-if="entry.team?.name" class="cb-sub" style="margin-top: 2px">{{ entry.team.name }}</div>
+            <div class="cb-sub" style="margin-top: 2px">{{ venueLabel(entry) }}</div>
           </div>
           <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
-            <CbPill tone="violet">{{ v.match.matchType }}</CbPill>
+            <CbPill tone="violet">{{ matchTypeLabel(entry) }}</CbPill>
+            <CbPill :tone="entry.parent.kind === 'home' ? 'emerald' : 'sky'">{{ kindBadgeLabel(entry) }}</CbPill>
           </div>
         </div>
       </div>
@@ -492,13 +705,13 @@ function onNavSelect(i: number): void {
   <!-- ─── O2Desktop (JSX lignes 127-172) ────────────────────────── -->
   <CbDesktopShell
     v-else
-    :items="officialNav"
-    :active="2"
+    :items="nav"
+    :user-role="primaryRoleLabel"
     @nav-select="onNavSelect"
   >
     <CbPageHead
       title="Mes assignations"
-      subtitle="Niveau 2 · 4 à venir · 18 passées"
+      :subtitle="`${officialLevelLabel} · ${upcomingCount} à venir · ${pastCount} passées`"
     >
       <template #actions>
         <div class="cb-segmented">
@@ -508,40 +721,92 @@ function onNavSelect(i: number): void {
       </template>
     </CbPageHead>
 
+    <!-- Loading desktop -->
     <div
+      v-if="isLoading"
       style="flex: 1; overflow: auto; padding: 24px; background: var(--bg-muted); display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: start"
     >
-      <!-- Col Pending (JSX 135-146) -->
+      <div v-for="col in 3" :key="col">
+        <CbSkel w="40%" :h="16" />
+        <div style="height: 12px" />
+        <div v-for="i in 2" :key="i" class="cb-card" style="padding: 12px; margin-bottom: 12px">
+          <CbSkel w="50%" :h="14" />
+          <div style="height: 6px" />
+          <CbSkel w="80%" :h="14" />
+          <div style="height: 6px" />
+          <CbSkel w="65%" :h="12" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty -->
+    <div
+      v-else-if="isEmpty"
+      style="flex: 1; overflow: auto; padding: 24px; background: var(--bg-muted)"
+    >
+      <CbEmptyState
+        :icon="Calendar"
+        title="Aucune assignation"
+        body="Inscrivez-vous sur un match à pourvoir pour commencer."
+      />
+    </div>
+
+    <!-- "À venir" : grid 3 colonnes -->
+    <div
+      v-else-if="activeTab === 'upcoming'"
+      style="flex: 1; overflow: auto; padding: 24px; background: var(--bg-muted); display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: start"
+    >
+      <!-- Col Pending -->
       <div>
         <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px 10px">
           <CbPill tone="amber" dot>Pending</CbPill>
           <span class="mono" style="font-size: 12px; color: var(--text-subtle); font-weight: 600">{{ pendingList.length }}</span>
         </div>
-        <div
-          v-for="v in pendingList"
-          :key="v.assignment.id"
-          class="cb-card"
-          style="padding: 12px; cursor: pointer"
-          @click="goToMatch(v.assignment.id, v.match.id)"
-        >
-          <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
-            <div style="flex: 1">
-              <div class="mono" style="font-weight: 700; font-size: 13px">{{ v.dateLabel }} · {{ v.match.startTime }}</div>
-              <div style="font-weight: 600; margin-top: 2px">{{ v.match.opponent }}</div>
-              <div class="cb-sub" style="margin-top: 2px">{{ v.match.venueLabel }}</div>
+        <div style="display: flex; flex-direction: column; gap: 10px">
+          <div
+            v-for="entry in pendingList"
+            :key="entry.assignment.id"
+            class="cb-card"
+            style="padding: 12px; cursor: pointer"
+            @click="goToMatch(entry)"
+          >
+            <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
+              <div style="flex: 1">
+                <div class="mono" style="font-weight: 700; font-size: 13px">{{ dateLabel(entry) }} · {{ timeLabel(entry) }}</div>
+                <div style="font-weight: 600; margin-top: 2px">{{ opponentLabel(entry) }}</div>
+                <div v-if="entry.team?.name" class="cb-sub" style="margin-top: 2px">{{ entry.team.name }}</div>
+                <div class="cb-sub" style="margin-top: 2px">{{ venueLabel(entry) }}</div>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
+                <CbPill tone="violet">{{ matchTypeLabel(entry) }}</CbPill>
+                <CbPill :tone="entry.parent.kind === 'home' ? 'emerald' : 'sky'">{{ kindBadgeLabel(entry) }}</CbPill>
+              </div>
             </div>
-            <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
-              <CbPill tone="violet">{{ v.match.matchType }}</CbPill>
+            <div style="display: flex; gap: 6px; margin-top: 10px" @click.stop>
+              <button
+                type="button"
+                class="cb-btn outline sm"
+                style="flex: 1"
+                :disabled="submittingId === entry.assignment.id"
+                @click="openDecline(entry)"
+              >
+                Décliner
+              </button>
+              <button
+                type="button"
+                class="cb-btn primary sm"
+                style="flex: 2"
+                :disabled="submittingId === entry.assignment.id"
+                @click="onConfirm(entry)"
+              >
+                Confirmer
+              </button>
             </div>
-          </div>
-          <div style="display: flex; gap: 6px; margin-top: 10px" @click.stop>
-            <button class="cb-btn outline sm" style="flex: 1" @click="onDecline(v.assignment.id)">Décliner</button>
-            <button class="cb-btn primary sm" style="flex: 2" @click="onConfirm(v.assignment.id)">Confirmer</button>
           </div>
         </div>
       </div>
 
-      <!-- Col Confirmées (JSX 147-160) -->
+      <!-- Col Confirmées -->
       <div>
         <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px 10px">
           <CbPill tone="emerald" dot>Confirmées</CbPill>
@@ -549,24 +814,26 @@ function onNavSelect(i: number): void {
         </div>
         <div style="display: flex; flex-direction: column; gap: 10px">
           <div
-            v-for="v in confirmedList"
-            :key="v.assignment.id"
+            v-for="entry in confirmedList"
+            :key="entry.assignment.id"
             class="cb-card"
             style="padding: 12px; cursor: pointer"
-            @click="goToMatch(v.assignment.id, v.match.id)"
+            @click="goToMatch(entry)"
           >
             <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
               <div style="flex: 1">
-                <div class="mono" style="font-weight: 700; font-size: 13px">{{ v.dateLabel }} · {{ v.match.startTime }}</div>
-                <div style="font-weight: 600; margin-top: 2px">{{ v.match.opponent }}</div>
-                <div class="cb-sub" style="margin-top: 2px">{{ v.match.venueLabel }}</div>
+                <div class="mono" style="font-weight: 700; font-size: 13px">{{ dateLabel(entry) }} · {{ timeLabel(entry) }}</div>
+                <div style="font-weight: 600; margin-top: 2px">{{ opponentLabel(entry) }}</div>
+                <div v-if="entry.team?.name" class="cb-sub" style="margin-top: 2px">{{ entry.team.name }}</div>
+                <div class="cb-sub" style="margin-top: 2px">{{ venueLabel(entry) }}</div>
               </div>
               <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
-                <CbPill tone="violet">{{ v.match.matchType }}</CbPill>
+                <CbPill tone="violet">{{ matchTypeLabel(entry) }}</CbPill>
+                <CbPill :tone="entry.parent.kind === 'home' ? 'emerald' : 'sky'">{{ kindBadgeLabel(entry) }}</CbPill>
               </div>
             </div>
             <div style="display: flex; gap: 6px; margin-top: 10px" @click.stop>
-              <button class="cb-btn outline sm" style="flex: 1" @click="onAddToCalendar(v.assignment.id)">
+              <button type="button" class="cb-btn outline sm" style="flex: 1" @click="onAddToCalendar(entry)">
                 <CalendarPlus :size="14" /> Ajouter au calendrier
               </button>
             </div>
@@ -574,34 +841,143 @@ function onNavSelect(i: number): void {
         </div>
       </div>
 
-      <!-- Col Déclinées (JSX 161-169) -->
+      <!-- Col Déclinées -->
       <div>
         <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px 10px">
           <CbPill tone="slate" dot>Déclinées</CbPill>
           <span class="mono" style="font-size: 12px; color: var(--text-subtle); font-weight: 600">{{ declinedList.length }}</span>
         </div>
+        <div style="display: flex; flex-direction: column; gap: 10px">
+          <div
+            v-for="entry in declinedList"
+            :key="entry.assignment.id"
+            class="cb-card"
+            style="padding: 12px; cursor: pointer"
+            @click="goToMatch(entry)"
+          >
+            <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
+              <div style="flex: 1">
+                <div class="mono" style="font-weight: 700; font-size: 13px">{{ dateLabel(entry) }} · {{ timeLabel(entry) }}</div>
+                <div style="font-weight: 600; margin-top: 2px">{{ opponentLabel(entry) }}</div>
+                <div v-if="entry.team?.name" class="cb-sub" style="margin-top: 2px">{{ entry.team.name }}</div>
+                <div class="cb-sub" style="margin-top: 2px">{{ venueLabel(entry) }}</div>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
+                <CbPill tone="violet">{{ matchTypeLabel(entry) }}</CbPill>
+                <CbPill :tone="entry.parent.kind === 'home' ? 'emerald' : 'sky'">{{ kindBadgeLabel(entry) }}</CbPill>
+              </div>
+            </div>
+            <div style="display: flex; gap: 6px; margin-top: 10px" @click.stop>
+              <button type="button" class="cb-btn ghost sm" @click="onReapply(entry)">Re-postuler</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- "Passées" desktop : liste à plat dans un container max-width -->
+    <div
+      v-else
+      style="flex: 1; overflow: auto; padding: 24px; background: var(--bg-muted)"
+    >
+      <div
+        style="max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px"
+      >
+        <CbEmptyState
+          v-if="pastEntries.length === 0"
+          :icon="Calendar"
+          title="Aucune assignation passée"
+          body="L'historique de vos assignations apparaîtra ici."
+        />
         <div
-          v-for="v in declinedList"
-          :key="v.assignment.id"
+          v-for="entry in pastEntries"
+          :key="entry.assignment.id"
           class="cb-card"
           style="padding: 12px; cursor: pointer"
-          @click="goToMatch(v.assignment.id, v.match.id)"
+          @click="goToMatch(entry)"
         >
           <div style="display: flex; justify-content: space-between; gap: 10px; align-items: flex-start">
             <div style="flex: 1">
-              <div class="mono" style="font-weight: 700; font-size: 13px">{{ v.dateLabel }} · {{ v.match.startTime }}</div>
-              <div style="font-weight: 600; margin-top: 2px">{{ v.match.opponent }}</div>
-              <div class="cb-sub" style="margin-top: 2px">{{ v.match.venueLabel }}</div>
+              <div class="mono" style="font-weight: 700; font-size: 13px">{{ dateLabel(entry) }} · {{ timeLabel(entry) }}</div>
+              <div style="font-weight: 600; margin-top: 2px">{{ opponentLabel(entry) }}</div>
+              <div v-if="entry.team?.name" class="cb-sub" style="margin-top: 2px">{{ entry.team.name }}</div>
+              <div class="cb-sub" style="margin-top: 2px">{{ venueLabel(entry) }}</div>
             </div>
             <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
-              <CbPill tone="violet">{{ v.match.matchType }}</CbPill>
+              <CbPill tone="violet">{{ matchTypeLabel(entry) }}</CbPill>
+              <CbPill :tone="entry.parent.kind === 'home' ? 'emerald' : 'sky'">{{ kindBadgeLabel(entry) }}</CbPill>
             </div>
-          </div>
-          <div style="display: flex; gap: 6px; margin-top: 10px" @click.stop>
-            <button class="cb-btn ghost sm" @click="onReapply(v.assignment.id)">Re-postuler</button>
           </div>
         </div>
       </div>
     </div>
   </CbDesktopShell>
+
+  <!-- Dialog refus ─────────────────────────────────────────────── -->
+  <CbAssignmentActionDialog
+    v-model:visible="declineDialogOpen"
+    mode="decline"
+    :match-summary="declineSummary"
+    :submitting="submittingId !== null"
+    @submit="submitDecline"
+    @cancel="cancelDecline"
+  />
+
+  <!-- Toast UX ─────────────────────────────────────────────────── -->
+  <Teleport to="body">
+    <Transition name="cb-toast">
+      <div
+        v-if="toast.visible"
+        class="cb-o2-toast"
+        :class="`tone-${toast.tone}`"
+        role="status"
+      >
+        <component
+          :is="toast.tone === 'rose' ? AlertTriangle : toast.tone === 'sky' ? Calendar : CheckCircle2"
+          :size="16"
+        />
+        <span>{{ toast.message }}</span>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
+
+<style scoped>
+.cb-o2-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.18);
+  z-index: 1100;
+  max-width: calc(100vw - 32px);
+}
+.cb-o2-toast.tone-emerald {
+  background: var(--emerald-500, #10b981);
+  color: #fff;
+}
+.cb-o2-toast.tone-rose {
+  background: var(--rose-500, #f43f5e);
+  color: #fff;
+}
+.cb-o2-toast.tone-sky {
+  background: var(--sky-500, #0ea5e9);
+  color: #fff;
+}
+.cb-toast-enter-active,
+.cb-toast-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.cb-toast-enter-from,
+.cb-toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
+</style>

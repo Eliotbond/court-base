@@ -44,7 +44,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const teamsStore = useTeamsStore()
 const { isDesktop } = useViewport()
-const { coachTabs, coachNav } = useShellNav()
+const { tabs, nav } = useShellNav()
 
 // Charge à l'init. Si le user a un `memberId` réel (userDoc.memberId), on
 // frappe Firestore ; sinon on retombe sur le mock pour le mode démo.
@@ -176,7 +176,7 @@ function openTeam(teamId: string): void {
 
 <template>
   <!-- Desktop shell (≥1024px) — CO1Desktop ────────────────────── -->
-  <CbDesktopShell v-if="isDesktop" :items="coachNav" :active="1">
+  <CbDesktopShell v-if="isDesktop" :items="nav">
     <CbPageHead title="Mes équipes" :subtitle="subheaderLabel" />
 
     <!-- Toolbar desktop : search + chips ─────────────────────── -->
@@ -307,7 +307,7 @@ function openTeam(teamId: string): void {
   </CbDesktopShell>
 
   <!-- Mobile shell (< 1024px) — CO1Mobile ─────────────────────── -->
-  <CbMobileShell v-else title="Mes équipes" :tabs="coachTabs" :active-tab="0">
+  <CbMobileShell v-else title="Mes équipes" :tabs="tabs">
     <div class="cb-page">
       <!-- Sub-header dynamique ───────────────────────────────── -->
       <div class="cb-sub" style="font-size: 12px">

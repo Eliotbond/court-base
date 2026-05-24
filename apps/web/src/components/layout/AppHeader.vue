@@ -79,6 +79,13 @@ function toggleUserMenu(event: MouseEvent): void {
         ⌘K
       </span>
     </div>
+    <!--
+      Bouton notifications — pas de compteur tant qu'il n'existe pas de store
+      "non lues" côté web. Le repo `notifications.repo.ts` est write-only pour
+      l'admin ; la lecture par utilisateur (status `readBy`) n'a pas encore de
+      store. Le badge rouge hardcoded `5` a été retiré pour éviter d'afficher
+      une info fictive — le rajouter dès qu'un getter pertinent existe.
+    -->
     <button
       type="button"
       class="btn btn-ghost btn-sm relative"
@@ -87,11 +94,6 @@ function toggleUserMenu(event: MouseEvent): void {
         :size="16"
         :stroke-width="2"
       />
-      <span
-        class="absolute -top-0.5 -right-0.5 w-4 h-4 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center"
-      >
-        5
-      </span>
     </button>
     <button
       type="button"

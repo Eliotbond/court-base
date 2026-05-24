@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { FileText, RefreshCw, Trash2, Upload } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { Camera, FileText, RefreshCw, Trash2, Upload } from 'lucide-vue-next'
 
 export type UploadState =
   | { kind: 'empty' }
@@ -28,9 +28,23 @@ const emit = defineEmits<{
 }>()
 
 const inputRef = ref<HTMLInputElement | null>(null)
+const cameraInputRef = ref<HTMLInputElement | null>(null)
+
+// On affiche le bouton "Prendre une photo" SAUF si la prop `accept` exclut
+// explicitement les images (ex. accept="application/pdf"). Si `accept`
+// contient image/, le wildcard MIME, ou est absent → photo dispo.
+const showCameraButton = computed(() => {
+  const a = props.accept ?? ''
+  if (!a) return true
+  return /image\//i.test(a) || a.includes('*/*')
+})
 
 function openPicker() {
   inputRef.value?.click()
+}
+
+function openCamera() {
+  cameraInputRef.value?.click()
 }
 
 function onChange(event: Event) {
@@ -64,18 +78,36 @@ function humanSize(bytes: number): string {
       class="doc-tile__input"
       @change="onChange"
     />
+    <input
+      ref="cameraInputRef"
+      type="file"
+      accept="image/*"
+      capture="environment"
+      class="doc-tile__input"
+      @change="onChange"
+    />
 
     <template v-if="file.kind === 'empty'">
       <Upload :size="24" class="doc-tile__icon" />
       <div class="doc-tile__label">{{ label }}</div>
       <p v-if="helper" class="doc-tile__helper">{{ helper }}</p>
-      <button
-        type="button"
-        class="btn btn-secondary btn-sm doc-tile__cta"
-        @click="openPicker"
-      >
-        Choisir un fichier
-      </button>
+      <div class="doc-tile__cta-row">
+        <button
+          v-if="showCameraButton"
+          type="button"
+          class="btn btn-secondary btn-sm doc-tile__cta"
+          @click="openCamera"
+        >
+          <Camera :size="14" /> Prendre une photo
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm doc-tile__cta"
+          @click="openPicker"
+        >
+          <Upload :size="14" /> Choisir un fichier
+        </button>
+      </div>
     </template>
 
     <template v-else-if="file.kind === 'uploading'">
@@ -146,8 +178,17 @@ function humanSize(bytes: number): string {
   margin: 0;
   line-height: 1.5;
 }
-.doc-tile__cta {
+.doc-tile__cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
   margin-top: 4px;
+}
+.doc-tile__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .doc-tile__row {
   display: flex;

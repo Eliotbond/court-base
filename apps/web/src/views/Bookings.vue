@@ -23,6 +23,7 @@ import TabPanel from 'primevue/tabpanel'
 import VueCal, { type VueCalEvent, type VueCalSplit } from 'vue-cal'
 import 'vue-cal/dist/vuecal.css'
 import { useBookingsStore } from '@/stores/bookings'
+import { useTeamsStore } from '@/stores/teams'
 import type { BookingRow } from '@/repositories/bookings.repo'
 import type {
   BookingActionLogEntry,
@@ -36,6 +37,7 @@ import BookingFormDialog from '@/components/bookings/BookingFormDialog.vue'
 import BookingListPanel from '@/components/bookings/BookingListPanel.vue'
 
 const store = useBookingsStore()
+const teamsStore = useTeamsStore()
 
 // ---------------------------------------------------------------------------
 // Onglets : planning (vue calendrier vue-cal) + list (toutes les réservations).
@@ -46,7 +48,22 @@ const activeTab = ref<'planning' | 'list'>('planning')
 onMounted(async () => {
   // `loadActiveContext` charge saison + venues + tous les bookings/séries
   // de la saison en une seule passe. vue-cal consomme ensuite la même source.
-  await store.loadActiveContext()
+  // Les équipes sont chargées en parallèle pour résoudre `coachLabels` lookup
+  // (affiché dans le `content` de chaque event). Idempotent côté store.
+  await Promise.all([store.loadActiveContext(), teamsStore.load()])
+})
+
+// Lookup teamId → premier coach (avec suffixe "+N" si plusieurs). Map
+// reconstruit à chaque mutation du store teams ; coût négligeable (<200 docs).
+const coachByTeamId = computed<Map<string, string>>(() => {
+  const m = new Map<string, string>()
+  for (const t of teamsStore.teams) {
+    const labels = t.coachLabels
+    if (labels.length === 0) continue
+    const head = labels[0]!
+    m.set(t.id, labels.length > 1 ? `${head} +${labels.length - 1}` : head)
+  }
+  return m
 })
 
 // ---------------------------------------------------------------------------
@@ -64,13 +81,39 @@ function startOfWeek(from: Date): Date {
 }
 
 const selectedDate = ref<Date>(new Date())
-const activeView = ref<'day' | 'week' | 'month'>('day')
+const activeView = ref<'day' | 'week' | 'month'>('week')
 
 /** Heure d'ouverture du planning — 06:00 → 22:00, pas de 30 min. */
 const TIME_FROM = 6 * 60
 const TIME_TO = 22 * 60
 const TIME_STEP = 30
 const TIME_CELL_HEIGHT = 36
+
+// Filtre période de la journée — même contrat que MatchBookingPicker. Passé
+// à vue-cal via `time-from` / `time-to` pour zoomer la grille sur la plage
+// concernée (matin / après-midi / soir / journée complète).
+interface PeriodOption {
+  value: 'all' | 'morning' | 'afternoon' | 'evening'
+  label: string
+  from: number
+  to: number
+}
+
+const periodOptions: ReadonlyArray<PeriodOption> = [
+  { value: 'all', label: 'Toute la journée', from: TIME_FROM, to: TIME_TO },
+  { value: 'morning', label: 'Matin (06-12)', from: 6 * 60, to: 12 * 60 },
+  { value: 'afternoon', label: 'Après-midi (12-16)', from: 12 * 60, to: 16 * 60 },
+  { value: 'evening', label: 'Soir (16-22)', from: 16 * 60, to: 22 * 60 },
+]
+
+const periodFilter = ref<'all' | 'morning' | 'afternoon' | 'evening'>('all')
+
+const currentTimeFrom = computed<number>(
+  () => periodOptions.find((p) => p.value === periodFilter.value)?.from ?? TIME_FROM,
+)
+const currentTimeTo = computed<number>(
+  () => periodOptions.find((p) => p.value === periodFilter.value)?.to ?? TIME_TO,
+)
 
 // ---------------------------------------------------------------------------
 // Splits — un split par court (uniquement quand on est en mode "day").
@@ -118,6 +161,7 @@ interface BookingEvent extends VueCalEvent {
   start: string
   end: string
   title: string
+  content: string
 }
 
 function pad2(n: number): string {
@@ -170,6 +214,22 @@ function eventTitle(b: BookingRow): string {
   return b.teamName ?? slotTypeLabel(b.slotType)
 }
 
+/**
+ * Ligne secondaire (`content` vue-cal) — affiche le court + le coach quand
+ * dispos. Important en vue 'week' où les splits par court n'existent pas :
+ * c'est la seule façon de voir où le booking se passe. Séparateur ` · `
+ * cohérent avec MatchBookingPicker.
+ */
+function eventContent(b: BookingRow): string {
+  const parts: string[] = []
+  if (b.courtName) parts.push(b.courtName)
+  if (b.teamId) {
+    const coach = coachByTeamId.value.get(b.teamId)
+    if (coach) parts.push(coach)
+  }
+  return parts.join(' · ')
+}
+
 const calendarEvents = computed<BookingEvent[]>(() => {
   const events: BookingEvent[] = []
   for (const b of store.allBookings) {
@@ -182,6 +242,7 @@ const calendarEvents = computed<BookingEvent[]>(() => {
       start: `${dateKey} ${b.startTime}`,
       end: `${dateKey} ${b.endTime}`,
       title: eventTitle(b),
+      content: eventContent(b),
     })
   }
   return events
@@ -524,6 +585,17 @@ function handleEditSaved(): void {
                 @update:model-value="(v: 'day' | 'week' | 'month') => (activeView = v)"
               />
 
+              <Select
+                v-if="activeView !== 'month'"
+                v-model="periodFilter"
+                :options="[...periodOptions]"
+                option-label="label"
+                option-value="value"
+                size="small"
+                class="!min-w-44"
+                aria-label="Filtrer la plage horaire affichée"
+              />
+
               <div class="ml-auto flex items-center gap-2">
                 <Button
                   severity="primary"
@@ -615,8 +687,8 @@ function handleEditSaved(): void {
                 :events="calendarEvents"
                 :split-days="activeView === 'day' ? courtSplits : []"
                 :sticky-split-labels="activeView === 'day'"
-                :time-from="TIME_FROM"
-                :time-to="TIME_TO"
+                :time-from="currentTimeFrom"
+                :time-to="currentTimeTo"
                 :time-step="TIME_STEP"
                 :time-cell-height="TIME_CELL_HEIGHT"
                 :hide-title-bar="true"
@@ -906,6 +978,21 @@ function handleEditSaved(): void {
   color: inherit;
   background-clip: padding-box;
   overflow: hidden;
+}
+
+/*
+ * Ligne secondaire ("court · coach") posée via `event.content`. Plus
+ * discrète que le title pour préserver la hiérarchie visuelle.
+ */
+:deep(.vuecal__event-content) {
+  font-size: 10.5px;
+  font-weight: 400;
+  opacity: 0.85;
+  margin-top: 1px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 :deep(.vuecal__event.vc-training) {

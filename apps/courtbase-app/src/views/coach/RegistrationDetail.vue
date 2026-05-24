@@ -29,24 +29,46 @@ import CbBottomBar from '@/components/ui/CbBottomBar.vue'
 import CbEmptyState from '@/components/ui/CbEmptyState.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPill from '@/components/ui/CbPill.vue'
+import { onMounted } from 'vue'
 import {
   getRegistration,
   getTeam,
-  logMockAction,
   type MockRegistration,
 } from '@/repositories/mock'
+import { useRegistrationsStore } from '@/stores/registrations'
+import { useTeamsStore } from '@/stores/teams'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+const teamsStore = useTeamsStore()
+const registrationsStore = useRegistrationsStore()
 
 const registrationId = computed<string>(() => {
   const raw = route.params['id']
   return Array.isArray(raw) ? (raw[0] ?? '') : (raw ?? '')
 })
 
-const registration = computed<MockRegistration | null>(() =>
-  registrationId.value ? getRegistration(registrationId.value) : null,
-)
+/**
+ * Lookup hybride : si le store a déjà chargé (vrai Firestore ou fallback
+ * mock), on prend depuis le store. Sinon on tombe sur le mock direct (cas
+ * deep-link à froid sur la vue détail sans passer par la liste).
+ */
+const registration = computed<MockRegistration | null>(() => {
+  const fromStore = registrationsStore.items.find((r) => r.id === registrationId.value)
+  if (fromStore) return fromStore
+  return registrationId.value ? getRegistration(registrationId.value) : null
+})
+
+// Si la liste n'a pas encore été chargée (deep-link), on la charge pour
+// que les actions callable (markTrial/confirm/refuse) puissent refresh.
+onMounted(async () => {
+  if (registrationsStore.items.length === 0) {
+    await teamsStore.loadForCoach(auth.userDoc?.memberId ?? null, auth.uid)
+    await registrationsStore.load(teamsStore.teams.map((t) => t.id))
+  }
+})
 
 const team = computed(() =>
   registration.value ? getTeam(registration.value.teamId) : null,
@@ -232,16 +254,24 @@ function goBack(): void {
   }
 }
 
-function actionConfirm(): void {
+async function actionConfirm(): Promise<void> {
   if (!registration.value) return
-  logMockAction('co9.confirm', { id: registration.value.id })
-  goBack()
+  try {
+    await registrationsStore.confirm(registration.value.id)
+    goBack()
+  } catch (err) {
+    console.warn('[co9.confirm] failed', err)
+  }
 }
 
-function actionMarkTrial(): void {
+async function actionMarkTrial(): Promise<void> {
   if (!registration.value) return
-  logMockAction('co9.mark-trial', { id: registration.value.id })
-  goBack()
+  try {
+    await registrationsStore.markTrial(registration.value.id)
+    goBack()
+  } catch (err) {
+    console.warn('[co9.mark-trial] failed', err)
+  }
 }
 
 // ─── Refuse dialog ────────────────────────────────────────────────
@@ -259,16 +289,21 @@ function closeRefuse(): void {
   refuseOpen.value = false
 }
 
-function submitRefuse(): void {
+async function submitRefuse(): Promise<void> {
   if (!registration.value) return
   const reason = refuseReason.value.trim()
   if (reason.length < 5) {
     refuseError.value = 'Précisez un motif (5 caractères minimum).'
     return
   }
-  logMockAction('co9.refuse', { id: registration.value.id, reason })
-  refuseOpen.value = false
-  goBack()
+  try {
+    await registrationsStore.refuse(registration.value.id, reason)
+    refuseOpen.value = false
+    goBack()
+  } catch (err) {
+    refuseError.value = "Échec de l'envoi. Réessayez."
+    console.warn('[co9.refuse] failed', err)
+  }
 }
 </script>
 
@@ -483,7 +518,7 @@ function submitRefuse(): void {
         Refuser
       </button>
       <button type="button" class="cb-btn primary" style="flex: 2" @click="actionConfirm">
-        <CheckCircle2 :size="16" /> Confirmer l'inscription
+        <CheckCircle2 :size="16" /> Envoyer la cotisation
       </button>
     </CbBottomBar>
   </CbMobileShell>

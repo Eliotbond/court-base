@@ -14,9 +14,14 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "bootstrap:root-admin": "tsx scripts/setRootAdmin.ts"
+    "bootstrap:root-admin": "tsx scripts/setRootAdmin.ts",
+    "backfill:user-member-id": "tsx scripts/backfillUserMemberId.ts",
+    "backfill:dues-registered-by-uid": "tsx scripts/backfillDuesRegisteredByUid.ts",
+    "backfill:license-request-parent-user-ids": "tsx scripts/backfillLicenseRequestParentUserIds.ts",
+    "enable:basketplan": "tsx scripts/enableBasketplan.ts"
   },
   "dependencies": {
+    "fast-xml-parser": "^4.5.6",
     "firebase-admin": "^12.6.0",
     "firebase-functions": "^6.0.0"
   },

@@ -7,6 +7,7 @@ import {
   Info,
   Plus,
   ShieldCheck,
+  Trash2,
   TriangleAlert,
   Trophy,
   XCircle,
@@ -314,6 +315,25 @@ async function submitConfirmLicense(): Promise<void> {
   // coachLicense côté serveur — il faut réconcilier les badges "actif".
   await store.load(props.memberId)
 }
+
+// ---------------------------------------------------------------------------
+// Suppression d'une licence — autorisée UNIQUEMENT pour les licences `pending`
+// (jamais activées pour la saison, donc aucune écriture comptable à annuler).
+// Action sans confirmation : un seul clic supprime. Aligné sur la rule
+// Firestore `/licenses` `allow delete: if isRootAdmin() || isAdmin()`.
+// ---------------------------------------------------------------------------
+const canDeleteLicense = computed(() => {
+  if (auth.rootAdmin) return true
+  const roles = auth.userDoc?.roles ?? []
+  return roles.includes('admin')
+})
+
+async function onDeleteLicense(license: License): Promise<void> {
+  if (license.status !== 'pending') return
+  await licensesStore.remove(license.id)
+  // Le store retire la ligne du cache local. Pas de re-load du member nécessaire
+  // (la licence pending n'a posé aucune dénorm sur member.officialLicense).
+}
 </script>
 
 <template>
@@ -532,19 +552,39 @@ async function submitConfirmLicense(): Promise<void> {
           class="text-right"
         >
           <template #body="{ data }: { data: License }">
-            <button
-              v-if="data.status === 'pending' && canConfirmLicense"
-              type="button"
-              class="btn btn-secondary btn-sm"
-              :disabled="licensesStore.confirmingId === data.id"
-              @click="openConfirmLicenseDialog(data)"
+            <div
+              v-if="data.status === 'pending'"
+              class="flex items-center justify-end gap-2"
             >
-              <CheckCircle2
-                :size="13"
-                :stroke-width="2"
-              />
-              {{ licensesStore.confirmingId === data.id ? 'Confirmation…' : 'Confirmer' }}
-            </button>
+              <button
+                v-if="canConfirmLicense"
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="licensesStore.confirmingId === data.id"
+                @click="openConfirmLicenseDialog(data)"
+              >
+                <CheckCircle2
+                  :size="13"
+                  :stroke-width="2"
+                />
+                {{ licensesStore.confirmingId === data.id ? 'Confirmation…' : 'Confirmer' }}
+              </button>
+              <button
+                v-if="canDeleteLicense"
+                type="button"
+                class="btn btn-ghost btn-sm text-rose-600 hover:text-rose-700"
+                :disabled="licensesStore.removingId === data.id"
+                :title="`Supprimer cette licence (jamais activée — pas d'écriture comptable)`"
+                aria-label="Supprimer la licence"
+                @click="onDeleteLicense(data)"
+              >
+                <Trash2
+                  :size="13"
+                  :stroke-width="2"
+                />
+                {{ licensesStore.removingId === data.id ? 'Suppression…' : 'Supprimer' }}
+              </button>
+            </div>
           </template>
         </Column>
       </DataTable>

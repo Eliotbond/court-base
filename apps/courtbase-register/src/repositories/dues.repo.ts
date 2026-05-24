@@ -128,6 +128,56 @@ function snapToDue(snap: { id: string; data: () => unknown }): DueRecord {
  * sans contexte auth). Si `memberIds` est vide ET `uid` est vide → aucune
  * query, retour `[]` (Firestore rejette `in []`).
  */
+/**
+ * Wrap une query Firestore et dégrade gracieusement les `permission-denied`
+ * en `[]` + log warning. Toute autre erreur est re-thrown.
+ *
+ * Pourquoi : Firestore peut rejeter une LIST query entière en
+ * `permission-denied` quand la rule fait des `get()` dynamiques qu'il ne
+ * peut pas pré-valider statiquement (ex. notre rule `/dues` qui check
+ * `get(/members/{resource.data.memberId}).data.linkedUserId == auth.uid`).
+ * Sans dégradation par-query, un throw sur l'une coupe tout l'écran "Mes
+ * factures" en bandeau d'erreur — alors qu'une autre query aurait pu
+ * couvrir l'utilisateur (chaque critère rattrape un trou de l'autre).
+ *
+ * Le log warning permet de garder une trace pour diagnostic sans casser
+ * l'UX. Si **toutes** les queries dégradent, le store voit `[]` et affiche
+ * un empty-state ("Aucune facture") — pas idéal mais préférable au bandeau
+ * rouge qui suggère un problème grave.
+ */
+/**
+ * Check robuste pour `permission-denied`. Idem `members.repo.ts` :
+ * `err instanceof FirestoreError` n'est pas fiable (bundling peut casser
+ * l'instanceof). Le `.code` est le contrat stable de FirebaseError.
+ */
+function isPermissionDenied(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code: unknown }).code === 'permission-denied'
+  )
+}
+
+async function tryQuery(
+  label: string,
+  exec: () => Promise<{ docs: { id: string; data: () => unknown }[] }>,
+): Promise<DueRecord[]> {
+  try {
+    const snap = await exec()
+    return snap.docs.map(snapToDue)
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      console.warn(
+        `[dues.repo] ${label} denied by rules — degrading to []`,
+        err,
+      )
+      return []
+    }
+    throw err
+  }
+}
+
 async function fetchAccessibleDues(
   memberIds: string[],
   uid: string,
@@ -139,28 +189,41 @@ async function fetchAccessibleDues(
     chunks.push(unique.slice(i, i + 30))
   }
 
-  const queries = chunks.map((chunk) =>
-    getDocs(query(collection(db, DUES), where('memberId', 'in', chunk))),
+  // Chaque query est dégradée individuellement en `[]` sur `permission-denied`
+  // (cf. `tryQuery` ci-dessus). Les deux critères (memberId-in + registeredByUid)
+  // se complètent : un succès quelconque couvre l'utilisateur. Si TOUS échouent,
+  // on retourne `[]` (le store affichera l'empty-state, pas le bandeau d'erreur).
+  const memberQueries = chunks.map((chunk, i) =>
+    tryQuery(`memberId-in[${i}]`, () =>
+      getDocs(query(collection(db, DUES), where('memberId', 'in', chunk))),
+    ),
   )
-  if (uid) {
-    queries.push(
-      getDocs(
-        query(collection(db, DUES), where('registeredByUid', '==', uid)),
-      ),
-    )
-  }
 
-  if (queries.length === 0) return []
+  const registeredByUidPromise: Promise<DueRecord[]> = uid
+    ? tryQuery('registeredByUid', () =>
+        getDocs(
+          query(collection(db, DUES), where('registeredByUid', '==', uid)),
+        ),
+      )
+    : Promise.resolve([])
 
-  const snaps = await Promise.all(queries)
+  if (memberQueries.length === 0 && !uid) return []
+
+  const [memberResults, registeredByUidDues] = await Promise.all([
+    Promise.all(memberQueries),
+    registeredByUidPromise,
+  ])
 
   // Déduplication par doc.id (un doc peut matcher memberId-in ET
   // registeredByUid). Une Map garantit une seule occurrence par id.
   const byId = new Map<string, DueRecord>()
-  for (const snap of snaps) {
-    for (const d of snap.docs) {
-      if (!byId.has(d.id)) byId.set(d.id, snapToDue(d))
+  for (const dues of memberResults) {
+    for (const due of dues) {
+      if (!byId.has(due.id)) byId.set(due.id, due)
     }
+  }
+  for (const due of registeredByUidDues) {
+    if (!byId.has(due.id)) byId.set(due.id, due)
   }
   return Array.from(byId.values())
 }
@@ -318,9 +381,7 @@ export async function getDue(dueId: string): Promise<DueRecord | null> {
     // sur ce due (ni membre lié, ni tuteur, ni auteur de l'inscription, ni
     // admin). On dégrade en `null` plutôt que de
     // propager — la vue affichera "introuvable".
-    if (err instanceof FirestoreError && err.code === 'permission-denied') {
-      return null
-    }
+    if (isPermissionDenied(err)) return null
     throw err
   }
 }

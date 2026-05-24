@@ -200,6 +200,10 @@ Nouveau dossier `functions/src/basketplan/`.
 
 ### 5.3 Scheduled `scheduledBasketplanSync`
 
+**Statut PR 2 (livré 2026-05-24)** : la callable `syncBasketplanForTeam` + le scheduled `scheduledBasketplanSync` sont implémentés, **scope AWAY + backfill uniquement**. Le cas HOME (`weAreHome` dans `applyGame`) renvoie `{ action: 'skipped-home', reason: 'home-creation-deferred-to-pr3' }` — la création automatique de bookings HOME + Inbox admin est différée en PR 3 (cf. checklist `docs/chantier-basketplan.md`).
+
+Les champs `match.external*` (`externalSource`, `externalGameNumber`, `externalLeagueHoldingId`, `externalReferees`, `externalResult`, `externalLastSyncedAt`) sont posés/maintenus par les passes du sync. Voir `docs/firebase.md` § `/matches/{matchId}` pour le détail des champs et la description de l'algorithme `applyGame`.
+
 - Trigger : `onSchedule({ schedule: '0 3 * * *', timeZone: 'Europe/Zurich', region: 'europe-west6' })`.
 - Algo :
   ```

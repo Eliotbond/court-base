@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<basketplan version="2.0" remarks="Data Securtiy changes. If you lack some data please contact contact@orcasys.ch">
+<hasStartPoints>
+  <Boolean>false</Boolean>
+</hasStartPoints>
+<hasSubGroup>
+  <Boolean>false</Boolean>
+</hasSubGroup>
+<leagueHolding>
+  <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+    <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+    <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+      <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+      <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+      <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+    </league>
+    <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+  </leagueHolding>
+</leagueHolding>
+<relegationPlace>
+  <Integer>4</Integer>
+</relegationPlace>
+<showRankingForm>
+  <showRankingForm leagueHoldingId="10584"/>
+</showRankingForm>
+<teamList>
+  <Array>
+    <Ranking>
+      <rankingDataVO currentRanking="1" defeats="0" forfaits="0" gamesPlayed="12" startPoints="0" subGroupGamesPlayed="0" subGroupPoints="0" subGroupScoreRelation="0" subGroupSet="false" subSubGroupGamesPlayed="0" subSubGroupPoints="0" subSubGroupScoreRelation="0" subSubGroupSet="false" totalPoints="24" totalScoreAgainst="706" totalScoreAgainstPerGame="58.8" totalScoreFor="900" totalScoreForPerGame="75.0" totalScoreRelation="194" victories="12"/>
+      <team activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </team>
+    </Ranking>
+    <Ranking>
+      <rankingDataVO currentRanking="2" defeats="3" forfaits="0" gamesPlayed="12" startPoints="0" subGroupGamesPlayed="0" subGroupPoints="0" subGroupScoreRelation="0" subGroupSet="false" subSubGroupGamesPlayed="0" subSubGroupPoints="0" subSubGroupScoreRelation="0" subSubGroupSet="false" totalPoints="21" totalScoreAgainst="640" totalScoreAgainstPerGame="53.3" totalScoreFor="813" totalScoreForPerGame="67.8" totalScoreRelation="173" victories="9"/>
+      <team activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic F.Olympic - Sarine 2LM" mobile="076 424 28 21 " name="F.Olympic - Sarine 2LM" nameWithClub="F.Olympic F.Olympic - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </team>
+    </Ranking>
+    <Ranking>
+      <rankingDataVO currentRanking="3" defeats="6" forfaits="0" gamesPlayed="12" startPoints="0" subGroupGamesPlayed="0" subGroupPoints="0" subGroupScoreRelation="0" subGroupSet="false" subSubGroupGamesPlayed="0" subSubGroupPoints="0" subSubGroupScoreRelation="0" subSubGroupSet="false" totalPoints="18" totalScoreAgainst="796" totalScoreAgainstPerGame="66.3" totalScoreFor="786" totalScoreForPerGame="65.5" totalScoreRelation="-10" victories="6"/>
+      <team activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </team>
+    </Ranking>
+    <Ranking>
+      <rankingDataVO currentRanking="4" defeats="10" forfaits="0" gamesPlayed="12" startPoints="0" subGroupGamesPlayed="0" subGroupPoints="0" subGroupScoreRelation="0" subGroupSet="false" subSubGroupGamesPlayed="0" subSubGroupPoints="0" subSubGroupScoreRelation="0" subSubGroupSet="false" totalPoints="14" totalScoreAgainst="906" totalScoreAgainstPerGame="75.5" totalScoreFor="681" totalScoreForPerGame="56.8" totalScoreRelation="-225" victories="2"/>
+      <team activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </team>
+    </Ranking>
+    <Ranking>
+      <rankingDataVO currentRanking="5" defeats="11" forfaits="0" gamesPlayed="12" startPoints="0" subGroupGamesPlayed="0" subGroupPoints="0" subGroupScoreRelation="0" subGroupSet="false" subSubGroupGamesPlayed="0" subSubGroupPoints="0" subSubGroupScoreRelation="0" subSubGroupSet="false" totalPoints="13" totalScoreAgainst="772" totalScoreAgainstPerGame="64.3" totalScoreFor="640" totalScoreForPerGame="53.3" totalScoreRelation="-132" victories="1"/>
+      <team activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </team>
+    </Ranking>
+  </Array>
+</teamList>
+<title>
+  <String>Classement 2LM (30.09.25-08.03.26)</String>
+</title>
+</basketplan>

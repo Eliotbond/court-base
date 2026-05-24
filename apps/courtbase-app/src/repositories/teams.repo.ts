@@ -17,10 +17,13 @@
 
 import {
   collection,
+  doc,
+  getDoc,
   getDocs,
   query,
   where,
   type DocumentData,
+  type DocumentSnapshot,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore'
 import { FirebaseError } from 'firebase/app'
@@ -124,7 +127,7 @@ function formatAgeRange(cat: CategoryDoc | undefined): string | null {
  * `preferredSlots`, `tagName`, `tagColor`) sont laissés `undefined`.
  */
 function snapToMockTeam(
-  snap: QueryDocumentSnapshot<DocumentData>,
+  snap: QueryDocumentSnapshot<DocumentData> | DocumentSnapshot<DocumentData>,
   categories: Map<string, CategoryDoc>,
   cotisations: Map<string, CotisationDoc>,
 ): MockTeam {
@@ -183,5 +186,69 @@ export async function listTeamsForCoach(coachMemberId: string): Promise<MockTeam
     const code = err instanceof FirebaseError ? err.code : 'unknown'
     console.error(`[teams.repo] listTeamsForCoach failed [${code}]`, err)
     return []
+  }
+}
+
+/**
+ * Liste les équipes auxquelles un membre appartient (via `playerIds`).
+ *
+ * Requête : `/teams where playerIds array-contains memberId AND active == true`.
+ * **Sans index composite** : `array-contains` + `==` est servi par l'index
+ * mono-champ standard. Tri JS par nom.
+ *
+ * Retourne `[]` si aucun match / erreur (logguée, pas thrown — l'UI dégrade).
+ *
+ * Utilisé par `MemberDetail.vue` pour afficher la team primaire d'un joueur
+ * (le doc `/members/{id}` n'a pas la relation inverse).
+ */
+export async function listTeamsForMember(memberId: string): Promise<MockTeam[]> {
+  if (!memberId) return []
+  try {
+    const [teamsSnap, categories, cotisations] = await Promise.all([
+      getDocs(
+        query(
+          collection(db, TEAMS),
+          where('playerIds', 'array-contains', memberId),
+          where('active', '==', true),
+        ),
+      ),
+      loadCategoriesMap(),
+      loadCotisationsMap(),
+    ])
+    return teamsSnap.docs
+      .map((d) => snapToMockTeam(d, categories, cotisations))
+      .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`[teams.repo] listTeamsForMember failed [${code}]`, err)
+    return []
+  }
+}
+
+/**
+ * Récupère une équipe par son id avec sa catégorie + cotisation résolues.
+ * Retourne `null` si :
+ *   - `teamId` est vide.
+ *   - L'équipe n'existe pas dans Firestore.
+ *   - Erreur Firestore (rules, network…) — logguée mais pas thrown.
+ *
+ * Note : on charge les référentiels (catégories + cotisations) à chaque appel
+ * — pour un single team c'est volontairement simple (réfs petites < 30 docs
+ * chacune). Si la TeamRoster vue appelle ça en boucle, on cachera au store.
+ */
+export async function getTeam(teamId: string): Promise<MockTeam | null> {
+  if (!teamId) return null
+  try {
+    const [snap, categories, cotisations] = await Promise.all([
+      getDoc(doc(db, TEAMS, teamId)),
+      loadCategoriesMap(),
+      loadCotisationsMap(),
+    ])
+    if (!snap.exists()) return null
+    return snapToMockTeam(snap, categories, cotisations)
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`[teams.repo] getTeam failed [${code}]`, err)
+    return null
   }
 }

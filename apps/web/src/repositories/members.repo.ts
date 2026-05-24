@@ -19,9 +19,16 @@ import {
   type QueryDocumentSnapshot,
   type UpdateData,
 } from 'firebase/firestore'
-import { db } from '@/services/firebase'
+import {
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytes,
+} from 'firebase/storage'
+import { db, storage } from '@/services/firebase'
 import {
   deleteMember as deleteMemberCallable,
+  removeMemberLicensePhoto as removeMemberLicensePhotoCallable,
+  setMemberLicensePhoto as setMemberLicensePhotoCallable,
   type DeleteMemberOutput,
 } from '@/services/cloudFunctions'
 import type {
@@ -514,6 +521,11 @@ export async function createMember(input: CreateMemberInput): Promise<MemberRow>
     archivedAt: null,
     archivedReason: null,
     archivedByUid: null,
+    // Photo licence (cf. docs/members/license-photo.md) — null à la création,
+    // posée plus tard par le coach (callable serveur) ou un admin/treasurer.
+    photoStoragePath: null,
+    photoUpdatedAt: null,
+    photoUpdatedByUid: null,
   }
   const ref = await addDoc(collection(db, MEMBERS), data)
 
@@ -885,6 +897,148 @@ export async function deleteMemberPermanently(
   } catch (err: unknown) {
     const code = err instanceof FirebaseError ? err.code : 'unknown'
     console.error(`[members.repo/deleteMemberPermanently] failed [${code}]`, err)
+    throw err
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Photo licence (cf. docs/members/license-photo.md).
+//
+// Couches :
+//   client uploadBytes(Storage members/{id}/license-photo.{ext})
+//     → callable `setMemberLicensePhoto` qui pose member.photoStoragePath /
+//       photoUpdatedAt / photoUpdatedByUid + best-effort delete de l'ancien
+//       fichier Storage (côté serveur).
+//
+// Rules Storage : permissives signed-in + size ≤ 5 Mo + MIME image (cf. PR-A).
+// La vraie autorisation passe par la callable Admin SDK qui re-vérifie le
+// scope coach/admin via `assertCoachOrAdminOfMember` côté serveur.
+// ---------------------------------------------------------------------------
+
+/** Extensions tolérées côté upload — alignées sur la rule Storage PR-A. */
+const PHOTO_ALLOWED_MIME: Readonly<Record<string, string>> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+}
+
+/** Limite de taille du fichier photo (5 Mo, alignée sur la rule Storage PR-A). */
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024
+
+/**
+ * Map un `file.type` (MIME) sur l'extension canonique du path Storage. Throw
+ * pour tout type non supporté — l'UI doit pré-valider via le `accept` du
+ * `<input type="file">` mais on garde un filet ici (cas drag-drop bypass).
+ */
+function inferPhotoExt(contentType: string): string {
+  const ext = PHOTO_ALLOWED_MIME[contentType]
+  if (!ext) {
+    throw new Error(
+      `Type de fichier non supporté pour la photo licence : ${contentType}. ` +
+        'Utilisez JPEG, PNG ou WebP.',
+    )
+  }
+  return ext
+}
+
+/**
+ * Upload une photo licence pour un membre et pose la référence Firestore via
+ * la callable serveur.
+ *
+ * Étapes :
+ *  1. Pré-validation MIME (PHOTO_ALLOWED_MIME) + taille (≤ 5 Mo).
+ *  2. `uploadBytes` Storage à `members/{memberId}/license-photo.{ext}` (un
+ *     replace écrase le fichier précédent au même path si l'extension est
+ *     identique ; sinon, la callable serveur fait le best-effort delete de
+ *     l'ancien path).
+ *  3. Appel `setMemberLicensePhoto({ memberId, storagePath, contentType,
+ *     sizeBytes })` — le serveur pose `member.photoStoragePath`, etc.
+ *
+ * Retourne `{ storagePath }` sur succès. Toute erreur (validation, Storage,
+ * callable) est loguée avec son code FirebaseError puis re-throw — le store
+ * upstream wrap dans son état `error`.
+ */
+export async function uploadMemberPhoto(
+  memberId: string,
+  file: File,
+): Promise<{ storagePath: string }> {
+  if (file.size > PHOTO_MAX_BYTES) {
+    throw new Error(
+      `Photo trop volumineuse (${(file.size / 1024 / 1024).toFixed(1)} Mo). ` +
+        `Max 5 Mo.`,
+    )
+  }
+  const ext = inferPhotoExt(file.type)
+  const storagePath = `members/${memberId}/license-photo${ext}`
+  const fileRef = storageRef(storage, storagePath)
+  try {
+    await uploadBytes(fileRef, file, { contentType: file.type })
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(
+      `[members.repo/uploadMemberPhoto] uploadBytes failed [${code}] memberId=${memberId}`,
+      err,
+    )
+    throw err
+  }
+  try {
+    await setMemberLicensePhotoCallable({
+      memberId,
+      storagePath,
+      contentType: file.type,
+      sizeBytes: file.size,
+    })
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(
+      `[members.repo/uploadMemberPhoto] callable failed [${code}] memberId=${memberId}`,
+      err,
+    )
+    throw err
+  }
+  return { storagePath }
+}
+
+/**
+ * Supprime la photo licence d'un membre. Réservé admin/rootAdmin (vérifié
+ * côté serveur). Best-effort sur le delete Storage : si l'objet n'existe
+ * plus, la callable ne throw pas et remet quand même les champs Firestore
+ * à `null` (cf. `docs/members/license-photo.md`).
+ */
+export async function removeMemberPhoto(memberId: string): Promise<void> {
+  try {
+    await removeMemberLicensePhotoCallable({ memberId })
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(
+      `[members.repo/removeMemberPhoto] failed [${code}] memberId=${memberId}`,
+      err,
+    )
+    throw err
+  }
+}
+
+/**
+ * Résout une URL signée Firebase Storage pour preview/affichage. À utiliser
+ * dans le composant qui consomme `member.photoStoragePath`. L'URL est
+ * `cache-busted` côté caller en ajoutant `?v=<photoUpdatedAt.seconds>` au
+ * besoin (cf. `docs/members/license-photo.md` §Garde-fous).
+ *
+ * `storage/object-not-found` remonte au caller (sans masquage silencieux) —
+ * l'UI peut afficher un message d'erreur dédié si le pointeur Firestore est
+ * désynchronisé du Storage (rare ; PR-B garantit l'atomicité côté serveur).
+ */
+export async function getMemberPhotoDownloadUrl(
+  storagePath: string,
+): Promise<string> {
+  try {
+    return await getDownloadURL(storageRef(storage, storagePath))
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(
+      `[members.repo/getMemberPhotoDownloadUrl] failed [${code}] path=${storagePath}`,
+      err,
+    )
     throw err
   }
 }

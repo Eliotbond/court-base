@@ -36,6 +36,7 @@ import Avatar from '@/components/ui/Avatar.vue'
 import Pill from '@/components/ui/Pill.vue'
 import LinkUserDialog from '@/components/member-detail/LinkUserDialog.vue'
 import DeleteMemberDialog from '@/components/member-detail/DeleteMemberDialog.vue'
+import MemberPhotoSection from '@/components/member-detail/MemberPhotoSection.vue'
 
 defineProps<{
   memberId: string
@@ -65,6 +66,51 @@ const auth = useAuthStore()
 const isAdmin = computed<boolean>(
   () => (auth.userDoc?.roles.includes('admin') ?? false) || auth.rootAdmin,
 )
+
+/**
+ * Helpers pour la photo licence (cf. docs/members/license-photo.md §Affichage
+ * apps/web). Édition autorisée à admin/rootAdmin/treasurer/coach-of-member ;
+ * suppression réservée à admin/rootAdmin (le coach peut remplacer mais pas
+ * supprimer purement).
+ *
+ * `coach-of-member` est dérivé du chevauchement entre `user.teamIds`
+ * (canonique, cf. mémoire `[[teamids-canonical]]`) et les `teams` du membre.
+ * Pour ne pas dépendre du paramètre `canEdit` du parent (qui n'inclut pas
+ * forcément treasurer/coach), on recompose le gating localement.
+ */
+const isTreasurer = computed<boolean>(
+  () => auth.userDoc?.roles.includes('treasurer') ?? false,
+)
+const isCoachOfThisMember = computed<boolean>(() => {
+  if (!store.member) return false
+  if (!auth.userDoc?.roles.includes('coach')) return false
+  const callerTeamIds = new Set(auth.userDoc?.teamIds ?? [])
+  return store.member.teams.some((t) => callerTeamIds.has(t.id))
+})
+const canEditPhoto = computed<boolean>(
+  () =>
+    auth.rootAdmin ||
+    isAdmin.value ||
+    isTreasurer.value ||
+    isCoachOfThisMember.value,
+)
+const canDeletePhoto = computed<boolean>(() => isAdmin.value)
+
+async function onPhotoUpdated(_: { storagePath: string }): Promise<void> {
+  if (!store.member) return
+  // Le store a déjà reload member après uploadPhoto, donc on émet juste pour
+  // tracer (logs) — pas de second reload pour éviter le double round-trip.
+  console.info(
+    `[ProfileTab] member photo updated for ${store.member.id}`,
+  )
+}
+
+async function onPhotoRemoved(): Promise<void> {
+  if (!store.member) return
+  console.info(
+    `[ProfileTab] member photo removed for ${store.member.id}`,
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Helpers locaux
@@ -648,6 +694,22 @@ function onDeleted(memberId: string): void {
           </dd>
         </div>
       </dl>
+    </div>
+
+    <!-- ============== Photo licence ============== -->
+    <div class="card p-5 space-y-3 md:col-span-2">
+      <h2 class="text-[14px] font-semibold">
+        Photo licence
+      </h2>
+      <MemberPhotoSection
+        :member-id="store.member.id"
+        :photo-storage-path="store.member.photoStoragePath ?? null"
+        :photo-updated-at="store.member.photoUpdatedAt ?? null"
+        :can-edit="canEditPhoto"
+        :can-delete="canDeletePhoto"
+        @updated="onPhotoUpdated"
+        @removed="onPhotoRemoved"
+      />
     </div>
 
     <!-- ============== Contact ============== -->

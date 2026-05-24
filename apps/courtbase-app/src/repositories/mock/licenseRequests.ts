@@ -1,20 +1,26 @@
 /**
  * Repository mock pour les demandes de licence fédérale.
  *
- * Lit les **fixtures partagées** depuis `@club-app/shared-types/mock-fixtures`
+ * Lit les **fixtures partagées** depuis `@club-app/shared-types`
  * (cohérence d'IDs entre `courtbase-app` coach et `courtbase-register` parent
  * pour que le faux email du coach pointe vers le bon écran parent).
  *
  * Pas de mutation : `create` log-only (cf. `licenseRequestsStore`).
  *
- * Helper `inferRequiredDocs` : dérive la liste des pièces à demander selon
- * le profil du joueur. Logique simple et déterministe (pas de side-effect).
+ * Helper `inferRequiredDocs` : adapter mock autour du `inferRequiredDocs`
+ * **canonique** de `@club-app/shared-types/license`. Ici on reçoit un
+ * `MockMember` et on dérive les primitives `{ hasAvs, previouslyLicensedInSwitzerland }`
+ * attendues par le canonique. Côté mock, on n'a pas de signal "déjà
+ * licencié en Suisse" sur `MockMember` — on le passe à `false` ; les
+ * fixtures qui contiennent `transfer_letter_swiss` (ex. `lr-julian-2025`)
+ * sont seedées en dur, pas dérivées par cette fonction.
  */
 
 import {
   MOCK_LICENSE_REQUESTS,
   getMockLicenseRequestById,
   listMockLicenseRequestsForMember,
+  inferRequiredDocs as inferRequiredDocsCanonical,
   type LicenseDocKind,
   type LicenseRequestMock,
 } from '@club-app/shared-types'
@@ -41,27 +47,22 @@ export function getLicenseRequestById(id: string): LicenseRequestMock | undefine
 }
 
 // ───────────────────────────────────────────────────────────────
-// Inférence des docs requis
+// Inférence des docs requis (adapter mock → canonique)
 // ───────────────────────────────────────────────────────────────
 
 /**
- * Détermine la liste minimale de pièces à demander au parent pour ce membre.
+ * Adapter mock autour du `inferRequiredDocs` canonique : convertit le
+ * `MockMember` en primitives et délègue.
  *
- * Règles :
- *   - Toujours : carte d'identité recto + verso.
- *   - AVS uniquement si manquant dans le dossier club (`member.avs == null`).
- *   - Lettre de sortie suisse (`transfer_letter_swiss`) si on a un flag
- *     `previousClubName` ET que le club précédent est en Suisse. Les
- *     `MockMember` actuels ne portent pas ces champs (ils vivent côté
- *     `MockRegistration` post-inscription), donc dans le mock on retourne
- *     uniquement la base + AVS si pertinent. Le coach pourra étendre via
- *     l'UI plus tard ; pour l'instant le mock se contente de la base.
- *
- * Cohérent avec les `requiredDocs` des fixtures partagées (`lr-leo-2025` =
- * `[id_front, id_back]`, `lr-paul-2025` = `[id_front, id_back, avs]`).
+ * Limites côté mock :
+ *  - `previouslyLicensedInSwitzerland` est forcé à `false` (le `MockMember`
+ *    ne porte pas ce signal — il vient d'un champ wizard côté coach que
+ *    le mock ne modélise pas).
+ *  - `hasAvs` = présence d'un `avs` non-vide sur le `MockMember`.
  */
 export function inferRequiredDocs(member: MockMember): LicenseDocKind[] {
-  const out: LicenseDocKind[] = ['id_front', 'id_back']
-  if (!member.avs) out.push('avs')
-  return out
+  return inferRequiredDocsCanonical({
+    hasAvs: Boolean(member.avs),
+    previouslyLicensedInSwitzerland: false,
+  })
 }

@@ -61,6 +61,13 @@
   } | null
   officialsConfig: { licenseFee: number, thresholdGreen: number, thresholdOrange: number }
   duesConfig: { gracePeriodDays: number, paymentDueDays: number }
+  basketplan?: {                                     // intégration Swiss Basketball — undefined = off
+    clubId: number                                    // id Basketplan du club (ex. 60 pour Marly)
+    defaultFederationId: number                       // ex. 9 = AFBB Fribourg
+    enabled: boolean
+    lastSyncAt?: Timestamp | null
+    lastSyncError?: string | null
+  }
   createdAt: Timestamp
   createdBy: string  // uid
 }
@@ -76,6 +83,15 @@ Coordonnées bancaires du club. Diffusées en clair dans les emails de demande d
 - **`paymentInstructions`** : texte libre concaténé sous l'IBAN dans les emails. Sert à expliquer la convention de référence (ex. `"Indiquer nom + prénom du joueur dans la référence"`).
 - **`banking === null`** : autorisé tant que pas saisi. Dans ce cas l'email de demande de paiement omet la section "comment payer" et l'app register affiche un message d'attente.
 - **Sécurité** : write admin/rootAdmin uniquement (rule globale `/config/club`). Pas de scope additionnel — les coordonnées sont celles du club, pas PII tierce.
+
+#### `config.club.basketplan`
+
+Configuration de l'intégration Swiss Basketball / Basketplan (ORCA Systems). Voir `docs/basketplan-integration.md` (brief technique) et `docs/chantier-basketplan.md` (plan PRs). `undefined` ou `enabled: false` = intégration désactivée (le scheduler de sync nocturne no-op, mais l'UI Settings reste accessible pour la première saisie).
+
+- **`clubId`** : id numérique Basketplan du club court-base (ex. 60 pour Marly). Filtré côté serveur dans `listClubTeamsInLeague` (étape 3 de la cascade de mapping).
+- **`defaultFederationId`** : fédération principale du club (ex. 9 = AFBB Fribourg). Sert de défaut au dropdown du dialog de linkage et de cible au ping `testBasketplanConnection`. Une équipe peut être liée à des compétitions d'autres fédérations (cf. `team.basketplanLinks[]`).
+- **`lastSyncAt`** / **`lastSyncError`** : posés par le scheduler nocturne (PR 2). `null` tant qu'aucun run.
+- **Sécurité** : même frontière que le reste de `/config/club` (write admin + rootAdmin). Les écritures applicatives passent par les callables Admin SDK (Settings UI → callable, jamais write client direct).
 
 ### `/users/{uid}`
 ```ts
@@ -143,6 +159,9 @@ Tokens de push FCM des appareils du user (app mobile Flutter). **L'ID du documen
   comms: MemberCommsConfig              // routage facturation + comms générales (voir sous-structure)
   avs: string | null                    // 756.XXXX.XXXX.XX, null = pas encore connu (réfugié, etc.)
   transferState: "none" | "national_pending" | "international_pending" | "cleared"
+  photoStoragePath: string | null       // chemin Storage de la photo licence (`members/{id}/license-photo.{ext}`) ; null = pas encore uploadée
+  photoUpdatedAt: Timestamp | null      // dernier upload (audit + cache-buster URL signée) ; null si aucune photo
+  photoUpdatedByUid: string | null      // uid du coach/admin ayant uploadé la dernière version ; null si aucune photo
 }
 ```
 **Pas de `email`/`phone` ici** — voir `/members/{memberId}/private/contact` ci-dessous. Le doc parent est lisible par tous les rôles club (incl. `official`-only). Les contacts sont gated séparément.
@@ -355,8 +374,29 @@ Réservation d'un court combiné → le booking generator crée N bookings liés
   publicHeadCoachMemberId: string | null // ref memberId, null = premier coachIds utilisé
   active: boolean
   createdAt: Timestamp
+  basketplanLinks?: [{                   // intégration Swiss Basketball — undefined ou [] = équipe non liée
+    id: string                            // uuid local généré côté Cloud Function
+    federationId: number                  // ex. 9 = AFBB
+    federationCode: string                // cache d'affichage ("AFBB")
+    leagueHoldingId: number               // id Basketplan de la compétition (saison-précis)
+    leagueHoldingName: string             // cache d'affichage ("2LM - Saison 25/26 - Phase préliminaire")
+    season: string                        // extrait du nom ("25/26")
+    teamIdInLeague: number                // id Basketplan de l'équipe DANS cette ligue
+    teamNameInLeague: string              // cache ("Marly Basket 2LM")
+    active: boolean                       // pause sans suppression
+    addedAt: Timestamp
+    addedBy: string                       // uid (admin ou coach)
+  }]
 }
 ```
+
+#### `team.basketplanLinks[]`
+
+Liens vers les compétitions Basketplan (Swiss Basketball) auxquelles l'équipe est inscrite. Une même équipe peut être inscrite dans **plusieurs** compétitions (championnat + coupe, ou plusieurs fédérations en parallèle) — d'où le tableau 1→N. Voir `docs/basketplan-integration.md` § 4.1 pour la spec complète.
+
+- Tous les `*Name` / `*Code` / `season` sont des **caches** résolus côté serveur au moment du linkage (re-fetch Basketplan dans `linkTeamToBasketplan`) — évite de re-fetcher à chaque rendu de la liste.
+- **Sécurité** : `/teams` reste write admin-only côté rules ; les mutations passent par les callables Admin SDK (`linkTeamToBasketplan`, `unlinkTeamBasketplan`, `toggleTeamBasketplanLink`) qui re-vérifient le scope coach (admin OR coach de la team).
+- **Stabilité** : les `leagueHoldingId` Basketplan changent à chaque saison ; prévoir un mécanisme "renouveler les liens pour la saison N+1" (cf. brief § 7.2). Implémentation reportée en PR 2/3.
 `categoryId` est une référence (pas un libellé dénormalisé) — le nom d'affichage et la tranche d'âge sont résolus à la lecture via `/categories/{id}`. Pour la liste des équipes, le repo bat un seul `getDocs('/categories')` puis enrichit chaque team (pas de N+1).
 
 `tags` permet de différencier visuellement des équipes similaires (ex. deux U14M). Chaque entrée référence un `/tags/{id}` et porte un flag `display` propre à l'équipe : un même tag peut être attaché à plusieurs équipes mais n'être affiché que sur certaines (cf. `/tags` ci-dessous et `main.md` → "Tags d'équipes"). Résolu par batch lookup à la lecture (pattern identique aux catégories).
@@ -521,8 +561,27 @@ Modélise une **réservation manuelle récurrente** créée depuis l'écran `/bo
   assignedAt: Timestamp
   assignedBy: string
   respondedAt: Timestamp | null
+  // --- Tracking tab "Officiels" (livré 2026-05-24) ----------------------
+  // Optionnels : champs nullable rétro-compatibles (docs antérieurs n'ont
+  // pas la clé). Lus en JS côté agrégat (`buildOfficialMetricsBySeason`).
+  replacementRequestedAt?: Timestamp | null
+  // uid de celui qui a demandé le remplacement (officiel lui-même ou admin/coach
+  // en son nom). `null` quand pas de demande.
+  replacementRequestedByUid?: string | null
 }
 ```
+
+**Rules update** : l'officiel peut désormais muter le quadruplet
+`[status, respondedAt, replacementRequestedAt, replacementRequestedByUid]` sur
+sa propre assignation (élargissement du `hasOnly` existant). Admin/rootAdmin
+peuvent toujours tout muter. Symétrique sur `/matches/{id}/officialAssignments`.
+
+**Métriques dérivées (apps/web → tab "Officiels")** :
+- `lastMinuteClaims` : assignations `confirmed` dont
+  `(booking.date + startTime) - assignedAt < lastMinuteThresholdHours` (default 48 h).
+- `replacementsRequested` : `replacementRequestedAt != null` (orthogonal au statut).
+
+`lastMinuteThresholdHours` est lu depuis `/config/club.officialsConfig.lastMinuteThresholdHours` (champ optionnel — fallback 48 h).
 
 ### `/bookings/{bookingId}/attendance/{attendanceId}`
 ```ts
@@ -550,13 +609,44 @@ Modélise une **réservation manuelle récurrente** créée depuis l'écran `/bo
   status: "scheduled" | "cancelled" | "played"
   notes: string | null
   createdAt: Timestamp
-  createdBy: string                 // uid admin
+  createdBy: string                 // uid admin OU 'system:basketplan' pour les matchs créés par le sync
+
+  // --- Champs externes (intégration Basketplan — PR 2) -------------------
+  // Tous optionnels : un match purement court-base (créé via UI) ne les
+  // porte pas. Posés/maj par `scheduledBasketplanSync` (cron 03:00 ZH) et
+  // `syncBasketplanForTeam` (callable). Voir docs/basketplan-integration.md
+  // § 4.2 + § 5.3.
+  externalSource?: "basketplan" | null
+  externalGameNumber?: string | null              // ex. "25-08231" — clé d'idempotence du sync
+  externalLeagueHoldingId?: number | null         // ref → /teams/{}.basketplanLinks[].leagueHoldingId
+  externalReferees?: {                            // null global = pas encore d'arbitres désignés
+    referee1?: string | null
+    referee2?: string | null
+    expert?: string | null
+  } | null
+  externalResult?: {                              // null = pas encore joué/saisi
+    homeScore: number
+    awayScore: number
+    homologated: boolean                          // true quand fed a validé (état "homologué")
+    byQuarter?: [{ home: number, away: number }]
+  } | null
+  externalLastSyncedAt?: Timestamp | null         // dernière passe de sync qui a touché ce doc
 }
 ```
 
 **Référence bidirectionnelle (kind='home')** : `match.bookingId` ↔ `booking.matchId`. Création/suppression via `writeBatch` atomique (cf. `apps/web/src/repositories/matches.repo.ts`). Champs dénormalisés sur le booking (`matchTypeId`, `opponentName`) pour permettre au calendrier de rendre les events sans join supplémentaire.
 
-**Rules** : `read` signed-in, `create/update/delete` admin uniquement.
+**Rules** : `read` signed-in, `create/update/delete` admin uniquement. Les écritures du sync Basketplan (Cloud Function) passent en Admin SDK et bypassent les rules — pas de modification rules nécessaire pour la PR 2.
+
+**Index Firestore** : la query `where('externalGameNumber', '==', X).limit(1)` du sync (passe 1 de `applyGame`) est servie par un index single-field auto — aucun index composite à déployer pour la PR 2.
+
+#### Sync Basketplan (PR 2)
+
+Le sync Basketplan (`scheduledBasketplanSync` cron + `syncBasketplanForTeam` callable) réconcilie les matchs Basketplan avec `/matches` court-base via 3 passes :
+
+1. **Patch** : si `where('externalGameNumber', '==', game.gameNumber).limit(1)` retourne un doc → patch des champs `external*` + bump `status` à `'played'` si le game est homologué.
+2. **Lien manuel** : sinon, on cherche un match court-base de la même `teamId`, dans `±24h` de `game.date`, dont l'`opponentName` matche fuzzy (Levenshtein ≤ 2) → patch des champs `external*` sur le match existant (pas de duplication).
+3. **Création AWAY** : sinon, et si notre équipe est `guestTeam` du game → création d'un nouveau `/matches` `kind: 'away'`, `bookingId: null`, avec tous les champs `external*` posés et `createdBy: 'system:basketplan'`. Le cas HOME (notre équipe = `homeTeam`) est **différé en PR 3** (matching venue/court ou inbox).
 
 ### `/matches/{matchId}/officialAssignments/{assignmentId}`
 
@@ -568,12 +658,19 @@ Modélise une **réservation manuelle récurrente** créée depuis l'écran `/bo
   assignedAt: Timestamp
   assignedBy: string
   respondedAt: Timestamp | null
+  // --- Tracking tab "Officiels" (livré 2026-05-24) ----------------------
+  // Schéma identique à /bookings/{}/officialAssignments — champs optionnels
+  // rétro-compatibles.
+  replacementRequestedAt?: Timestamp | null
+  replacementRequestedByUid?: string | null
 }
 ```
 
 Assignations d'officiels d'un match **à l'extérieur** (`kind='away'`). Schéma **identique** à `/bookings/{bookingId}/officialAssignments` — mais comme un match away n'a pas de booking, ses assignations sont portées directement par le doc match. Le besoin d'officiels vient de `matchType.awayOfficialCount` (total simple, pas de ventilation par niveau, contrairement à `homeOfficialRequirements`).
 
-**Rules** : identiques à la sous-collection des bookings — `read` signed-in ; `create` admin/rootAdmin ou self-register (`status=='pending'` + `memberId == userDoc().memberId`) ; `update` admin/rootAdmin ou l'official sur `status`/`respondedAt` de sa propre assignation ; `delete` admin/rootAdmin.
+**Rules** : identiques à la sous-collection des bookings — `read` signed-in ; `create` admin/rootAdmin ou self-register (`status=='pending'` + `memberId == userDoc().memberId`) ; `update` admin/rootAdmin ou l'official sur `[status, respondedAt, replacementRequestedAt, replacementRequestedByUid]` de sa propre assignation ; `delete` admin/rootAdmin.
+
+NB : pour les matchs AWAY, la métrique `lastMinuteClaims` n'est **pas** calculée en MVP (le repo `buildOfficialMetricsBySeason` ne joint que `/bookings/{id}.date+startTime` ; les `/matches/{id}.date` portent la même info mais ne sont pas (encore) lus). `replacementsRequested` est calculé de la même façon pour HOME et AWAY (lecture du flag direct sur l'assignation).
 
 Le type partagé `OfficialAssignment` (`packages/shared-types/src/booking.ts`) couvre les deux sous-collections.
 
@@ -784,16 +881,116 @@ Référentiel éditable par l'admin (Settings → Licences).
 ### `/licenseRequests/{requestId}`
 ```ts
 {
-  memberId, teamId: string
-  requestedBy: string                // coach mobile
-  status: "pending" | "approved" | "rejected"
-  reviewedBy: string | null
+  memberId: string
+  teamId: string
+  seasonId: string                   // (NEW PR1) — utilisé pour l'ID déterministe
+  requestedBy: string                // coach mobile / app companion
+  status:
+    | "pending"                       // legacy — workflow simple historique (rétro-compat)
+    | "pending_parent_docs"           // (NEW) — demande créée, en attente upload parent
+    | "parent_docs_submitted"         // (NEW) — parent a envoyé, en attente review coach
+    | "coach_validated"               // (NEW PR2) — coach a validé chaque doc, en attente trésorier
+    | "awaiting_parent_signature"     // (NEW PR3 trésorier) — trésorier a uploadé le formulaire à signer
+    | "parent_signed"                 // (NEW PR3 trésorier) — parent a re-uploadé le doc signé
+    | "form_confirmed"                // (NEW PR3 trésorier) — trésorier a validé la conformité du signed doc
+    | "sent_paid"                     // (NEW PR3 trésorier) — envoyé fédération + payé ; /licenses créée en 'pending'
+    | "approved"                      // terminal — numéro de licence reçu, /licenses 'active'
+    | "rejected"                      // terminal
+
+  // Documents fédéraux (NEW PR1)
+  requiredDocs: LicenseDocKind[]                                  // figé à la création (immutable post-write — règle planifiée)
+  parentUserIds: string[]                                          // (NEW PR1.5) — snapshot member.linkedUserId ∪ guardianUserIds ; ancre statique pour rule LIST parent
+  uploadedDocs: Partial<Record<LicenseDocKind, UploadedDocRef>>   // défaut {} ; rempli par le parent — chaque ref porte (PR2/PR3) coachReview / treasurerReview ∈ DocReviewDecision | null
+  foreignPlayerContext: ForeignPlayerContext | null               // posé si club précédent étranger
+  parentSubmittedAvs: string | null                                // (NEW PR1.5) — AVS texte saisi par le parent (cas member.avs manquant)
+
+  // Dénormalisation lecture-side (NEW PR1) — posé par le coach à la création
+  denorm: {
+    memberFirstName: string
+    memberLastName: string
+    teamName: string
+    coachName: string
+  } | null
+
+  // Lifecycle timestamps
+  createdAt: Timestamp
+  parentCompletedAt: Timestamp | null                              // (NEW) — transition → parent_docs_submitted
+  coachValidatedAt: Timestamp | null                               // (NEW PR2) — transition → coach_validated
+  coachValidatedByUid: string | null                               // (NEW PR2)
+  reviewedBy: string | null                                        // trésorier/admin (transition terminal)
   reviewedAt: Timestamp | null
   adminComment: string | null
-  createdAt: Timestamp
+
+  // === Phase trésorier (NEW PR3 trésorier, 2026-05-24) ===========
+  // Tous null à la création (PR1). Backward-compat : demandes en
+  // coach_validated existantes n'ont pas ces champs → utiliser
+  // `.data.get('<field>', null)` dans les rules.
+
+  signableDocStoragePath: string | null         // (NEW) — formulaire fédéral pré-rempli uploadé par le trésorier (`licenseRequests/{uid}/{requestId}/signable.pdf`)
+  signableDocUploadedAt: Timestamp | null       // (NEW)
+  signableDocUploadedByUid: string | null       // (NEW) — uid trésorier
+
+  signedDocStoragePath: string | null           // (NEW) — doc signé re-uploadé par le parent (`licenseRequests/{uid}/{requestId}/signed.pdf`)
+  signedDocUploadedAt: Timestamp | null         // (NEW)
+  signedDocUploadedByUid: string | null         // (NEW) — uid parent (linked member ou guardian)
+
+  formConfirmedAt: Timestamp | null             // (NEW) — transition → form_confirmed
+  formConfirmedByUid: string | null             // (NEW) — uid trésorier
+
+  sentToFederationAt: Timestamp | null          // (NEW) — transition → sent_paid
+  paidAt: Timestamp | null                       // (NEW) — transition → sent_paid (paiement avant envoi)
+  paymentProofStoragePath: string | null        // (NEW) — extrait bancaire / e-banking (`licenseRequests/{uid}/{requestId}/payment-proof.{ext}`) ; optionnel, re-uploadable
+  paymentProofUploadedAt: Timestamp | null      // (NEW)
+
+  licenseNumber: string | null                  // (NEW) — saisi par le trésorier à la finalisation (transition → approved)
+  licenseFinalizedAt: Timestamp | null          // (NEW)
+  licenseFinalizedByUid: string | null          // (NEW) — uid trésorier
+
+  linkedLicenseId: string | null                // (NEW) — ref vers /licenses/{id} créée à sent_paid (status 'pending'), confirmée à approved (status 'active'). Bridge bidir avec license.requestId.
+
+  treasurerNotes: string | null                 // (NEW) — notes workflow interne trésorier (non visible parent)
 }
 ```
-Approval → `member.licensed = true`. Procédure fédérale hors-bande.
+
+**Convention ID déterministe** (PR1, 2026-05-23) : `lr-{memberId}-{seasonId}`. Garantit l'**idempotence** côté client : un double-clic coach écrit deux fois le même document (second write = no-op via `setDoc(merge:false)` ou check `getDoc` préalable). Permet aussi l'UX "demande déjà en cours" sans query supplémentaire.
+
+**Statuts — note de rétro-compat** : les nouvelles demandes créées par PR1 partent toujours en `pending_parent_docs`. Le statut legacy `pending` reste accepté pour rétro-compat avec les anciennes demandes mobile. Workflow cible :
+
+```
+pending_parent_docs
+  → parent_docs_submitted          (parent submit)
+    → coach_validated              (PR2 — coach valide chaque doc)
+      → awaiting_parent_signature  (trésorier uploade `signable.pdf`)
+        → parent_signed            (parent re-uploade `signed.pdf`)
+          → form_confirmed         (trésorier valide la conformité)
+            → sent_paid            (trésorier marque envoyé + payé → crée /licenses 'pending')
+              → approved           (terminal — trésorier saisit licenseNumber → /licenses 'active')
+(à tout moment depuis parent_docs_submitted jusqu'à sent_paid) → rejected (terminal)
+```
+
+À **`sent_paid`**, la `/licenses/{id}` est créée en `status: 'pending'` et est **immédiatement utilisable par le coach en match** (un joueur peut être aligné dès cet instant). À **`approved`**, la `/licenses` passe en `status: 'active'` via `confirmLicense` (chaîné par `treasurerFinalizeLicense`) qui pose aussi `member.licensed = true`, la dénormalisation `member.officialLicense` / `coachLicense` / `playerLicense`, et l'écriture comptable de la charge. La référence bidirectionnelle entre la demande et la licence est portée par `licenseRequest.linkedLicenseId` ↔ `license.requestId`.
+
+Détail : `docs/licenses/parent-completion-workflow.md`.
+
+**Per-doc review (PR2/PR3 — livré 2026-05-24)** : chaque `UploadedDocRef` porte deux sous-champs nullables, `coachReview: DocReviewDecision | null` (posé par `coachReviewLicenseDoc`) et `treasurerReview: DocReviewDecision | null` (posé par `treasurerReviewLicenseDoc`). Une `DocReviewDecision = { decision: 'accepted' | 'refused', at: Timestamp, byUid: string, refusalReason: string | null }`. **Pas d'historique** — chaque review écrase la précédente (volumétrie 1-2 refus typiquement). **Reset auto au re-upload** : quand le parent re-uploade un doc, le store réinitialise `coachReview = null` et `treasurerReview = null` sur ce doc (le doc repart depuis le début du cycle). Un refus coach passe la demande en `pending_parent_docs` ; un refus trésorier également + reset `coachValidatedAt/ByUid`.
+
+**Types canoniques** : `LicenseDocKind`, `UploadedDocRef`, `DocReviewDecision`, `ForeignPlayerContext`, `LicenseRequestData` (étendu), `inferRequiredDocs(member)` → `packages/shared-types/src/license.ts`. Le fichier `mock-fixtures/license-extended.ts` est un shim de re-export `@deprecated`.
+
+**Callables PR2/PR3** (Admin SDK, bypass rules — auth re-vérifiée serveur-side) :
+- `coachReviewLicenseDoc({requestId, kind, decision: 'accept'|'refuse', refusalReason?})` — coach scope (`teamId ∈ user.teamIds`), pré-condition `status === 'parent_docs_submitted'`. Refuse → status `pending_parent_docs`. Accept tous → status `coach_validated` + pose `coachValidatedAt/ByUid`. Output `{ ok, requestId, newStatus, allCoachAccepted }`.
+- `treasurerReviewLicenseDoc({requestId, kind, decision, refusalReason?})` — admin/treasurer/secretary/rootAdmin, pré-condition `status === 'coach_validated'`. Refuse → reset complet à `pending_parent_docs`. Accept tous → reste `coach_validated`. Output `{ ok, requestId, newStatus, allTreasurerAccepted }`.
+- `validateLicenseRequest({requestId, decision: 'approve'|'reject', comment?})` — admin/treasurer/secretary/rootAdmin, pré-condition `status === 'coach_validated'`. Approve : exige `allTreasurerAccepted`, crée `/licenses/{auto-id}` `status: 'pending'` (snapshot du premier `/licenseTypes` joueur actif), pose `request.status = 'approved'`. Reject : pose `request.status = 'rejected'`. Output `{ ok, requestId, newStatus, licenseId }`. La transition `pending → active` reste séparée via la callable existante `confirmLicense` (qui poste l'écriture comptable de la charge).
+
+**Callables phase trésorier** (NEW 2026-05-24 — auth `rootAdmin` OU rôle `treasurer` uniquement, **PAS admin** standard — cohérent avec le module compta) :
+
+- `treasurerUploadSignableDoc({requestId, storagePath, fileName, sizeBytes, contentType})` — pré-condition `status === 'coach_validated'`. Pose `signableDoc*` + status → `awaiting_parent_signature`. Output `{ newStatus: 'awaiting_parent_signature' }`. Le PDF doit être uploadé sur Storage AVANT l'appel (convention `licenseRequests/{uid}/{requestId}/signable.pdf`).
+- `treasurerConfirmSignedDoc({requestId, notes?})` — pré-condition `status === 'parent_signed'`. Pose `formConfirmedAt/ByUid` + status → `form_confirmed` + `treasurerNotes` (optionnel). Output `{ newStatus: 'form_confirmed' }`.
+- `treasurerMarkSentAndPaid({requestId, paymentProofStoragePath?})` — pré-condition `status === 'form_confirmed'`. Pose `sentToFederationAt`, `paidAt` (= now), `paymentProofStoragePath` (optionnel), status → `sent_paid`. **Crée la `/licenses/{id}` en `status: 'pending'`** (snapshot du 1er `/licenseTypes` joueur actif, `requestId` + `requestedByUid` posés) + `linkedLicenseId` sur la demande. Output `{ newStatus: 'sent_paid', licenseId }`. La licence est utilisable par le coach en match dès cet instant.
+- `treasurerFinalizeLicense({requestId, licenseNumber})` — pré-condition `status === 'sent_paid'` + `linkedLicenseId !== null`. Pose `licenseNumber`, `licenseFinalizedAt/ByUid`, status → `approved`. **Chaîne `confirmLicense`** sur `linkedLicenseId` (pending → active, dénorm membre, écriture comptable charge "Licences fédérales"). Pose `member.licenseNumber = licenseNumber` + `member.licensed = true`. Output `{ newStatus: 'approved', licenseId, memberPatch }`.
+
+**Rules `/licenseRequests` étendues** (cf. `firestore.rules`) pour la phase trésorier : update direct client autorisé pour `rootAdmin || treasurer` sur chacune des transitions whitelistées (5 patterns `affectedKeys.hasOnly([...])`, status pré + post enforced). Update parent autorisé pour `awaiting_parent_signature → parent_signed` (re-upload `signed.pdf`). Les transitions qui créent ou modifient `/licenses` (`sent_paid`, `approved`) passent en pratique par les callables Admin SDK — les rules sont des filets de sécurité (côté client direct, sans création /licenses). Tous les nouveaux champs sont lus en safe-access `.data.get('<field>', null)` pour rester compatibles avec les demandes legacy.
+
+Approval → création d'une `/licenses/{id}` `pending` via `validateLicenseRequest` (livré 2026-05-24). Le flip historique `member.licensed = true` reste maintenu en l'état jusqu'au refactor `member.licensed` dérivé (cf. `docs/main.md` § Licences, note Phase 2). Procédure fédérale Swiss Basketball / FIBA hors-bande pour la majorité des cas (cf. `docs/licenses/parent-completion-workflow.md` § FIBA).
 
 ### `/licenses/{id}`
 ```ts
@@ -811,6 +1008,8 @@ Approval → `member.licensed = true`. Procédure fédérale hors-bande.
   confirmedAt: Timestamp | null       // posé par confirmLicense, null tant que status !== 'active'
   confirmedByUid: string | null       // treasurer/admin/secretary/rootAdmin ayant confirmé
   accountingEntryId: string | null    // id de l'écriture /accountingEntries postée à la confirmation
+  requestId: string | null            // (NEW PR3) — ref inverse vers /licenseRequests/{id} si créée via validateLicenseRequest OU treasurerMarkSentAndPaid ; null pour création manuelle admin. Bridge bidir avec licenseRequest.linkedLicenseId.
+  requestedByUid: string | null       // (NEW PR3) — uid coach qui avait initié la demande (snapshot de request.requestedBy) ; null pour création manuelle
 }
 ```
 
@@ -1024,7 +1223,7 @@ Un projet = un club, donc pas de filtrage `clubId`.
 - **`/config/club`** : read auth users, write admin + `rootAdmin`.
 - **`/dues/`** : admin (all), treasurer (all, read-only via rules), coach (joueurs de ses équipes). Write admin + Functions. Coachs et treasurers **jamais** d'écriture directe — treasurer passe par la callable `markDuePaid`.
 - **`/paymentExceptionRequests/`** : coach crée pour ses joueurs, lit les siens. Admin lit/écrit tout.
-- **`/licenseRequests/`** : idem. `member.licensed` écrit seulement par admin (ou Function sur approval).
+- **`/licenseRequests/`** : **Read** : staff (rootAdmin/admin/coach team) + **`request.auth.uid in parentUserIds`** (ancre statique posée à la création coach — voir ci-dessous) + fallback legacy `isLinkedMember` / `isGuardianOf`. **Create** : admin/rootAdmin OU coach de la team. **Update** : admin/rootAdmin OU **parent (linked member / guardian, OU UID dans `parentUserIds`) en self-update** scopé — autorisé uniquement quand `status == 'pending_parent_docs'` et limité aux clés `uploadedDocs` / `foreignPlayerContext` / `parentSubmittedAvs` / `parentCompletedAt` / `status`, avec transition `status` verrouillée à `pending_parent_docs` ou `parent_docs_submitted` (pas de bypass vers `coach_validated` / `approved`). Cf. `docs/licenses/parent-completion-workflow.md`. **Update parent — phase trésorier** : autorisé aussi pour `awaiting_parent_signature → parent_signed` (re-upload `signedDocStoragePath` + timestamps), affectedKeys whitelist `[status, signedDocStoragePath, signedDocUploadedAt, signedDocUploadedByUid]`. **Update trésorier** (`rootAdmin || treasurer` — **pas admin standard**, cohérent avec le module compta) : autorisé sur 5 transitions whitelistées de la phase trésorier (`coach_validated → awaiting_parent_signature`, `parent_signed → form_confirmed`, `form_confirmed → sent_paid`, re-upload `paymentProof` à `sent_paid`, `sent_paid → approved`). Chaque transition a sa propre whitelist `affectedKeys.hasOnly([...])` — voir `firestore.rules` pour le détail. Les transitions qui créent/confirment une `/licenses` (`sent_paid`, `approved`) passent en pratique par des callables Admin SDK (`treasurerMarkSentAndPaid`, `treasurerFinalizeLicense`) ; les rules sont des filets de sécurité. **Delete** : admin/rootAdmin uniquement. `member.licensed` écrit seulement par admin (ou callable sur approval). **Pourquoi `parentUserIds`** : la rule `isGuardianOf` fait un `get()` cross-doc dynamique → Firestore peut refuser une LIST query parent en bloc (cf. memo `firestore-list-query-dynamic-rule` + cas vécu sur `/dues` avec `registeredByUid`). L'ancre statique `parentUserIds` permet une query `where parentUserIds array-contains uid` statiquement pré-validable. **Accès safe aux nouveaux champs** : les rules utilisent `.data.get('<field>', null)` pour tous les champs phase trésorier — les demandes legacy en `coach_validated` n'ont pas ces champs, et un accès direct `.data.field` throw côté Rules engine (cf. mémoire `firestore-rules-safe-field-access`).
 - **`/licenses/`** : instances de licences émises. **Read** : staff (rootAdmin/admin/coach/treasurer/secretary) + le membre lié (`isLinkedMember`) + ses tuteurs (`isGuardianOf`). **Create** : admin/rootAdmin (création en `pending` depuis la fiche membre). **Update/delete** : admin/rootAdmin uniquement. La confirmation (`status:'active'` + `accountingEntryId` + réfs dénormalisées + écriture comptable) passe par la callable `confirmLicense` (Admin SDK, bypass rules, re-vérifie le scope treasurer/admin/secretary/rootAdmin) — treasurer/secretary **n'ont pas** de write direct ici. **Pas** de garde `!callerSuspended()` : comme `/dues`, un membre inactif garde la lecture de sa propre licence.
 - **Auto-inscription officiel** (`officialAssignments` create self-register, sur `/bookings` et `/matches`) : exige désormais que le membre du caller ait une licence d'officiel active — helper `callerHasOfficialLicense()` = `member.officialLicense != null` (accès défensif `get('officialLicense', null)`). Le check **saison-précis** (la licence cible-t-elle la saison courante ?) n'est **pas** faisable en rules — `/config/club` ne porte pas de pointeur de saison active et déterminer la saison `status:'active'` exigerait une query collection (interdite en rules). Ce check est porté côté UI/callable d'assignation ; les rules font la garde grossière (défense en profondeur). L'accès admin/rootAdmin n'est pas affecté.
 - **`/users/{uid}`** : self-create autorisé (par l'app register) avec contraintes whitelist — `request.auth.uid == uid`, `roles.size() == 0`, `memberId == null`, `teamIds.size() == 0`. Self-update sur les champs profil (`displayName`, `photoURL`, `phone`, `address`, `profileCompletedAt`) ; les champs `roles` / `memberId` / `teamIds` restent admin-only.
@@ -1107,7 +1306,7 @@ Cf. `storage.rules`. Les seuls paths autorisés :
 |---|---|---|---|
 | `/club/logo/{file}` | signed-in | signed-in (≤ 2 MB, `image/*`) | Logo du club. La garde admin réelle est sur `/config/club.logo` (Firestore rule write admin-only) — un non-admin peut uploader mais ne peut pas faire pointer la config vers le fichier. Le repo `settings.repo.ts` (`uploadClubLogo` / `deleteClubLogoByUrl`) gère le path `club/logo/logo_<timestamp><.ext>` pour cache-busting. |
 | `/registrations/{uid}/{regId}/{file}` | signed-in | auteur (≤ 10 MB, `image/*` ou PDF) | Pièces de registration (lettre de sortie). Cf. `docs/chantier-registrations.md` §12. |
-| `/licenseRequests/{uid}/{requestId}/{file}` | signed-in | auteur (≤ 10 MB, `image/*` ou PDF) | Pièces de demande de licence. Mapping uid ↔ memberId enforced côté callable, pas côté Storage rules (limitation cross-doc). |
+| `/licenseRequests/{uid}/{requestId}/{file}` | signed-in | auteur (≤ 10 MB, `image/*` ou PDF) | Pièces de demande de licence. Côté parent : `id_front`, `id_back`, `avs`, `transfer_letter_swiss` + `signed.pdf` (re-upload doc signé). Côté trésorier : `signable.pdf` (formulaire fédéral pré-rempli) + `payment-proof.{ext}` (extrait bancaire). Mapping uid ↔ memberId + check rôle trésorier enforced côté callable (pas côté Storage — limitation cross-doc + Storage ne lit pas Firestore). |
 | `/accounting/invoices/{invoiceId}/{file}` | signed-in | signed-in (≤ 10 MB, `image/*` ou PDF) | Scans/PDF des factures fournisseurs (module Comptabilité). La garde treasurer/rootAdmin est sur la collection Firestore `/invoices` (write treasurer-only) qui porte le `storagePath` — Storage rules ne peuvent pas faire de cross-doc lookup. Cf. `docs/compta.md`. |
 
 Tout autre path est deny par défaut.
@@ -1191,6 +1390,9 @@ Déployées sur **chaque projet client** via CI cross-projet (voir `deployment.m
 | `syncMemberDuesStatus` | `/dues/*` write | Recompute `member.duesStatus` (source unique pour UI). |
 | `applyPaymentException` | `paymentExceptionRequests/*` update | Approve → applique new dates au `due`. Reject → restore. |
 | `applyLicenseRequest` | `licenseRequests/*` update | Approve → `member.licensed = true`. |
+| `coachReviewLicenseDoc` | Callable (coach/admin scope) | Review per-doc d'une `/licenseRequests/{id}` par le coach (PR2). Input `{ requestId, kind, decision: 'accept'|'refuse', refusalReason? }`. Pré-condition `status === 'parent_docs_submitted'`. Refuse → `pending_parent_docs` + reset `coachValidatedAt/ByUid`. Accept tous → `coach_validated`. Output `{ ok, requestId, newStatus, allCoachAccepted }`. Cf. `docs/licenses/parent-completion-workflow.md`. |
+| `treasurerReviewLicenseDoc` | Callable (admin/treasurer/secretary/rootAdmin) | Review per-doc d'une `/licenseRequests/{id}` par le trésorier (PR3). Input `{ requestId, kind, decision, refusalReason? }`. Pré-condition `status === 'coach_validated'`. Refuse → reset complet à `pending_parent_docs`. Accept tous → reste `coach_validated` (le trésorier doit ensuite appeler `validateLicenseRequest`). Output `{ ok, requestId, newStatus, allTreasurerAccepted }`. |
+| `validateLicenseRequest` | Callable (admin/treasurer/secretary/rootAdmin) | Décision finale (PR3). Input `{ requestId, decision: 'approve'|'reject', comment? }`. Pré-condition `status === 'coach_validated'`. Approve : exige que tous les `requiredDocs` aient `treasurerReview.accepted`, crée `/licenses/{auto-id}` `status:'pending'` (snapshot 1er `/licenseTypes` joueur actif), pose `request.status = 'approved'`. Reject : pose `request.status = 'rejected'`. Output `{ ok, requestId, newStatus, licenseId }`. NB : la transition `pending → active` reste séparée via `confirmLicense`. |
 | `runMigrations` | Callable (admin-only) | Applique migrations en attente jusqu'à version cible. Idempotent. |
 | `setRootAdminClaim` | Callable (rootAdmin-only) | Toggle le claim `rootAdmin` sur un user (par email). Préserve les autres claims. Le caller ne peut pas se révoquer lui-même. Bootstrap du tout premier rootAdmin : via script Admin SDK hors-app. |
 | `listRootAdminUids` | Callable (admin-only) | Retourne `{ uids: string[] }` — les uids portant le claim `rootAdmin: true`. Le claim vit côté Auth (pas Firestore) ; cette callable résout le badge rootAdmin sur l'écran Settings → Admin team. Pagination via `admin.auth().listUsers()`. |
@@ -1216,8 +1418,16 @@ Déployées sur **chaque projet client** via CI cross-projet (voir `deployment.m
 | `syncUserRolesFromMember` | Firestore trigger (`/members/{id}` write) | Propage `member.roles` → `/users/{linkedUserId}.roles` (copie verbatim, écrase). Délien/suppression → roles de l'ancien user remis à `[]`. Les rôles du membre définissent les rôles Auth. |
 | `unlinkGuardian` | Callable (signed-in) | Self-service depuis l'app register (page « Mon compte ») : le caller se retire de `/members/{id}.guardianUserIds`. Garde : caller doit être dans le tableau. Idempotent (déjà absent → ok). Aucune autre cascade — un member sans tuteur restant est laissé en l'état (admin doit re-lier ou archiver). |
 | `deleteMyAccount` | Callable (signed-in) | Self-service depuis l'app register (page « Mon compte », zone dangereuse) : suppression intégrale RGPD du caller — Firebase Auth + `/users/{uid}` + linked `/members/{id}` (cascade dues non-paid + retrait teams + unlink registrations + suppression des drafts + suppression des `/users/{uid}/fcmTokens/*`). Bloque si pupille restant (`failed-precondition`) ou si linked member a un due `paid` (préservation comptable). Anti-fat-finger : `confirmText` doit valoir littéralement `"SUPPRIMER"`. `admin.auth().deleteUser()` est hors transaction Firestore (best-effort) ; `authDeleted: false` signale au client un cleanup partiel à reporter à l'admin. |
+| `listBasketplanLeagueHoldings` | Callable (signed-in) | Fetch `findAllLeagueHoldings.do?federationId=X` + parse + cache 1h en mémoire. Retourne `LeagueHolding[]` filtré sur les 2 dernières saisons. Sert le step 2 du dialog de linkage. |
+| `listClubTeamsInLeague` | Callable (signed-in) | Fetch `showLeagueSchedule.do?leagueHoldingId=Y` + extrait les équipes du `config.club.basketplan.clubId` (dédupliquées). Step 3 du dialog. |
+| `linkTeamToBasketplan` | Callable (admin OR coach-of-team) | Ajoute un `BasketplanCompetitionLink` à `/teams/{id}.basketplanLinks`. Résout les caches d'affichage côté serveur (re-fetch). Garde dédup `(federationId, leagueHoldingId, teamIdInLeague)`. |
+| `unlinkTeamBasketplan` | Callable (admin OR coach-of-team) | Retire un lien (filter out par `linkId`). Idempotent. |
+| `toggleTeamBasketplanLink` | Callable (admin OR coach-of-team) | Bascule `active` sur un lien sans le supprimer. |
+| `testBasketplanConnection` | Callable (admin) | Ping `findAllLeagueHoldings.do?federationId=<defaultFederationId>` pour diagnostic Settings. Retourne `{ ok, leagueCount }` ou `{ ok: false, error }`. |
+| `syncBasketplanForTeam` | Callable (admin OR coach-of-team) | Sync à la demande de tous les `basketplanLinks` actifs d'une team. Réutilise `applyGame` (cf. ci-dessous). Try/catch indépendant par link. Retour : `{ ok: true, summary: { perLink: [...] } }`. Update `team.basketplanSyncedAt`. Ne touche pas à `config.basketplan.lastSyncAt` (réservé au cron global). |
+| `scheduledBasketplanSync` | Scheduled (`0 3 * * *` Europe/Zurich) | Sync nocturne global. No-op si `config.club.basketplan.enabled !== true`. Pour chaque team avec `basketplanLinks` actifs → fetch + parse + `applyGame` par game. Update `team.basketplanSyncedAt` + `config.basketplan.lastSyncAt`/`lastSyncError`. |
 
-> Les 5 dernières fonctions mobile (`fanoutNotification` + 4 callables `coach*`) sont introduites par le chantier app mobile Flutter — cf. `docs/mobile-app.md`. Les callables `coach*` re-vérifient le scope coach côté serveur (Admin SDK) car `/members` et `/matches` sont write-admin-only dans `firestore.rules`. Les 2 callables self-service (`unlinkGuardian` + `deleteMyAccount`) sont introduites pour la page « Mon compte » de l'app `apps/courtbase-register` — cf. `docs/chantier-registrations.md` §"Self-service compte / RGPD".
+> Les 5 fonctions mobile (`fanoutNotification` + 4 callables `coach*`) sont introduites par le chantier app mobile Flutter — cf. `docs/mobile-app.md`. Les callables `coach*` re-vérifient le scope coach côté serveur (Admin SDK) car `/members` et `/matches` sont write-admin-only dans `firestore.rules`. Les 2 callables self-service (`unlinkGuardian` + `deleteMyAccount`) sont introduites pour la page « Mon compte » de l'app `apps/courtbase-register` — cf. `docs/chantier-registrations.md` §"Self-service compte / RGPD". Les 8 callables `Basketplan` (6 mapping PR 1 + 1 sync callable PR 2 + 1 cron PR 2) sont introduites par le chantier d'intégration Swiss Basketball — cf. `docs/basketplan-integration.md` et `docs/chantier-basketplan.md`.
 
 ## Auth
 

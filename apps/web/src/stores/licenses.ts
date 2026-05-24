@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
   createLicense as repoCreateLicense,
+  deleteLicense as repoDeleteLicense,
   listMemberLicenses,
   type CreateLicenseInput,
 } from '@/repositories/licenses.repo'
@@ -38,6 +39,8 @@ export const useLicensesStore = defineStore('licenses', () => {
   const creating = ref(false)
   /** Id de la licence sur laquelle une confirmation est en cours. */
   const confirmingId = ref<string | null>(null)
+  /** Id de la licence sur laquelle une suppression est en cours. */
+  const removingId = ref<string | null>(null)
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -71,6 +74,7 @@ export const useLicensesStore = defineStore('licenses', () => {
     loading.value = false
     creating.value = false
     confirmingId.value = null
+    removingId.value = null
   }
 
   /**
@@ -119,6 +123,30 @@ export const useLicensesStore = defineStore('licenses', () => {
     }
   }
 
+  /**
+   * Supprime une licence `pending` (jamais activée pour la saison). Retire
+   * la ligne du cache local sur succès. Retourne `true` sur succès.
+   * Les licences `active` / `cancelled` ne peuvent PAS être supprimées —
+   * voir `deleteLicense` du repo pour la garde de status.
+   */
+  async function remove(licenseId: string): Promise<boolean> {
+    error.value = null
+    removingId.value = licenseId
+    try {
+      await repoDeleteLicense(licenseId)
+      licenses.value = licenses.value.filter((l) => l.id !== licenseId)
+      return true
+    } catch (e: unknown) {
+      const code = e instanceof FirebaseError ? e.code : 'unknown'
+      console.error(`[licenses store/remove] failed [${code}]`, e)
+      error.value =
+        e instanceof Error ? e.message : 'Erreur lors de la suppression de la licence'
+      return false
+    } finally {
+      removingId.value = null
+    }
+  }
+
   return {
     // state
     licenses,
@@ -126,10 +154,12 @@ export const useLicensesStore = defineStore('licenses', () => {
     error,
     creating,
     confirmingId,
+    removingId,
     // actions
     load,
     reset,
     create,
     confirm,
+    remove,
   }
 })

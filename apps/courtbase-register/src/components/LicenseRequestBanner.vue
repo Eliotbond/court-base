@@ -11,10 +11,10 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronRight, FileSignature } from 'lucide-vue-next'
-import type { LicenseRequestMock } from '@club-app/shared-types'
+import type { LicenseRequest } from '@club-app/shared-types'
 
 const props = defineProps<{
-  requests: LicenseRequestMock[]
+  requests: LicenseRequest[]
 }>()
 
 const router = useRouter()
@@ -25,12 +25,24 @@ function openRequest(requestId: string): void {
   void router.push({ name: 'license-request', params: { requestId } })
 }
 
-function subLine(req: LicenseRequestMock): string {
+function memberFirstName(req: LicenseRequest): string {
+  return req.denorm?.memberFirstName ?? 'Joueur'
+}
+function memberLastName(req: LicenseRequest): string {
+  return req.denorm?.memberLastName ?? ''
+}
+function memberInitials(req: LicenseRequest): string {
+  const f = memberFirstName(req).charAt(0).toUpperCase()
+  const l = memberLastName(req).charAt(0).toUpperCase()
+  return (f + l) || 'J'
+}
+function subLine(req: LicenseRequest): string {
   const docsLabel =
     req.requiredDocs.length === 1
       ? '1 document requis'
       : `${req.requiredDocs.length} documents requis`
-  return `${req.denorm.teamName} · ${docsLabel}`
+  const team = req.denorm?.teamName ?? 'Équipe'
+  return `${team} · ${docsLabel}`
 }
 </script>
 
@@ -53,15 +65,15 @@ function subLine(req: LicenseRequestMock): string {
       :key="req.id"
       type="button"
       class="lrb__row"
-      :aria-label="`Compléter la demande pour ${req.denorm.memberFirstName} ${req.denorm.memberLastName}`"
+      :aria-label="`Compléter la demande pour ${memberFirstName(req)} ${memberLastName(req)}`"
       @click="openRequest(req.id)"
     >
       <div class="avatar lrb__row-avatar">
-        {{ (req.denorm.memberFirstName.charAt(0) + req.denorm.memberLastName.charAt(0)).toUpperCase() }}
+        {{ memberInitials(req) }}
       </div>
       <div class="lrb__row-body">
         <div class="lrb__row-name">
-          {{ req.denorm.memberFirstName }} {{ req.denorm.memberLastName }}
+          {{ memberFirstName(req) }} {{ memberLastName(req) }}
         </div>
         <div class="lrb__row-sub">
           {{ subLine(req) }}

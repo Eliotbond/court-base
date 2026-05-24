@@ -40,6 +40,28 @@ function snapToMember(snap: { id: string; data: () => unknown }): Member {
   return { id: snap.id, ...data }
 }
 
+/**
+ * Check robuste pour `permission-denied`. On NE peut pas se reposer sur
+ * `err instanceof FirestoreError` : le bundling (tree-shaking, multiple
+ * versions du SDK Firebase) peut produire une instance qui n'est pas
+ * reconnue par l'opérateur instanceof, même si l'erreur EST une
+ * FirestoreError sémantique. Symptôme vécu : le check ratait silencieusement
+ * et le throw remontait jusqu'au store, qui affichait le bandeau d'erreur.
+ *
+ * On check sur le `.code` directement — c'est le contrat stable de
+ * `FirebaseError` et toutes ses sous-classes, et c'est ce que Firestore
+ * peuple côté serveur (immuable). `FirestoreError` reste importé pour
+ * d'éventuels usages où l'instance type est garantie (jamais ici).
+ */
+function isPermissionDenied(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code: unknown }).code === 'permission-denied'
+  )
+}
+
 /** Lecture du member lié au user authentifié (self). */
 export async function getLinkedMember(memberId: string): Promise<Member | null> {
   try {
@@ -47,9 +69,7 @@ export async function getLinkedMember(memberId: string): Promise<Member | null> 
     if (!snap.exists()) return null
     return snapToMember(snap)
   } catch (err) {
-    if (err instanceof FirestoreError && err.code === 'permission-denied') {
-      return null
-    }
+    if (isPermissionDenied(err)) return null
     throw err
   }
 }
@@ -83,9 +103,7 @@ export async function listMyDependents(uid: string): Promise<Member[]> {
       .map(snapToMember)
       .sort((a, b) => (a.lastName ?? '').localeCompare(b.lastName ?? ''))
   } catch (err) {
-    if (err instanceof FirestoreError && err.code === 'permission-denied') {
-      return []
-    }
+    if (isPermissionDenied(err)) return []
     throw err
   }
 }
@@ -108,9 +126,7 @@ export async function getMemberContact(
     if (!snap.exists()) return null
     return snap.data() as MemberContactData
   } catch (err) {
-    if (err instanceof FirestoreError && err.code === 'permission-denied') {
-      return null
-    }
+    if (isPermissionDenied(err)) return null
     throw err
   }
 }

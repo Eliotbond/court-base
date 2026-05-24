@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { clearLastWizardRoute, readLastWizardRoute } from '@/router'
 import type { Registration, RegistrationStatus } from '@club-app/shared-types'
 import {
   AlertTriangle,
   Banknote,
   CalendarClock,
   CheckCircle2,
+  ChevronRight,
   CircleDashed,
   FileText,
   Hourglass,
+  IdCard,
   Info,
   LogOut,
   Plus,
@@ -29,9 +32,6 @@ const registrations = useRegistrationsStore()
 const dues = useDuesStore()
 const licenseRequests = useLicenseRequestsStore()
 const router = useRouter()
-
-/** True en mode dev local — branche le bouton "Simuler demande coach". */
-const isDev = import.meta.env.DEV
 
 const menuOpen = ref(false)
 
@@ -74,38 +74,15 @@ onMounted(async () => {
     // parallélise les deux queries Firestore). Indépendant : même si le
     // fetch dues plante, l'écran continue de fonctionner pour le reste.
     await dues.loadMyDues()
+    // Demandes de licence parent — résout self linked + pupilles puis liste
+    // les `/licenseRequests` accessibles. Best-effort : un fetch raté
+    // dégrade en banner absent (cf. store catch enrichi).
+    await licenseRequests.loadMyRequests(
+      auth.authSnap.uid,
+      auth.userDoc?.memberId ?? null,
+    )
   }
-  // Demandes de licence parent (mock-only) — charge fixtures + overrides
-  // sessionStorage. Synchrone côté repo, donc instantané. Indépendant des
-  // autres fetches (pas de pré-condition uid).
-  await licenseRequests.loadAll()
 })
-
-/**
- * Bouton dev — seed une demande de licence factice pour le premier
- * pupille (ou self linked member). Permet de démontrer le banner et le
- * formulaire sans devoir passer par l'app coach. Visible uniquement en
- * mode `import.meta.env.DEV`.
- */
-function onSeedMockLicenseRequest(): void {
-  // Pioche un member parmi les inscriptions actives pour récupérer un
-  // first/last name réaliste. Fallback : noms génériques.
-  const reg = activeList.value[0]
-  const memberId = reg?.matchedMemberId ?? 'm-demo'
-  const firstName = reg?.player.firstName ?? 'Démo'
-  const lastName = reg?.player.lastName ?? 'Joueur'
-  const created = licenseRequests.seedMock({
-    memberId,
-    teamId: 'team-demo',
-    memberFirstName: firstName,
-    memberLastName: lastName,
-    teamName: 'Équipe (dev)',
-    coachName: 'Coach Démo',
-    requiredDocs: ['id_front', 'id_back'],
-  })
-  // eslint-disable-next-line no-console
-  console.info('[dev] seeded license request', created.id)
-}
 
 interface StatusVisual {
   pillClass: string
@@ -155,9 +132,40 @@ function teamLine(reg: Registration): string {
   return statusVisual(reg.status).label
 }
 
+/**
+ * Détermine où ramener le user à partir de l'état du draft. Utilisé en
+ * fallback quand on n'a pas de `lastWizardRoute` mémorisé (cas tab fermé
+ * et réouvert). Les défauts de `createDraft` ne permettent pas de
+ * distinguer "Step 5 visité avec previouslyLicensed=false" de "Step 5 pas
+ * encore vu" — on assume donc que dès qu'une équipe est choisie, l'user
+ * doit pouvoir reprendre à Step 5 pour confirmer/ajuster.
+ */
+function resumeRouteFromDraft(reg: Registration): string {
+  if (!reg.player.firstName?.trim() && !reg.player.lastName?.trim()) {
+    return 'wiz-step-2'
+  }
+  if (!reg.teamId) {
+    return 'wiz-step-3'
+  }
+  // teamId set → l'user a passé Step 3 + Step 4 (acknowledge). Le ramener
+  // à Step 5 pour confirmer contact + ancien club.
+  return 'wiz-step-5'
+}
+
 function onResumeDraft(reg: Registration) {
   registrations.resumeDraft(reg.id)
-  router.push('/register/step-1')
+  // 1. Priorité au dernier step visité dans CE tab (sessionStorage).
+  // 2. Fallback : heuristique sur l'état du draft.
+  // 3. Ultime fallback : step-1 (sécurité).
+  let target = readLastWizardRoute() ?? resumeRouteFromDraft(reg)
+  // Step 6 a été déprécié (redirige vers Step 7) : on by-passe directement.
+  if (target === 'wiz-step-6') target = 'wiz-step-7'
+  router
+    .push({ name: target })
+    .catch(() => {
+      // Route inconnue (renommée entre-temps ?) → step-1.
+      void router.push('/register/step-1')
+    })
 }
 
 const deletingDraftId = ref<string | null>(null)
@@ -175,6 +183,7 @@ async function onDeleteDraft(reg: Registration) {
   deletingDraftId.value = reg.id
   try {
     await registrations.removeDraft(reg.id)
+    clearLastWizardRoute()
   } catch (err) {
     console.error('removeDraft failed', err)
     window.alert("Impossible de supprimer ce brouillon. Réessayez plus tard.")
@@ -185,6 +194,7 @@ async function onDeleteDraft(reg: Registration) {
 
 function onStartNew() {
   registrations.clearDraft()
+  clearLastWizardRoute()
   router.push('/register/step-1')
 }
 
@@ -360,22 +370,35 @@ async function onSignOut() {
       />
 
       <!--
+        Card "Mes licences" — point d'entrée vers la liste complète des
+        demandes (tous statuts, self + pupilles). N'apparaît que si au
+        moins une demande est connue, peu importe son statut : sinon, il
+        n'y a rien à montrer et la card serait du bruit visuel.
+      -->
+      <button
+        v-if="licenseRequests.requests.length > 0"
+        type="button"
+        class="card home__licenses-card"
+        @click="() => void router.push({ name: 'my-licenses' })"
+      >
+        <div class="home__licenses-ic">
+          <IdCard :size="16" />
+        </div>
+        <div class="home__licenses-body">
+          <div class="home__licenses-title">Mes licences</div>
+          <div class="home__licenses-sub">
+            {{ licenseRequests.requests.length }} demande{{ licenseRequests.requests.length > 1 ? 's' : '' }} au total
+          </div>
+        </div>
+        <ChevronRight :size="16" class="home__licenses-chev" />
+      </button>
+
+      <!--
         Panneau "Mes cotisations". Rend uniquement si `dues.hasActiveDues` ;
         sinon le composant ne rend rien (pas de carte vide). Positionné en
         tête pour que l'utilisateur voit l'action à faire dès l'arrivée.
       -->
       <MyCotisationsPanel v-if="dues.hasActiveDues" />
-
-      <!-- Bouton dev — uniquement en mode DEV (import.meta.env.DEV). -->
-      <div v-if="isDev" class="home__dev">
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm"
-          @click="onSeedMockLicenseRequest"
-        >
-          🧪 Simuler demande coach
-        </button>
-      </div>
 
       <!-- Erreur de chargement (ex. index Firestore manquant, rules trop strictes). -->
       <!-- L'utilisateur ne peut pas corriger ça lui-même : on l'informe pour qu'il -->
@@ -979,6 +1002,53 @@ async function onSignOut() {
   font-weight: 500;
 }
 
+.home__licenses-card {
+  margin-top: 12px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+}
+.home__licenses-card:hover {
+  background: #f8fafc;
+}
+.home__licenses-ic {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #4338ca;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.home__licenses-body {
+  flex: 1;
+  min-width: 0;
+}
+.home__licenses-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+.home__licenses-sub {
+  font-size: 11.5px;
+  color: #64748b;
+  margin-top: 2px;
+}
+.home__licenses-chev {
+  color: #94a3b8;
+  flex: none;
+}
+
 .home__error {
   margin-top: 16px;
   align-items: flex-start;
@@ -1015,13 +1085,6 @@ async function onSignOut() {
   color: #64748b;
   margin: 6px 12px 0;
   line-height: 1.6;
-}
-
-.home__dev {
-  margin-top: 12px;
-  display: flex;
-  justify-content: flex-end;
-  opacity: 0.7;
 }
 
 .home__bottom {

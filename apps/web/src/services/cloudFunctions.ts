@@ -1,5 +1,18 @@
 import { httpsCallable, type HttpsCallableResult } from 'firebase/functions'
-import type { CotisationStatus } from '@club-app/shared-types'
+import type {
+  BasketplanCompetitionLink,
+  CotisationStatus,
+  LicenseDocKind,
+  LicenseRequestStatus,
+  TreasurerConfirmSignedDocInput,
+  TreasurerConfirmSignedDocResult,
+  TreasurerFinalizeLicenseInput,
+  TreasurerFinalizeLicenseResult,
+  TreasurerMarkSentAndPaidInput,
+  TreasurerMarkSentAndPaidResult,
+  TreasurerUploadSignableDocInput,
+  TreasurerUploadSignableDocResult,
+} from '@club-app/shared-types'
 import { functions } from './firebase'
 
 // =============================================================================
@@ -504,5 +517,563 @@ export async function confirmLicense(
     'confirmLicense',
   )
   const result: HttpsCallableResult<ConfirmLicenseOutput> = await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// treasurerReviewLicenseDoc — review per-doc d'une /licenseRequests par un
+// trésorier/admin/secrétaire (PR3 workflow demande de licence parent).
+//
+// Symétrique à `coachReviewLicenseDoc` mais opère après le coach :
+//   - pré-condition serveur : `request.status === 'coach_validated'` ;
+//   - pose la review sur `uploadedDocs.{kind}.treasurerReview` ;
+//   - **refus** → reset complet (status → `pending_parent_docs`, reset
+//     `coachValidatedAt/ByUid` à `null`) ;
+//   - **accept** → status reste `coach_validated`. Pour finaliser, le
+//     trésorier doit appeler `validateLicenseRequest` séparément.
+//
+// Côté functions : functions/src/licenses/treasurerReviewLicenseDoc.ts
+// Auth : claim `rootAdmin` OU rôle `admin | treasurer | secretary`. Codes
+// d'erreur typiques :
+//   - permission-denied   → caller n'a pas le rôle requis
+//   - failed-precondition → status != `coach_validated`, kind pas dans
+//                            `requiredDocs`, ou doc pas encore uploadé
+//   - invalid-argument    → `kind` inconnu, `decision` invalide, ou
+//                            `refusalReason` mal formaté (trim + 5..500 chars)
+//   - not-found           → requestId inexistant
+// -----------------------------------------------------------------------------
+export interface TreasurerReviewLicenseDocInput {
+  requestId: string
+  kind: LicenseDocKind
+  decision: 'accept' | 'refuse'
+  /** Requis si `decision === 'refuse'`. Trim + length ∈ [5, 500] côté serveur. */
+  refusalReason?: string
+}
+
+export interface TreasurerReviewLicenseDocOutput {
+  ok: true
+  requestId: string
+  newStatus: LicenseRequestStatus
+  /** `true` si tous les `requiredDocs` ont désormais `treasurerReview.accepted`. */
+  allTreasurerAccepted: boolean
+}
+
+export async function treasurerReviewLicenseDoc(
+  input: TreasurerReviewLicenseDocInput,
+): Promise<TreasurerReviewLicenseDocOutput> {
+  const callable = httpsCallable<
+    TreasurerReviewLicenseDocInput,
+    TreasurerReviewLicenseDocOutput
+  >(functions, 'treasurerReviewLicenseDoc')
+  const result: HttpsCallableResult<TreasurerReviewLicenseDocOutput> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// validateLicenseRequest — décision finale (approve / reject) sur une
+// /licenseRequests par un trésorier/admin/secrétaire (PR3).
+//
+// Effets côté serveur :
+//   - approve : exige que tous les `requiredDocs` aient `treasurerReview.accepted`
+//     (sinon `failed-precondition`), résout le 1er `/licenseTypes` joueur actif
+//     (sinon `failed-precondition` "Aucun /licenseTypes joueur actif"), crée
+//     `/licenses/{auto-id}` `status:'pending'` avec snapshot
+//     `role/level/name/fee` + `requestId` + `requestedByUid`, pose
+//     `request.status = 'approved'`.
+//   - reject : pose `request.status = 'rejected'`. Pas de licence créée.
+//
+// La transition `pending → active` + l'écriture comptable de la charge restent
+// gérées par `confirmLicense` séparément (cf. wrapper ci-dessus).
+//
+// Côté functions : functions/src/licenses/validateLicenseRequest.ts
+// Auth : claim `rootAdmin` OU rôle `admin | treasurer | secretary`. Codes
+// d'erreur typiques :
+//   - permission-denied   → caller n'a pas le rôle requis
+//   - failed-precondition → status != `coach_validated`, ou approve sans
+//                            que tous les docs soient validés trésorier, ou
+//                            aucun /licenseTypes joueur actif
+//   - invalid-argument    → decision invalide, ou comment > 500 chars
+//   - not-found           → requestId inexistant (ou memberId orphelin)
+// -----------------------------------------------------------------------------
+export interface ValidateLicenseRequestInput {
+  requestId: string
+  decision: 'approve' | 'reject'
+  /** Optionnel — trim + length ≤ 500 côté serveur. Vide / whitespace = null. */
+  comment?: string
+}
+
+export interface ValidateLicenseRequestOutput {
+  ok: true
+  requestId: string
+  newStatus: 'approved' | 'rejected'
+  /** id `/licenses/{id}` créée si `approve`, `null` si `reject`. */
+  licenseId: string | null
+}
+
+export async function validateLicenseRequest(
+  input: ValidateLicenseRequestInput,
+): Promise<ValidateLicenseRequestOutput> {
+  const callable = httpsCallable<
+    ValidateLicenseRequestInput,
+    ValidateLicenseRequestOutput
+  >(functions, 'validateLicenseRequest')
+  const result: HttpsCallableResult<ValidateLicenseRequestOutput> =
+    await callable(input)
+  return result.data
+}
+
+// =============================================================================
+// Basketplan — wrappers PR 1 (mapping team ↔ compétitions Swiss Basketball).
+// Côté functions : functions/src/basketplan/*. Tous les callables sont en
+// europe-west6. Le scope auth est appliqué côté serveur via
+// `assertAdminOrCoachOfTeam` / `assertAdminOnly` — le client n'ajoute pas de
+// garde supplémentaire (mais l'UI peut masquer les CTA hors-scope).
+//
+// Voir docs/basketplan-integration.md § 5 pour le contrat détaillé et
+// docs/chantier-basketplan.md (PR 1) pour le plan d'exécution.
+// =============================================================================
+
+/**
+ * Description d'une compétition Basketplan (championnat/coupe) renvoyée par
+ * `listBasketplanLeagueHoldings`. Type dupliqué depuis
+ * `functions/src/basketplan/_parsers.ts` (`LeagueHolding`) — gardé en sync
+ * manuel comme les autres types I/O des callables. Ne pas importer du serveur
+ * (ce package n'est pas dépendance du front).
+ */
+export interface BasketplanLeagueHolding {
+  id: number
+  name: string
+  fullName: string
+  federationCode: string
+  federationId: number
+  season: string
+  sex: 'M' | 'F' | 'X'
+  /** YYYY-MM-DD */
+  from: string
+  /** YYYY-MM-DD */
+  to: string
+}
+
+/**
+ * Équipe d'un club, telle qu'inscrite dans une compétition donnée. Type
+ * dupliqué depuis `functions/src/basketplan/_parsers.ts`
+ * (`ClubTeamInLeague`).
+ */
+export interface BasketplanClubTeamInLeague {
+  id: number
+  name: string
+  clubId: number
+  clubName: string
+}
+
+// -----------------------------------------------------------------------------
+// listBasketplanLeagueHoldings — Liste les compétitions d'une fédération
+// (cache mémoire 1h côté serveur). Auth : signed-in.
+// Côté functions : functions/src/basketplan/listLeagueHoldings.ts
+// Codes d'erreur typiques :
+//   - unauthenticated → caller non signé
+//   - unavailable     → Basketplan injoignable / parse échoué
+// -----------------------------------------------------------------------------
+export interface ListBasketplanLeagueHoldingsInput {
+  federationId: number
+}
+
+export interface ListBasketplanLeagueHoldingsOutput {
+  leagueHoldings: BasketplanLeagueHolding[]
+}
+
+export async function listBasketplanLeagueHoldings(
+  input: ListBasketplanLeagueHoldingsInput,
+): Promise<ListBasketplanLeagueHoldingsOutput> {
+  const callable = httpsCallable<
+    ListBasketplanLeagueHoldingsInput,
+    ListBasketplanLeagueHoldingsOutput
+  >(functions, 'listBasketplanLeagueHoldings')
+  const result: HttpsCallableResult<ListBasketplanLeagueHoldingsOutput> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// listClubTeamsInLeague — Liste les équipes du club inscrites dans une
+// compétition donnée (filtrées par `config/club.basketplan.clubId` côté
+// serveur, dédupliquées). Auth : signed-in.
+// Côté functions : functions/src/basketplan/listClubTeamsInLeague.ts
+// Codes d'erreur typiques :
+//   - unauthenticated   → caller non signé
+//   - failed-precondition → `config/club.basketplan.clubId` non configuré
+//   - unavailable       → Basketplan injoignable
+// -----------------------------------------------------------------------------
+export interface ListClubTeamsInLeagueInput {
+  leagueHoldingId: number
+}
+
+export interface ListClubTeamsInLeagueOutput {
+  teams: BasketplanClubTeamInLeague[]
+}
+
+export async function listClubTeamsInLeague(
+  input: ListClubTeamsInLeagueInput,
+): Promise<ListClubTeamsInLeagueOutput> {
+  const callable = httpsCallable<
+    ListClubTeamsInLeagueInput,
+    ListClubTeamsInLeagueOutput
+  >(functions, 'listClubTeamsInLeague')
+  const result: HttpsCallableResult<ListClubTeamsInLeagueOutput> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// linkTeamToBasketplan — Ajoute un `BasketplanCompetitionLink` sur
+// `/teams/{teamId}.basketplanLinks`. Re-fetch côté serveur pour résoudre les
+// caches (`federationCode`, `leagueHoldingName`, `season`, `teamNameInLeague`).
+// Auth : admin OU coach-of-team.
+// Côté functions : functions/src/basketplan/linkTeam.ts
+// Codes d'erreur typiques :
+//   - permission-denied   → ni admin, ni coach de la team
+//   - already-exists      → lien déjà présent (même federation/league/team)
+//   - failed-precondition → `teamIdInLeague` introuvable dans la ligue
+//   - not-found           → teamId ou leagueHoldingId inexistant côté
+//                            Firestore / Basketplan
+//   - unavailable         → Basketplan injoignable
+// -----------------------------------------------------------------------------
+export interface LinkTeamToBasketplanInput {
+  teamId: string
+  federationId: number
+  leagueHoldingId: number
+  teamIdInLeague: number
+}
+
+export interface LinkTeamToBasketplanOutput {
+  ok: true
+  linkId: string
+  link: BasketplanCompetitionLink
+}
+
+export async function linkTeamToBasketplan(
+  input: LinkTeamToBasketplanInput,
+): Promise<LinkTeamToBasketplanOutput> {
+  const callable = httpsCallable<
+    LinkTeamToBasketplanInput,
+    LinkTeamToBasketplanOutput
+  >(functions, 'linkTeamToBasketplan')
+  const result: HttpsCallableResult<LinkTeamToBasketplanOutput> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// unlinkTeamBasketplan — Retire un lien par `linkId`.
+// Auth : admin OU coach-of-team.
+// Côté functions : functions/src/basketplan/unlinkTeam.ts
+// Codes d'erreur typiques :
+//   - permission-denied → ni admin, ni coach de la team
+//   - not-found         → teamId ou linkId inexistant
+// -----------------------------------------------------------------------------
+export interface UnlinkTeamBasketplanInput {
+  teamId: string
+  linkId: string
+}
+
+export interface UnlinkTeamBasketplanOutput {
+  ok: true
+}
+
+export async function unlinkTeamBasketplan(
+  input: UnlinkTeamBasketplanInput,
+): Promise<UnlinkTeamBasketplanOutput> {
+  const callable = httpsCallable<
+    UnlinkTeamBasketplanInput,
+    UnlinkTeamBasketplanOutput
+  >(functions, 'unlinkTeamBasketplan')
+  const result: HttpsCallableResult<UnlinkTeamBasketplanOutput> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// toggleTeamBasketplanLink — Active / désactive un lien sans le retirer (pause).
+// Idempotent.
+// Auth : admin OU coach-of-team.
+// Côté functions : functions/src/basketplan/toggleLink.ts
+// Codes d'erreur typiques :
+//   - permission-denied → ni admin, ni coach de la team
+//   - not-found         → teamId ou linkId inexistant
+// -----------------------------------------------------------------------------
+export interface ToggleTeamBasketplanLinkInput {
+  teamId: string
+  linkId: string
+  active: boolean
+}
+
+export interface ToggleTeamBasketplanLinkOutput {
+  ok: true
+}
+
+export async function toggleTeamBasketplanLink(
+  input: ToggleTeamBasketplanLinkInput,
+): Promise<ToggleTeamBasketplanLinkOutput> {
+  const callable = httpsCallable<
+    ToggleTeamBasketplanLinkInput,
+    ToggleTeamBasketplanLinkOutput
+  >(functions, 'toggleTeamBasketplanLink')
+  const result: HttpsCallableResult<ToggleTeamBasketplanLinkOutput> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// testBasketplanConnection — Ping diagnostic Settings.
+// Lit `config/club.basketplan.defaultFederationId` puis fetch
+// `findAllLeagueHoldings.do?federationId=N`. Pas d'exception sur erreur
+// réseau — emballe `error` dans le payload pour affichage UI direct.
+// Auth : admin only.
+// Côté functions : functions/src/basketplan/testConnection.ts
+// Codes d'erreur typiques :
+//   - permission-denied → caller ni admin, ni rootAdmin
+// -----------------------------------------------------------------------------
+export interface TestBasketplanConnectionOutput {
+  ok: boolean
+  federationId: number | null
+  leagueCount?: number
+  error?: string
+}
+
+export async function testBasketplanConnection(): Promise<TestBasketplanConnectionOutput> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    TestBasketplanConnectionOutput
+  >(functions, 'testBasketplanConnection')
+  const result: HttpsCallableResult<TestBasketplanConnectionOutput> =
+    await callable({})
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// syncBasketplanForTeam — déclenchement à la demande du sync Basketplan pour
+// une équipe donnée. Le cron nocturne couvre l'ensemble du club ; cette
+// callable permet à un admin (ou un coach de la team) de forcer le sync en
+// dehors du créneau planifié (debug, urgence calendrier, etc.).
+//
+// Côté functions : functions/src/basketplan/syncForTeam.ts
+// Auth : signed-in + (admin OR coach-of-team), vérifié serveur via
+// `assertAdminOrCoachOfTeam`. Codes d'erreur typiques :
+//   - unauthenticated     → caller non signé
+//   - permission-denied   → caller ni admin, ni coach de la team
+//   - not-found           → teamId inexistant
+//   - invalid-argument    → teamId vide / manquant
+//
+// La callable ne touche PAS `config/club.basketplan.lastSyncAt` (réservé au
+// cron qui agrège sur toutes les teams). Pour le diagnostic, le summary
+// `perLink` est suffisant côté UI (toast / banner inline).
+// -----------------------------------------------------------------------------
+export interface SyncBasketplanForTeamInput {
+  teamId: string
+}
+
+export interface SyncBasketplanForTeamPerLink {
+  linkId: string
+  /** Compétition Basketplan synchronisée (libellé pour reporting UI). */
+  leagueHoldingId: number
+  leagueHoldingName: string
+  processed: number
+  created: number
+  patched: number
+  linked: number
+  skipped: number
+  errors: number
+  /** Message d'erreur si le link a complètement échoué (sinon `null`). */
+  error: string | null
+}
+
+export interface SyncBasketplanForTeamOutput {
+  ok: true
+  teamId: string
+  summary: {
+    perLink: SyncBasketplanForTeamPerLink[]
+  }
+}
+
+export async function syncBasketplanForTeam(
+  input: SyncBasketplanForTeamInput,
+): Promise<SyncBasketplanForTeamOutput> {
+  const callable = httpsCallable<
+    SyncBasketplanForTeamInput,
+    SyncBasketplanForTeamOutput
+  >(functions, 'syncBasketplanForTeam')
+  const result: HttpsCallableResult<SyncBasketplanForTeamOutput> =
+    await callable(input)
+  return result.data
+}
+
+// =============================================================================
+// Photo licence membre — PR-D (wrappers minimum, écrasés si besoin par PR-B).
+//
+// Les deux callables ci-dessous sont livrées par PR-B (`functions/src/members/
+// setMemberLicensePhoto.ts` + `removeMemberLicensePhoto.ts`). PR-D est codé en
+// supposant qu'elles existent ; si PR-B n'est pas encore mergé au moment du
+// typecheck, ces wrappers permettent d'avancer sans bloquer (PR-B peut les
+// écraser à la marge — la shape Input/Output est documentée dans
+// `docs/members/license-photo.md`).
+//
+// Le coach upload directement la photo dans Storage (rules permissives :
+// signed-in + size/MIME), puis appelle `setMemberLicensePhoto` qui :
+//   1. vérifie le scope (`assertCoachOrAdminOfMember` côté serveur),
+//   2. pose `member.photoStoragePath / photoUpdatedAt / photoUpdatedByUid`,
+//   3. best-effort delete de l'ancien `photoStoragePath` (si différent).
+//
+// `removeMemberLicensePhoto` est plus restrictif (admin / rootAdmin only,
+// vérifié côté serveur). Efface l'objet Storage + clear les 3 champs Firestore.
+// =============================================================================
+
+/**
+ * Input de `setMemberLicensePhoto`.
+ *
+ * `storagePath` doit pointer le fichier déjà uploadé par le client juste
+ * avant l'appel (pattern `members/{memberId}/license-photo.{ext}`).
+ * `contentType` et `sizeBytes` sont snapshottés côté serveur pour audit /
+ * future validation côté plan de licence fédérale.
+ */
+export interface SetMemberLicensePhotoInput {
+  memberId: string
+  storagePath: string
+  contentType: string
+  sizeBytes: number
+}
+
+export interface SetMemberLicensePhotoOutput {
+  ok: true
+  memberId: string
+  /** Pattern `members/{memberId}/license-photo.{ext}`. */
+  photoStoragePath: string
+}
+
+export async function setMemberLicensePhoto(
+  input: SetMemberLicensePhotoInput,
+): Promise<SetMemberLicensePhotoOutput> {
+  const callable = httpsCallable<
+    SetMemberLicensePhotoInput,
+    SetMemberLicensePhotoOutput
+  >(functions, 'setMemberLicensePhoto')
+  const result: HttpsCallableResult<SetMemberLicensePhotoOutput> =
+    await callable(input)
+  return result.data
+}
+
+/**
+ * Input de `removeMemberLicensePhoto`.
+ *
+ * Réservé à `admin | rootAdmin` (vérifié serveur). Best-effort sur le delete
+ * Storage : si l'objet n'existe plus (déjà nettoyé), pas d'erreur, on
+ * remet quand même les 3 champs Firestore à `null`.
+ */
+export interface RemoveMemberLicensePhotoInput {
+  memberId: string
+}
+
+export interface RemoveMemberLicensePhotoOutput {
+  ok: true
+  memberId: string
+}
+
+export async function removeMemberLicensePhoto(
+  input: RemoveMemberLicensePhotoInput,
+): Promise<RemoveMemberLicensePhotoOutput> {
+  const callable = httpsCallable<
+    RemoveMemberLicensePhotoInput,
+    RemoveMemberLicensePhotoOutput
+  >(functions, 'removeMemberLicensePhoto')
+  const result: HttpsCallableResult<RemoveMemberLicensePhotoOutput> =
+    await callable(input)
+  return result.data
+}
+
+// =============================================================================
+// Workflow trésorier des /licenseRequests (PR3 trésorier-phase, 2026-05-24).
+//
+// 4 callables couvrant les transitions trésorier :
+//
+//   coach_validated
+//     │ treasurerUploadSignableDoc  → awaiting_parent_signature
+//   parent_signed
+//     │ treasurerConfirmSignedDoc   → form_confirmed
+//   form_confirmed
+//     │ treasurerMarkSentAndPaid    → sent_paid   (+ création /licenses pending)
+//   sent_paid
+//     │ treasurerFinalizeLicense    → approved    (+ /licenses → active via confirmLicense)
+//
+// Contrats I/O importés depuis `@club-app/shared-types/license-treasurer.ts`.
+// Auth (toutes) : claim `rootAdmin` OU rôle `treasurer` sur /users/{uid}.roles.
+// PAS `admin`, PAS `secretary`. Aligné avec le module compta.
+// Côté functions : functions/src/licenses/treasurer*.ts (Phase B).
+//
+// Pattern d'erreurs typique (par callable) :
+//   - permission-denied   → caller ni rootAdmin, ni treasurer
+//   - failed-precondition → statut source incorrect (transition refusée)
+//   - invalid-argument    → input mal formé (storagePath absent, licenseNumber vide, …)
+//   - not-found           → requestId inexistant
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// 1. treasurerUploadSignableDoc — coach_validated → awaiting_parent_signature
+// -----------------------------------------------------------------------------
+export async function treasurerUploadSignableDoc(
+  input: TreasurerUploadSignableDocInput,
+): Promise<TreasurerUploadSignableDocResult> {
+  const callable = httpsCallable<
+    TreasurerUploadSignableDocInput,
+    TreasurerUploadSignableDocResult
+  >(functions, 'treasurerUploadSignableDoc')
+  const result: HttpsCallableResult<TreasurerUploadSignableDocResult> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// 2. treasurerConfirmSignedDoc — parent_signed → form_confirmed
+// -----------------------------------------------------------------------------
+export async function treasurerConfirmSignedDoc(
+  input: TreasurerConfirmSignedDocInput,
+): Promise<TreasurerConfirmSignedDocResult> {
+  const callable = httpsCallable<
+    TreasurerConfirmSignedDocInput,
+    TreasurerConfirmSignedDocResult
+  >(functions, 'treasurerConfirmSignedDoc')
+  const result: HttpsCallableResult<TreasurerConfirmSignedDocResult> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// 3. treasurerMarkSentAndPaid — form_confirmed → sent_paid
+//    + crée /licenses/{id} en status='pending' (utilisable par le coach).
+// -----------------------------------------------------------------------------
+export async function treasurerMarkSentAndPaid(
+  input: TreasurerMarkSentAndPaidInput,
+): Promise<TreasurerMarkSentAndPaidResult> {
+  const callable = httpsCallable<
+    TreasurerMarkSentAndPaidInput,
+    TreasurerMarkSentAndPaidResult
+  >(functions, 'treasurerMarkSentAndPaid')
+  const result: HttpsCallableResult<TreasurerMarkSentAndPaidResult> =
+    await callable(input)
+  return result.data
+}
+
+// -----------------------------------------------------------------------------
+// 4. treasurerFinalizeLicense — sent_paid → approved
+//    + confirme /licenses/{id} (pending → active) via confirmLicense interne.
+// -----------------------------------------------------------------------------
+export async function treasurerFinalizeLicense(
+  input: TreasurerFinalizeLicenseInput,
+): Promise<TreasurerFinalizeLicenseResult> {
+  const callable = httpsCallable<
+    TreasurerFinalizeLicenseInput,
+    TreasurerFinalizeLicenseResult
+  >(functions, 'treasurerFinalizeLicense')
+  const result: HttpsCallableResult<TreasurerFinalizeLicenseResult> =
+    await callable(input)
   return result.data
 }

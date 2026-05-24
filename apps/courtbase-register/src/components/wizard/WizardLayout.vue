@@ -14,7 +14,7 @@ const props = withDefaults(
     closeMode?: boolean
     total?: number
   }>(),
-  { total: 8, closeMode: undefined },
+  { total: 7, closeMode: undefined },
 )
 
 const router = useRouter()

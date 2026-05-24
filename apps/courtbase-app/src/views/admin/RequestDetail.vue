@@ -30,16 +30,12 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  Bell,
-  BellRing,
   Calendar,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
   FileText,
-  Home as HomeIcon,
   Inbox,
-  Megaphone,
   MessageSquare,
   Quote,
   Tag,
@@ -56,14 +52,12 @@ import CbEmptyState from '@/components/ui/CbEmptyState.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
 import CbPill, { type CbPillTone } from '@/components/ui/CbPill.vue'
-import type { CbNavItem } from '@/components/ui/CbSidebar.vue'
-import type { CbTab } from '@/components/ui/CbTabBar.vue'
+import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
 import {
   countUnread,
   getDueForMember,
   getRequest,
-  listRequests,
   logMockAction,
   type MockDue,
   type MockMember,
@@ -97,6 +91,7 @@ const MOCK_DEMO_REQUEST_ID: string | null = null
 const route = useRoute()
 const router = useRouter()
 const { isDesktop } = useViewport()
+const { tabs, nav, primaryRoleLabel } = useShellNav()
 
 const requestId = computed<string>(() => {
   if (MOCK_DEMO_REQUEST_ID !== null) return MOCK_DEMO_REQUEST_ID
@@ -292,51 +287,10 @@ function openMatchDetail(): void {
 }
 
 // ────────────────────────────────────────────────────────────────
-// Shell — sidebar / tab bar admin
+// Shell — badge cloche header
 // ────────────────────────────────────────────────────────────────
 
 const notifBadgeCount = computed(() => countUnread())
-const pendingRequestsCount = computed(
-  () => listRequests({ status: 'pending' }).length,
-)
-
-const tabsAdmin = computed<CbTab[]>(() => [
-  { icon: BellRing, label: 'Staffing' },
-  {
-    icon: Inbox,
-    label: 'Demandes',
-    badge: pendingRequestsCount.value || undefined,
-  },
-  { icon: Megaphone, label: 'Diffuser' },
-  { icon: Bell, label: 'Notifs', badge: notifBadgeCount.value || undefined },
-])
-
-const navAdmin = computed<CbNavItem[]>(() => [
-  { icon: HomeIcon, label: 'Accueil' },
-  { icon: BellRing, label: 'Staffing' },
-  {
-    icon: Inbox,
-    label: 'Demandes',
-    badge: pendingRequestsCount.value || undefined,
-  },
-  { icon: Megaphone, label: 'Diffuser' },
-  { icon: Bell, label: 'Notifications', badge: notifBadgeCount.value || undefined },
-])
-
-function onTabSelect(index: number): void {
-  if (index === 0) void router.push({ name: 'staffing' })
-  if (index === 1) void router.push({ name: 'requests' })
-  if (index === 2) void router.push({ name: 'broadcast' })
-  if (index === 3) void router.push({ name: 'notifications' })
-}
-
-function onNavSelect(index: number): void {
-  if (index === 0) void router.push({ name: 'home' })
-  if (index === 1) void router.push({ name: 'staffing' })
-  if (index === 2) void router.push({ name: 'requests' })
-  if (index === 3) void router.push({ name: 'broadcast' })
-  if (index === 4) void router.push({ name: 'notifications' })
-}
 
 function onNotifClick(): void {
   void router.push({ name: 'notifications' })
@@ -392,10 +346,8 @@ const cotisationFormatted = computed(() => {
     club="BCA"
     show-back
     :notif-badge="notifBadgeCount > 0"
-    :tabs="tabsAdmin"
-    :active-tab="1"
+    :tabs="tabs"
     @back="goBack"
-    @tab-select="onTabSelect"
     @notif-click="onNotifClick"
   >
     <div class="cb-page">
@@ -592,14 +544,12 @@ const cotisationFormatted = computed(() => {
   <CbDesktopShell
     v-else
     class="a3d-desktop"
-    :items="navAdmin"
-    :active="2"
+    :items="nav"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
     user-name="Admin"
-    user-role="Admin"
-    @nav-select="onNavSelect"
+    :user-role="primaryRoleLabel"
   >
     <CbPageHead :title="pageTitle" :subtitle="desktopSubtitle">
       <template #actions>

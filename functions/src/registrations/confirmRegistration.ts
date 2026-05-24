@@ -49,9 +49,12 @@
  *                          le binding sont fusionnés dans un unique `tx.update` du
  *                          memberRef ; aucun write si rien n'a changé.
  *
- * Le linking inverse (`/users/{submittedByUid}.memberId`) est laissé à un flow
- * dédié (TODO — `linkUserToMember` callable). Pour l'instant la liaison est
- * portée uniquement par `member.linkedUserId` / `guardianUserIds`.
+ * Linking inverse (`/users/{submittedByUid}.memberId`) : posé dans la même
+ * transaction pour `for: 'self'` (cf. bloc 1.6). Préserve un binding existant
+ * vers un AUTRE member (warn + skip). Sans ce miroir, le repo register ne
+ * trouvait pas le memberId du submitter et la query `memberId in [...]` sur
+ * `/dues` retournait vide alors qu'une cotisation existait — symptôme
+ * "factures introuvables" pour un joueur majeur inscrit pour lui-même.
  */
 import { onCall, HttpsError, type CallableRequest } from 'firebase-functions/v2/https'
 import { logger } from 'firebase-functions/v2'
@@ -259,6 +262,15 @@ export const confirmRegistration = onCall(
       //    décider s'il faut binder le submitter (`existingMember` non-null).
       //    Tous les `tx.get` doivent rester en amont des `tx.set`/`tx.update`
       //    (contrainte transactions Firestore).
+      //
+      //    Pour `for: 'self'`, on lit aussi `users/{submittedByUid}` ici
+      //    (read en amont du premier write) pour pouvoir poser le linking
+      //    inverse `user.memberId` plus bas, sans avoir à séquencer en deux
+      //    transactions. Cf. bloc "linking inverse" après le bloc 1.5.
+      const submitterUserRef = db().doc(`users/${reg.submittedByUid}`)
+      const submitterUserSnap =
+        reg.registrationFor === 'self' ? await tx.get(submitterUserRef) : null
+
       let memberId: string
       let existingMember: MemberData | null = null
 
@@ -315,6 +327,11 @@ export const confirmRegistration = onCall(
             comms: defaultComms(reg.player.birthDate, now, reg.registrationFor),
             avs: reg.player.avs,
             transferState: reg.foreignTransfer ? 'international_pending' : 'none',
+            // Photo licence — posée plus tard par la callable
+            // setMemberLicensePhoto (cf. docs/members/license-photo.md).
+            photoStoragePath: null,
+            photoUpdatedAt: null,
+            photoUpdatedByUid: null,
           }
           tx.set(memberRef, memberData)
         }
@@ -386,6 +403,42 @@ export const confirmRegistration = onCall(
         if (Object.keys(patch).length > 0) {
           tx.update(memberRef, patch as FirebaseFirestore.UpdateData<MemberData>)
         }
+      }
+
+      // 1.6 Linking inverse `user.memberId` (forward-fix du TODO ligne 52).
+      //
+      //     Sans ce binding inverse, l'app `courtbase-register` ne pouvait
+      //     pas lire les cotisations du membre via la query `memberId in [...]`
+      //     (la rule `/dues` autorise via `member.linkedUserId` mais le repo
+      //     register passe par `user.memberId` pour résoudre les memberIds
+      //     accessibles). Symptôme : factures introuvables pour un joueur
+      //     majeur qui s'est inscrit pour lui-même.
+      //
+      //     Posé uniquement pour `for: 'self'` (le submitter EST le joueur).
+      //     Pour `for: 'dependent'` le parent conserve son propre `memberId`
+      //     (s'il en a un) et le lien passe par `member.guardianUserIds`.
+      //
+      //     Idempotent : skip si `user.memberId` est déjà = memberId. Si
+      //     l'user est déjà lié à un AUTRE member, on log et on ne touche
+      //     pas (préservation du binding existant — cohérent avec le warn
+      //     côté member ci-dessus).
+      if (submitterUserSnap && submitterUserSnap.exists) {
+        const submitterData = submitterUserSnap.data() as UserData
+        const currentLinkedMember = submitterData.memberId
+        if (currentLinkedMember == null || currentLinkedMember === '') {
+          tx.update(submitterUserRef, { memberId })
+        } else if (currentLinkedMember !== memberId) {
+          logger.warn(
+            'confirmRegistration: submitter user.memberId already set to another member, skipping inverse binding',
+            {
+              registrationId,
+              submittedByUid: reg.submittedByUid,
+              currentMemberId: currentLinkedMember,
+              newMemberId: memberId,
+            },
+          )
+        }
+        // else : déjà lié au bon member, no-op (idempotent).
       }
 
       // 2. Ajouter le member au team.playerIds (déclenche dues trigger).

@@ -172,6 +172,11 @@ export const coachCreateMember = onCall(
           comms: defaultComms(birthTs, now),
           avs: input.avs,
           transferState: 'none',
+          // Photo licence — posée plus tard par la callable setMemberLicensePhoto
+          // (cf. docs/members/license-photo.md). Création = pas de photo.
+          photoStoragePath: null,
+          photoUpdatedAt: null,
+          photoUpdatedByUid: null,
         }
         tx.set(memberRef, memberData)
 

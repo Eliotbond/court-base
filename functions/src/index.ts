@@ -49,6 +49,14 @@ export {
 } from './exceptions/applyPaymentException'
 export { applyLicenseRequest } from './licenses/applyLicenseRequest'
 export { confirmLicense } from './licenses/confirmLicense'
+export { coachReviewLicenseDoc } from './licenses/coachReviewLicenseDoc'
+export { treasurerReviewLicenseDoc } from './licenses/treasurerReviewLicenseDoc'
+export { validateLicenseRequest } from './licenses/validateLicenseRequest'
+// Treasurer phase (PR-Phase-Treasurer, 2026-05-24) — cf. docs/licenses/parent-completion-workflow.md
+export { treasurerUploadSignableDoc } from './licenses/treasurerUploadSignableDoc'
+export { treasurerConfirmSignedDoc } from './licenses/treasurerConfirmSignedDoc'
+export { treasurerMarkSentAndPaid } from './licenses/treasurerMarkSentAndPaid'
+export { treasurerFinalizeLicense } from './licenses/treasurerFinalizeLicense'
 
 // Majority transition
 export { onMajorityReached } from './majority/onMajorityReached'
@@ -73,6 +81,22 @@ export { coachCreateMember } from './members/coachCreateMember'
 export { coachUpdateMember } from './members/coachUpdateMember'
 export { coachDeactivateMember } from './members/coachDeactivateMember'
 export { syncUserRolesFromMember } from './members/syncUserRolesFromMember'
+// Photo licence du membre (PR-B `docs/members/license-photo.md`).
+export { setMemberLicensePhoto } from './members/setMemberLicensePhoto'
+export { removeMemberLicensePhoto } from './members/removeMemberLicensePhoto'
+
+// === Basketplan ===
+// Intégration Swiss Basketball (Basketplan / ORCA). Cf. docs/basketplan-integration.md.
+// PR 1 : mapping team ↔ compétition (6 callables ci-dessous).
+// PR 2 : sync AWAY + backfill scores/arbitres (callable manuelle + cron nocturne).
+export { listBasketplanLeagueHoldings } from './basketplan/listLeagueHoldings'
+export { listClubTeamsInLeague } from './basketplan/listClubTeamsInLeague'
+export { linkTeamToBasketplan } from './basketplan/linkTeam'
+export { unlinkTeamBasketplan } from './basketplan/unlinkTeam'
+export { toggleTeamBasketplanLink } from './basketplan/toggleLink'
+export { testBasketplanConnection } from './basketplan/testConnection'
+export { syncBasketplanForTeam } from './basketplan/syncForTeam'
+export { scheduledBasketplanSync } from './basketplan/scheduledSync'
 
 // Registrations (app courtbase-register)
 export { matchExistingMember } from './registrations/matchExistingMember'

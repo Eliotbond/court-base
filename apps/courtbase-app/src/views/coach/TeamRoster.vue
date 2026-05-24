@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Filter, MoreVertical, Plus } from 'lucide-vue-next'
 
@@ -14,13 +14,16 @@ import CbSkel from '@/components/ui/CbSkel.vue'
 import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
 import {
-  getTeam,
-  listMembersByTeam,
+  getTeam as getTeamMock,
+  listMembersByTeam as listMembersByTeamMock,
   logMockAction,
   type MockMember,
   type MockTeam,
 } from '@/repositories/mock'
+import { getTeam as getTeamReal } from '@/repositories/teams.repo'
 import { useAuthStore } from '@/stores/auth'
+import { useLicenseRequestsStore } from '@/stores/licenseRequests'
+import { useMembersStore } from '@/stores/members'
 import { canRequestLicense, licenseGateReason } from '@/utils/licenseGate'
 
 /**
@@ -41,13 +44,13 @@ import { canRequestLicense, licenseGateReason } from '@/utils/licenseGate'
  * autres menus inline du brief design (cf. `CbUserMenu.vue`).
  */
 
-const MOCK_LOADING = false
-
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const membersStore = useMembersStore()
+const licenseRequestsStore = useLicenseRequestsStore()
 const { isDesktop } = useViewport()
-const { coachTabs, coachNav } = useShellNav()
+const { tabs, nav, primaryRoleLabel } = useShellNav()
 
 // ─── Param + team ────────────────────────────────────────────────
 const teamId = computed<string>(() => {
@@ -55,7 +58,39 @@ const teamId = computed<string>(() => {
   return Array.isArray(p) ? (p[0] ?? '') : (p ?? '')
 })
 
-const team = computed<MockTeam | null>(() => (teamId.value ? getTeam(teamId.value) : null))
+/**
+ * Mode hybride (cf. `apps/courtbase-app/CLAUDE.md`) :
+ *   - `useRealFirestore = true` quand le coach a un `userDoc.memberId` lié.
+ *     On charge la team + ses members depuis Firestore.
+ *   - `false` → fallback mock (mode démo /_design).
+ */
+const useRealFirestore = computed<boolean>(() => !!auth.userDoc?.memberId)
+
+/** Team réelle chargée async (mode firestore). Null en mode mock. */
+const realTeam = ref<MockTeam | null>(null)
+/** True pendant le fetch initial de la team (mode firestore). */
+const teamLoading = ref(false)
+
+/**
+ * Team unifié — résolu depuis le store firestore si dispo, sinon depuis le
+ * mock. Garde la signature `MockTeam | null` que les templates consomment.
+ */
+const team = computed<MockTeam | null>(() => {
+  if (!teamId.value) return null
+  if (useRealFirestore.value) return realTeam.value
+  return getTeamMock(teamId.value)
+})
+
+/**
+ * True pendant un fetch (team OU members en mode firestore). En mode mock
+ * c'est synchrone donc toujours `false` — on garde le getter pour le binding
+ * uniforme des skeletons template.
+ */
+const isLoading = computed<boolean>(() => {
+  if (!useRealFirestore.value) return false
+  if (teamLoading.value) return true
+  return membersStore.isLoadingForTeam(teamId.value)
+})
 
 // ─── Segmented control (Joueurs / Staff / Info) ──────────────────
 type RosterTab = 'players' | 'staff' | 'info'
@@ -68,8 +103,52 @@ function selectRosterTab(tab: RosterTab): void {
 }
 
 // ─── Players ─────────────────────────────────────────────────────
-const players = computed<ReadonlyArray<MockMember>>(() =>
-  team.value ? listMembersByTeam(team.value.id) : [],
+const players = computed<ReadonlyArray<MockMember>>(() => {
+  if (!team.value) return []
+  if (useRealFirestore.value) {
+    return membersStore.getForTeam(team.value.id)
+  }
+  return listMembersByTeamMock(team.value.id)
+})
+
+// ─── Fetch Firestore (mode firestore uniquement) ─────────────────
+/**
+ * Charge la team puis ses members. Fait deux étapes pour qu'on connaisse
+ * `team.playerIds` avant de fetch les members.
+ *
+ * Idempotence : refetch quand `teamId` change (navigation entre équipes
+ * différentes via URL directe).
+ */
+async function loadFromFirestore(): Promise<void> {
+  if (!useRealFirestore.value || !teamId.value) return
+  teamLoading.value = true
+  realTeam.value = null
+  try {
+    const t = await getTeamReal(teamId.value)
+    realTeam.value = t
+    if (t) {
+      await membersStore.loadForTeam(t.id, t.playerIds)
+      // Hydrate le cache des demandes de licence en best-effort : permet
+      // au kebab d'afficher "Demande en cours" pour les joueurs concernés
+      // sans bloquer le rendu initial des rows.
+      void licenseRequestsStore.hydrateForMembers(t.playerIds)
+    }
+  } finally {
+    teamLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void loadFromFirestore()
+})
+
+// Re-fetch quand le user navigue entre `/team/:teamId` avec teamIds différents
+// (cas direct URL ou back/forward navigateur).
+watch(
+  () => [useRealFirestore.value, teamId.value] as const,
+  () => {
+    void loadFromFirestore()
+  },
 )
 
 // ─── Staff (mock inline — pas encore exposé par le repo) ─────────
@@ -193,6 +272,9 @@ function actionRequestLicense(memberId: string): void {
   closeKebab()
   const m = players.value.find((p) => p.id === memberId)
   if (!m) return
+  // Si une demande existe déjà → no-op (le kebab item est désactivé, mais
+  // on évite l'action en cas de race ou de re-render asynchrone).
+  if (licenseRequestsStore.existingForMember(memberId)) return
   if (!canRequestLicense(m)) return // garde-fou (déjà disabled UI)
   logMockAction('co2.kebab.request-license', { teamId: teamId.value, memberId })
   router.push({
@@ -200,6 +282,30 @@ function actionRequestLicense(memberId: string): void {
     params: { memberId },
     query: { action: 'request-license' },
   })
+}
+
+// ─── Kebab item — état "Demande licence" 3-way ────────────────────
+// 1. Demande existante → label "Demande de licence en cours" + disabled.
+// 2. Gate cotisation OK → "Demander licence" enabled.
+// 3. Sinon → "Demander licence" disabled avec tooltip = raison du gate.
+
+function licenseKebabLabel(memberId: string): string {
+  if (licenseRequestsStore.existingForMember(memberId)) {
+    return 'Demande de licence en cours'
+  }
+  return 'Demander licence'
+}
+
+function licenseKebabDisabled(m: MockMember): boolean {
+  if (licenseRequestsStore.existingForMember(m.id)) return true
+  return !canRequestLicense(m)
+}
+
+function licenseKebabTooltip(m: MockMember): string | undefined {
+  if (licenseRequestsStore.existingForMember(m.id)) {
+    return 'Une demande est déjà en cours. Le suivi sera disponible en PR2.'
+  }
+  return licenseGateReason(m) ?? undefined
 }
 
 // ─── Navigation principale ───────────────────────────────────────
@@ -260,13 +366,12 @@ const SKEL_COUNT = 6
   <!-- ─── Desktop ≥ 1024px ─────────────────────────────────────── -->
   <CbDesktopShell
     v-if="isDesktop"
-    :items="coachNav"
-    :active="1"
+    :items="nav"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
     :user-name="auth.displayName"
-    user-role="Coach"
+    :user-role="primaryRoleLabel"
     @nav-select="onNavSelect"
   >
     <CbPageHead
@@ -316,7 +421,7 @@ const SKEL_COUNT = 6
       <div v-if="activeRosterTab !== 'info'" class="cb-card flush" style="background: var(--bg)">
         <!-- Onglet "Joueurs" -->
         <template v-if="activeRosterTab === 'players'">
-          <template v-if="MOCK_LOADING">
+          <template v-if="isLoading">
             <div
               v-for="i in SKEL_COUNT"
               :key="`skel-d-${i}`"
@@ -378,11 +483,11 @@ const SKEL_COUNT = 6
                     <button
                       type="button"
                       class="co2-kebab-item"
-                      :disabled="!canRequestLicense(m)"
-                      :title="licenseGateReason(m) ?? undefined"
+                      :disabled="licenseKebabDisabled(m)"
+                      :title="licenseKebabTooltip(m)"
                       @click="actionRequestLicense(m.id)"
                     >
-                      Demander licence
+                      {{ licenseKebabLabel(m.id) }}
                     </button>
                   </div>
                 </div>
@@ -468,8 +573,7 @@ const SKEL_COUNT = 6
     title="Effectif"
     show-back
     notif-badge
-    :tabs="coachTabs"
-    :active-tab="0"
+    :tabs="tabs"
     @back="onBack"
     @notif-click="onNotifClick"
     @tab-select="onTabSelect"
@@ -520,7 +624,7 @@ const SKEL_COUNT = 6
     <div style="flex: 1; overflow: auto">
       <!-- Onglet "Joueurs" -->
       <template v-if="activeRosterTab === 'players'">
-        <template v-if="MOCK_LOADING">
+        <template v-if="isLoading">
           <div
             v-for="i in SKEL_COUNT"
             :key="`skel-m-${i}`"
@@ -582,11 +686,11 @@ const SKEL_COUNT = 6
                   <button
                     type="button"
                     class="co2-kebab-item"
-                    :disabled="!canRequestLicense(m)"
-                    :title="licenseGateReason(m) ?? undefined"
+                    :disabled="licenseKebabDisabled(m)"
+                    :title="licenseKebabTooltip(m)"
                     @click="actionRequestLicense(m.id)"
                   >
-                    Demander licence
+                    {{ licenseKebabLabel(m.id) }}
                   </button>
                 </div>
               </div>

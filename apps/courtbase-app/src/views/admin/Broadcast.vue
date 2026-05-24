@@ -30,12 +30,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertTriangle,
-  Bell,
-  BellRing,
   Eye,
-  Home as HomeIcon,
-  Inbox,
-  Megaphone,
   Send,
   Users,
   X,
@@ -46,8 +41,7 @@ import CbDesktopShell from '@/components/ui/CbDesktopShell.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbNotifItem from '@/components/ui/CbNotifItem.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
-import type { CbNavItem } from '@/components/ui/CbSidebar.vue'
-import type { CbTab } from '@/components/ui/CbTabBar.vue'
+import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
 import {
   countUnread,
@@ -62,6 +56,7 @@ import { useAuthStore } from '@/stores/auth'
 const router = useRouter()
 const auth = useAuthStore()
 const { isDesktop } = useViewport()
+const { tabs, nav, primaryRoleLabel } = useShellNav()
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -297,43 +292,13 @@ function onSubmit(): void {
 }
 
 // ────────────────────────────────────────────────────────────────
-// Shells nav (mobile tab bar + desktop sidebar)
+// Shell (badge cloche header)
 // ────────────────────────────────────────────────────────────────
 
 const notifBadgeCount = computed(() => countUnread())
 
-const tabsAdmin = computed<CbTab[]>(() => [
-  { icon: BellRing, label: 'Staffing' },
-  { icon: Inbox, label: 'Demandes' },
-  { icon: Megaphone, label: 'Diffuser' },
-  { icon: Bell, label: 'Notifs', badge: notifBadgeCount.value || undefined },
-])
-
-function onTabSelect(index: number): void {
-  if (index === 0) void router.push({ name: 'staffing' })
-  if (index === 1) void router.push({ name: 'requests' })
-  if (index === 2) return // courant
-  if (index === 3) void router.push({ name: 'notifications' })
-}
-
 function onNotifClick(): void {
   void router.push({ name: 'notifications' })
-}
-
-const navAdmin = computed<CbNavItem[]>(() => [
-  { icon: HomeIcon, label: 'Accueil' },
-  { icon: BellRing, label: 'Staffing' },
-  { icon: Inbox, label: 'Demandes' },
-  { icon: Megaphone, label: 'Diffuser' },
-  { icon: Bell, label: 'Notifications', badge: notifBadgeCount.value || undefined },
-])
-
-function onNavSelect(index: number): void {
-  if (index === 0) void router.push({ name: 'home' })
-  if (index === 1) void router.push({ name: 'staffing' })
-  if (index === 2) void router.push({ name: 'requests' })
-  if (index === 3) return // courant
-  if (index === 4) void router.push({ name: 'notifications' })
 }
 
 // Sous-titre desktop : indication du compteur.
@@ -350,10 +315,8 @@ const desktopSubtitle = computed(
     title="Diffuser"
     club="BCA"
     :notif-badge="notifBadgeCount > 0"
-    :tabs="tabsAdmin"
-    :active-tab="2"
+    :tabs="tabs"
     @notif-click="onNotifClick"
-    @tab-select="onTabSelect"
   >
     <div class="cb-page">
       <div>
@@ -530,14 +493,12 @@ const desktopSubtitle = computed(
   <CbDesktopShell
     v-else
     class="a4-desktop"
-    :items="navAdmin"
-    :active="3"
+    :items="nav"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
     :user-name="auth.displayName"
-    user-role="Admin restreint"
-    @nav-select="onNavSelect"
+    :user-role="primaryRoleLabel"
   >
     <CbPageHead title="Envoyer une notification" :subtitle="desktopSubtitle">
       <template #actions>

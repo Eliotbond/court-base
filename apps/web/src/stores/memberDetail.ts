@@ -1,9 +1,12 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { FirebaseError } from 'firebase/app'
 import {
   getMemberDetail,
+  removeMemberPhoto,
   updateMember,
   updateMemberContact,
+  uploadMemberPhoto,
   type MemberContactPatch,
   type MemberDetailRow,
   type MemberPatch,
@@ -99,6 +102,71 @@ export const useMemberDetailStore = defineStore('memberDetail', () => {
   }
 
   // -------------------------------------------------------------------------
+  // Photo licence (cf. docs/members/license-photo.md). Mutations wrappent le
+  // repo, mettent à jour le member local sur succès, et reload pour rester
+  // cohérent avec d'éventuels champs serveur (`photoUpdatedAt` posé via
+  // `serverTimestamp`).
+  // Catch enrichi `FirebaseError` (cf. apps/web/CLAUDE.md §"Catch enrichi
+  // obligatoire").
+  // -------------------------------------------------------------------------
+
+  /**
+   * Upload une nouvelle photo licence pour le membre courant. Pré-validations
+   * (MIME / taille) côté repo — un `Error` levé localement (pas Firebase) est
+   * une erreur de validation client à présenter telle quelle.
+   * Retourne `true` sur succès, `false` sinon (avec `error` posé).
+   */
+  async function uploadPhoto(file: File): Promise<boolean> {
+    if (!member.value) return false
+    const id = member.value.id
+    saving.value = true
+    error.value = null
+    try {
+      await uploadMemberPhoto(id, file)
+      // Reload pour récupérer photoUpdatedAt (serverTimestamp).
+      await load(id)
+      return true
+    } catch (err: unknown) {
+      const code = err instanceof FirebaseError ? err.code : 'unknown'
+      console.error(`[memberDetail.uploadPhoto] failed [${code}]`, err)
+      error.value =
+        err instanceof Error
+          ? err.message
+          : 'Erreur lors de l\'upload de la photo licence'
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
+  /**
+   * Supprime la photo licence du membre courant. Réservé admin/rootAdmin
+   * (vérifié serveur — un caller non-admin reçoit `permission-denied`).
+   * Retourne `true` sur succès, `false` sinon.
+   */
+  async function removePhoto(): Promise<boolean> {
+    if (!member.value) return false
+    const id = member.value.id
+    saving.value = true
+    error.value = null
+    try {
+      await removeMemberPhoto(id)
+      await load(id)
+      return true
+    } catch (err: unknown) {
+      const code = err instanceof FirebaseError ? err.code : 'unknown'
+      console.error(`[memberDetail.removePhoto] failed [${code}]`, err)
+      error.value =
+        err instanceof Error
+          ? err.message
+          : 'Erreur lors de la suppression de la photo licence'
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Derived
   // -------------------------------------------------------------------------
 
@@ -126,5 +194,7 @@ export const useMemberDetailStore = defineStore('memberDetail', () => {
     reset,
     applyProfilePatch,
     applyContactPatch,
+    uploadPhoto,
+    removePhoto,
   }
 })

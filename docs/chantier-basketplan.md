@@ -4,8 +4,8 @@
 
 ## Statut
 
-- **PR 1** — Mapping (sans sync) : ⏳ pas démarré
-- **PR 2** — Sync AWAY + backfill scores/arbitres : ⏳ pas démarré
+- **PR 1** — Mapping (sans sync) : ✅ code livré 2026-05-24 (backend types + 6 callables + tests parsers + UI Settings + dialog cascade + section team detail). Reste pour Eliot : déployer Functions (cf. commandes ci-dessous § PR 1 — Déploiement) + IAM binding `run.invoker` sur les 6 callables v2 + tester en browser.
+- **PR 2** — Sync AWAY + backfill scores/arbitres : ✅ code livré 2026-05-24 (champs `match.external*` + `_sync.ts` algo applyGame + callable `syncBasketplanForTeam` + scheduled `scheduledBasketplanSync` cron 03:00 Europe/Zurich + 34 tests + UI Matches.vue enrichi + CTA "Synchroniser maintenant" Settings). Reste pour Eliot : repack tarball shared-types + déployer Functions + IAM binding callable v2 + activer `config.basketplan.enabled = true` côté Firestore avant la 1re sync nocturne.
 - **PR 3** — Création HOME + Inbox : ⏳ pas démarré
 
 ---
@@ -15,38 +15,58 @@
 Livre la capacité de lier une équipe à des compétitions Basketplan, sans encore créer/maj de matchs. Branche : `feat/basketplan-mapping`.
 
 ### Backend
-- [ ] Ajouter `BasketplanCompetitionLink` + `team.basketplanLinks` dans `packages/shared-types/src/team.ts`.
-- [ ] Ajouter `config.club.basketplan` dans `packages/shared-types/src/config.ts`.
-- [ ] Créer `functions/src/basketplan/_client.ts`, `_parsers.ts`, `_authz.ts`.
-- [ ] Ajouter `fast-xml-parser` à `functions/package.json` + lockfile.
-- [ ] Créer les callables :
-  - [ ] `listBasketplanLeagueHoldings` (signed-in, cache 1h mémoire).
-  - [ ] `listClubTeamsInLeague` (signed-in).
-  - [ ] `linkTeamToBasketplan` (admin OR coach-of-team).
-  - [ ] `unlinkTeamBasketplan` (admin OR coach-of-team).
-  - [ ] `toggleTeamBasketplanLink` (admin OR coach-of-team).
-  - [ ] `testBasketplanConnection` (admin).
-- [ ] Tests Vitest pour `_parsers.ts` avec fixtures XML capturées (3 fixtures min : findAllLeagueHoldings, showLeagueSchedule, showRankingForLeague).
-- [ ] Tests emulator pour les callables (scope coach + admin, refus si scope manquant).
+- [x] Ajouter `BasketplanCompetitionLink` + `team.basketplanLinks` dans `packages/shared-types/src/team.ts`.
+- [x] Ajouter `config.club.basketplan` dans `packages/shared-types/src/config.ts` (+ `ClubConfigPatch.basketplan`).
+- [x] Créer `functions/src/basketplan/_client.ts`, `_parsers.ts`, `_authz.ts`.
+- [x] Ajouter `fast-xml-parser` à `functions/package.json` + lockfile (4.5.6 résolu).
+- [x] Créer les callables :
+  - [x] `listBasketplanLeagueHoldings` (signed-in, cache 1h mémoire).
+  - [x] `listClubTeamsInLeague` (signed-in).
+  - [x] `linkTeamToBasketplan` (admin OR coach-of-team).
+  - [x] `unlinkTeamBasketplan` (admin OR coach-of-team).
+  - [x] `toggleTeamBasketplanLink` (admin OR coach-of-team).
+  - [x] `testBasketplanConnection` (admin).
+- [x] Tests Vitest pour `_parsers.ts` avec 3 fixtures XML réelles (fédération 9 AFBB / leagueHoldingId 10584 Marly Basket 2LM) — 19/19 pass.
+- [ ] Tests emulator pour les callables (scope coach + admin, refus si scope manquant) — reporté (à faire manuellement en browser ou en suivi).
 
 ### Frontend web
-- [ ] `apps/web/src/lib/basketplan-federations.ts` (liste statique des fédérations connues, voir § 2.3 du brief).
-- [ ] `apps/web/src/views/Settings/IntegrationsBasketplan.vue` (intégré au router Settings split).
-- [ ] `apps/web/src/components/teams/BasketplanLinkDialog.vue` (cascade 3 étapes).
-- [ ] Section "Compétitions Basketplan" dans la fiche team existante (identifier la bonne vue à l'exécution — probablement `Teams.vue` détail panel).
-- [ ] Store/composable pour les `listBasketplan*` callables avec cache 1h client-side.
+- [x] `apps/web/src/lib/basketplan-federations.ts` (3 fédérations connues : BVN, ACGBA, AFBB + TODO d'inventaire).
+- [x] `apps/web/src/views/settings/IntegrationsBasketplan.vue` (intégré au router Settings split, route `/settings/integrations/basketplan` admin-only).
+- [x] `apps/web/src/components/teams/BasketplanLinkDialog.vue` (cascade 3 étapes, tri `season DESC, name ASC`, auto-select si 1 équipe).
+- [x] Section "Compétitions Basketplan" intégrée dans le drawer in-page de `apps/web/src/views/Teams.vue` (mode read-only, gatée `canManageBasketplan = rootAdmin || roles.admin || team.coachIds.includes(uid)`).
+- [x] Wrappers callables dans `apps/web/src/services/cloudFunctions.ts` (6 wrappers typés).
+- [x] Cache 1h mémoire côté serveur (callable `listBasketplanLeagueHoldings`) — client appelle à chaque ouverture du dialog, OK pour MVP. Cache client-side non implémenté (reportable).
+- [x] Sidebar Settings : nouveau groupe "Intégrations" avec icône Plug dans `SettingsSidebar.vue`.
 
 ### Frontend courtbase-app
-- [ ] `apps/courtbase-app/src/views/coach/TeamCompetitions.vue` (mobile-first, BottomSheet).
+- [ ] `apps/courtbase-app/src/views/coach/TeamCompetitions.vue` (mobile-first, BottomSheet) — **hors scope de cette livraison (apps/web only demandé)** ; à faire dans une PR séparée.
 
 ### Déploiement & doc
-- [ ] `firestore.rules` : pas de modif (les callables passent en Admin SDK).
-- [ ] `npm run build` Functions + déployer (`firebase deploy --only functions:listBasketplanLeagueHoldings,functions:listClubTeamsInLeague,functions:linkTeamToBasketplan,functions:unlinkTeamBasketplan,functions:toggleTeamBasketplanLink,functions:testBasketplanConnection`).
-- [ ] Pour chaque nouvelle callable v2 : IAM binding `run.invoker` (cf. memory `deploy_functions_v2_invoker_binding`).
-- [ ] MAJ `docs/firebase.md` (champs `team.basketplanLinks`, `config.club.basketplan`).
-- [ ] MAJ `docs/main.md` § "Intégrations externes" (paragraphe Basketplan).
-- [ ] MAJ `functions/CLAUDE.md` (mention dossier `basketplan/`).
-- [ ] MAJ ce fichier : statut PR 1 → ✅ done.
+- [x] `firestore.rules` : pas de modif (les callables passent en Admin SDK).
+- [ ] **Eliot** : `npm run build` Functions + déployer :
+  ```bash
+  cd packages/shared-types && npm pack --pack-destination ../../functions/ && cd -
+  cd functions && npm install && npm run build && cd -
+  firebase deploy --only \
+    functions:listBasketplanLeagueHoldings,\
+  functions:listClubTeamsInLeague,\
+  functions:linkTeamToBasketplan,\
+  functions:unlinkTeamBasketplan,\
+  functions:toggleTeamBasketplanLink,\
+  functions:testBasketplanConnection \
+    -P <projectId>
+  ```
+- [ ] **Eliot** : IAM binding `run.invoker` sur les 6 nouvelles callables v2 (cf. memory `deploy_functions_v2_invoker_binding`) :
+  ```bash
+  for fn in listbasketplanleagueholdings listclubteamsinleague linkteamtobasketplan unlinkteambasketplan toggleteambasketplanlink testbasketplanconnection; do
+    gcloud run services add-iam-policy-binding $fn \
+      --region=europe-west6 --member="allUsers" --role="roles/run.invoker" --project=<projectId>
+  done
+  ```
+- [x] MAJ `docs/firebase.md` (champs `team.basketplanLinks`, `config.club.basketplan`).
+- [x] MAJ `docs/main.md` § "Intégrations externes" (paragraphe Basketplan).
+- [x] MAJ `functions/CLAUDE.md` (mention dossier `basketplan/`).
+- [x] MAJ ce fichier : statut PR 1 → ✅ done.
 
 ### Critères de succès PR 1
 - Eliot (admin) lie l'équipe Seniors M à "2LM Saison 25/26 — Marly Basket" en < 10 sec.
@@ -60,22 +80,30 @@ Livre la capacité de lier une équipe à des compétitions Basketplan, sans enc
 Livre l'automatisation : matchs AWAY créés tout seuls, scores et arbitres remontés sur tous les matchs liables. Branche : `feat/basketplan-sync-away`.
 
 ### Backend
-- [ ] Ajouter les champs `external*` à `packages/shared-types/src/match.ts`.
-- [ ] `functions/src/basketplan/_sync.ts` — algorithme `applyGame` (cf. § 5.3 du brief) limité à AWAY + backfill (pas encore HOME création auto).
-- [ ] Callable `syncBasketplanForTeam` (admin OR coach-of-team).
-- [ ] Scheduled `scheduledBasketplanSync` (`0 3 * * *`, Europe/Zurich, `europe-west6`).
-- [ ] Tests Vitest pour `_sync.ts` (cas : nouveau AWAY, AWAY déjà existant, match manuel à enrichir, match homologué → status played, conflit dédup).
+- [x] Ajouter les champs `external*` à `packages/shared-types/src/match.ts` (+ types `MatchExternalSource`, `MatchExternalResult`, `MatchExternalReferees`).
+- [x] `functions/src/basketplan/_sync.ts` — algorithme `applyGame` 3 passes (patch existing → link manual fuzzy Levenshtein ≤ 2 → create AWAY ; HOME → `skipped-home`). Helpers : `resolveMatchTypeId` (mapping `config.basketplan.matchTypeMapping[federationCode]` + fallback création `/matchTypes` "Championnat (Basketplan)" cache process).
+- [x] Callable `syncBasketplanForTeam` (admin OR coach-of-team) — `setTimeout 100ms` entre fetchs, try/catch indépendant par link, update `team.basketplanSyncedAt`.
+- [x] Scheduled `scheduledBasketplanSync` (`0 3 * * *`, Europe/Zurich, `europe-west6`) — early return si `!config.basketplan.enabled`, update `config.basketplan.lastSyncAt` + `lastSyncError` (agrégé ≤ 500 chars).
+- [x] Tests Vitest pour `_sync.ts` (34/34 pass — nouveau AWAY, AWAY existant, link manuel fuzzy, homologué → played, conflit dédup, HOME skip).
 
 ### Frontend
-- [ ] Affichage badge `externalGameNumber` + section "Arbitres fédéraux" + section "Résultat officiel" dans `apps/web/src/views/Matches.vue`.
-- [ ] Idem dans `apps/courtbase-app/src/views/coach/MatchDetail.vue` et `apps/courtbase-app/src/views/official/MatchDetail.vue`.
-- [ ] Settings : afficher `lastSyncAt`, `lastSyncError`, bouton "Synchroniser maintenant".
+- [x] Affichage Pill `Basketplan #<gameNumber>` (colonne Adversaire) + 3 sections drawer conditionnelles ("Match officiel Basketplan", "Arbitres fédéraux", "Résultat officiel" + score "nous d'abord" + tableau quarts + placeholder en attente d'homologation) dans `apps/web/src/views/Matches.vue`.
+- [ ] Idem dans `apps/courtbase-app/src/views/coach/MatchDetail.vue` et `apps/courtbase-app/src/views/official/MatchDetail.vue` — **hors scope de cette livraison (apps/web only demandé)** ; à faire dans une PR séparée.
+- [x] Settings : carte "Dernière synchronisation" (date+heure FR ou placeholder, banner rose si `lastSyncError`), bouton "Synchroniser maintenant" + dialog sélection team (filtré sur teams avec `basketplanLinks.length > 0`) + banner résultat agrégé.
 
 ### Déploiement & doc
-- [ ] Déployer Functions + IAM binding sur les nouvelles.
-- [ ] MAJ `docs/firebase.md` (champs `match.external*`).
-- [ ] MAJ `docs/basketplan-integration.md` (section sync : ajouter exemples concrets de runs).
-- [ ] MAJ ce fichier : statut PR 2 → ✅ done.
+- [ ] **Eliot** : repack tarball + déployer Functions + IAM binding sur callable v2 :
+  ```bash
+  cd packages/shared-types && npm pack --pack-destination ../../functions/ && cd -
+  cd functions && npm install && npm run build && cd -
+  firebase deploy --only functions:syncBasketplanForTeam,functions:scheduledBasketplanSync -P <projectId>
+  gcloud run services add-iam-policy-binding syncbasketplanforteam \
+    --region=europe-west6 --member="allUsers" --role="roles/run.invoker" --project=<projectId>
+  ```
+- [ ] **Eliot** : activer `config.club.basketplan.enabled = true` côté Firestore (sinon le cron retourne early).
+- [x] MAJ `docs/firebase.md` (champs `match.external*` + section "Sync Basketplan (PR 2)" + table Cloud Functions enrichie).
+- [x] MAJ `docs/basketplan-integration.md` §5.3 (note statut PR 2 : AWAY+backfill livré, HOME différé en PR 3).
+- [x] MAJ ce fichier : statut PR 2 → ✅ done.
 
 ### Critères de succès PR 2
 - Le lendemain de la sync nocturne, un match Marly AWAY en 2LM apparaît dans `/matches` avec `kind:'away'`, `awayAddress` rempli, `externalGameNumber`.

@@ -18,7 +18,7 @@
  * mode create il reste visible mais ne déclenche rien (le handler court-circuite
  * tout). À ouvrir un slot `right` côté shell le jour où on doit le masquer ailleurs.
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertTriangle,
@@ -37,11 +37,20 @@ import CbMemberRow from '@/components/ui/CbMemberRow.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPill from '@/components/ui/CbPill.vue'
 import {
-  getMember,
+  getMember as getMemberMock,
   getTeam,
   logMockAction,
   type MockMember,
 } from '@/repositories/mock'
+import {
+  getMember as getMemberReal,
+  getMemberContact,
+} from '@/repositories/members.repo'
+import {
+  coachUpdateMember,
+  coachDeactivateMember,
+} from '@/services/cloudFunctions'
+import { useAuthStore } from '@/stores/auth'
 
 // ────────────────────────────────────────────────────────────────
 // Props (router) — null = create, string = edit
@@ -52,12 +61,29 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const auth = useAuthStore()
 
 const mode = computed<'create' | 'edit'>(() => (props.memberId ? 'edit' : 'create'))
 
+/**
+ * Mode hybride (cf. `apps/courtbase-app/CLAUDE.md`) :
+ *   - `useRealFirestore = true` quand le coach a un `userDoc.memberId` lié.
+ *     `existingMember` lit via `getMemberReal` (async, refs `realMember` /
+ *     `realLoading`), et le submit appelle la callable `coachUpdateMember`.
+ *   - `false` → fallback mock (mode démo /_design). Mêmes vues, mêmes refs,
+ *     mais lecture mock + `logMockAction` au submit.
+ */
+const useRealFirestore = computed<boolean>(() => !!auth.userDoc?.memberId)
+
+/** Member chargé en async (mode firestore). Null en mode mock. */
+const realMember = ref<MockMember | null>(null)
+/** True pendant le fetch (mode firestore uniquement). */
+const realLoading = ref(false)
+
 const existingMember = computed<MockMember | null>(() => {
   if (!props.memberId) return null
-  return getMember(props.memberId)
+  if (useRealFirestore.value) return realMember.value
+  return getMemberMock(props.memberId)
 })
 
 // ────────────────────────────────────────────────────────────────
@@ -80,10 +106,15 @@ interface FormState {
   }
 }
 
+/**
+ * État initial du formulaire en mode mock — utilisé tant que le fetch
+ * firestore n'a pas résolu (sinon le form serait undefined). En mode firestore,
+ * `applyMemberToForm` réinitialise les champs après réception du doc.
+ */
 function initialState(): FormState {
   const m = existingMember.value
-  if (m) {
-    // JSX defaults pour le mode edit (Théo).
+  if (m && !useRealFirestore.value) {
+    // JSX defaults pour le mode edit mock (Théo).
     return {
       firstName: m.firstName,
       lastName: m.lastName,
@@ -113,6 +144,46 @@ function initialState(): FormState {
 }
 
 const form = ref<FormState>(initialState())
+
+/**
+ * Recopie les champs d'un member réel + contact dans `form`. Les rôles ne
+ * sont pas pilotables côté coach (rules + whitelist `coachUpdateMember`) —
+ * on les laisse à `player: true` par défaut.
+ */
+function applyMemberToForm(m: MockMember, contact: { email: string | null; phone: string | null } | null): void {
+  form.value = {
+    firstName: m.firstName,
+    lastName: m.lastName,
+    birthDate: m.birthDate,
+    gender: m.gender === 'F' ? 'F' : m.gender === 'other' ? 'other' : 'M',
+    phone: contact?.phone ?? '',
+    email: contact?.email ?? '',
+    avs: m.avs ?? '',
+    roles: {
+      player: true,
+      official: m.officialLevel !== null,
+      coach: false,
+      referee: false,
+    },
+  }
+}
+
+/**
+ * Charge le member réel + son sous-doc contact (mode firestore). En mode mock,
+ * no-op (le state initial suffit). Re-fetché si `props.memberId` change.
+ */
+async function loadFromFirestore(id: string): Promise<void> {
+  if (!useRealFirestore.value || !id) return
+  realLoading.value = true
+  realMember.value = null
+  try {
+    const [m, contact] = await Promise.all([getMemberReal(id), getMemberContact(id)])
+    realMember.value = m
+    if (m) applyMemberToForm(m, contact)
+  } finally {
+    realLoading.value = false
+  }
+}
 
 // ────────────────────────────────────────────────────────────────
 // Validation (AVS, basique)
@@ -216,8 +287,30 @@ const deactivateConfirmed = computed(
   () => deactivateInput.value.trim().toLowerCase() === DEACTIVATE_KEYWORD,
 )
 
-function submitDeactivate(): void {
+const deactivateError = ref<string | null>(null)
+const deactivateSubmitting = ref(false)
+
+async function submitDeactivate(): Promise<void> {
   if (!deactivateConfirmed.value || !props.memberId) return
+  deactivateError.value = null
+  if (useRealFirestore.value) {
+    deactivateSubmitting.value = true
+    try {
+      await coachDeactivateMember({ memberId: props.memberId, mode: 'bench' })
+      closeDeactivateDialog()
+      onBack()
+    } catch (err) {
+      console.error('[co3] coachDeactivateMember failed', err)
+      const code = (err as { code?: string } | null)?.code ?? ''
+      deactivateError.value =
+        code === 'permission-denied'
+          ? "Vous n'êtes pas autorisé à désactiver ce joueur."
+          : 'La désactivation a échoué. Réessayez.'
+    } finally {
+      deactivateSubmitting.value = false
+    }
+    return
+  }
   logMockAction('co3.deactivate', { memberId: props.memberId })
   closeDeactivateDialog()
   onBack()
@@ -239,18 +332,79 @@ function onCancel(): void {
   onBack()
 }
 
-function onSubmit(): void {
+/** True pendant `coachUpdateMember` (mode firestore). Désactive le CTA "Enregistrer". */
+const submitting = ref(false)
+const submitError = ref<string | null>(null)
+
+/**
+ * Convertit la string `yyyy-mm-dd` en epoch millis (UTC midnight) attendu par
+ * `coachUpdateMember`. Renvoie `null` si la string est vide (laisse le champ
+ * inchangé en passant `undefined` plus haut).
+ */
+function birthDateToMillis(iso: string): number | null {
+  if (!iso) return null
+  const [y, m, d] = iso.split('-').map((p) => Number(p))
+  if (y === undefined || m === undefined || d === undefined) return null
+  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return null
+  return Date.UTC(y, m - 1, d)
+}
+
+async function onSubmit(): Promise<void> {
   if (!canSubmit.value) return
-  const payload = {
-    ...form.value,
-    guardianUids: guardians.value.map((g) => g.uid),
+  submitError.value = null
+
+  // Mode mock — comportement legacy (log-only, navigate back).
+  if (!useRealFirestore.value) {
+    const payload = {
+      ...form.value,
+      guardianUids: guardians.value.map((g) => g.uid),
+    }
+    if (mode.value === 'create') {
+      logMockAction('co3.create', payload)
+    } else {
+      logMockAction('co3.save', { memberId: props.memberId, ...payload })
+    }
+    onBack()
+    return
   }
-  if (mode.value === 'create') {
-    logMockAction('co3.create', payload)
-  } else {
-    logMockAction('co3.save', { memberId: props.memberId, ...payload })
+
+  // Mode firestore — mode create pas branché (callable `coachCreateMember`
+  // demande un teamId qu'on n'a pas ici). On dirige vers le mock pour
+  // l'instant pour ne pas bloquer le mode démo.
+  if (mode.value === 'create' || !props.memberId) {
+    logMockAction('co3.create.skipped-firestore', {
+      ...form.value,
+      reason: 'coachCreateMember requires teamId — not wired in MemberForm yet',
+    })
+    onBack()
+    return
   }
-  onBack()
+
+  // Mode firestore + edit — appelle `coachUpdateMember` avec la whitelist.
+  submitting.value = true
+  try {
+    const birthMs = birthDateToMillis(form.value.birthDate)
+    await coachUpdateMember({
+      memberId: props.memberId,
+      firstName: form.value.firstName.trim(),
+      lastName: form.value.lastName.trim(),
+      birthDate: birthMs, // null si vide — efface (rare en edit)
+      email: form.value.email.trim() || null,
+      phone: form.value.phone.trim() || null,
+    })
+    onBack()
+  } catch (err) {
+    console.error('[co3] coachUpdateMember failed', err)
+    const code = (err as { code?: string } | null)?.code ?? ''
+    submitError.value =
+      code === 'permission-denied'
+        ? "Vous n'êtes pas autorisé à modifier ce joueur."
+        : code === 'invalid-argument'
+          ? 'Un des champs est invalide. Vérifiez le formulaire.'
+          : "L'enregistrement a échoué. Réessayez."
+  } finally {
+    submitting.value = false
+  }
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -263,10 +417,22 @@ function onWindowClick(): void {
 
 onMounted(() => {
   window.addEventListener('click', onWindowClick)
+  if (mode.value === 'edit' && props.memberId) {
+    void loadFromFirestore(props.memberId)
+  }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('click', onWindowClick)
 })
+
+// Refetch si le memberId change (deep-link sur edit avec autre id pendant
+// même montage — rare mais correct).
+watch(
+  () => [useRealFirestore.value, props.memberId] as const,
+  ([, id]) => {
+    if (mode.value === 'edit' && id) void loadFromFirestore(id)
+  },
+)
 
 // ────────────────────────────────────────────────────────────────
 // Headers / sous-titres
@@ -300,6 +466,38 @@ const dialogSubtitle = computed(() => {
     @back="onBack"
   >
     <div class="cb-page" style="padding-bottom: 16px">
+      <!-- Loader pendant le fetch initial (mode firestore) -->
+      <CbBanner
+        v-if="useRealFirestore && realLoading"
+        tone="sky"
+      >
+        Chargement du joueur…
+      </CbBanner>
+
+      <!-- Bannière "qui peut faire quoi" en mode firestore -->
+      <CbBanner
+        v-if="useRealFirestore && mode === 'edit'"
+        tone="sky"
+      >
+        Vous pouvez modifier le prénom, le nom, la date de naissance,
+        l'email et le téléphone. L'AVS, les rôles et les tuteurs sont gérés
+        par l'admin.
+      </CbBanner>
+
+      <!-- Erreur submit / désactivation (callable) -->
+      <CbBanner
+        v-if="submitError"
+        tone="rose"
+      >
+        {{ submitError }}
+      </CbBanner>
+      <CbBanner
+        v-if="deactivateError"
+        tone="rose"
+      >
+        {{ deactivateError }}
+      </CbBanner>
+
       <!-- Kebab menu (mode edit uniquement) ─ ancré sous le header -->
       <div
         v-if="mode === 'edit' && kebabMenuOpen"
@@ -439,8 +637,17 @@ const dialogSubtitle = computed(() => {
               placeholder="756.XXXX.XXXX.XX"
               inputmode="numeric"
               autocomplete="off"
+              :disabled="useRealFirestore"
+              :readonly="useRealFirestore"
             />
-            <div class="cb-helper">Obligatoire pour établir la licence fédérale.</div>
+            <div class="cb-helper">
+              <template v-if="useRealFirestore">
+                L'AVS est géré par l'admin (sensible).
+              </template>
+              <template v-else>
+                Obligatoire pour établir la licence fédérale.
+              </template>
+            </div>
           </div>
         </div>
       </div>
@@ -476,12 +683,14 @@ const dialogSubtitle = computed(() => {
             </template>
           </CbMemberRow>
           <button
+            v-if="!useRealFirestore"
             type="button"
             class="cb-btn outline block sm"
             @click="openLinkGuardian"
           >
             <Plus :size="14" /> Lier un tuteur
           </button>
+          <div v-else class="cb-helper">Les liens tuteur sont gérés par l'admin.</div>
         </div>
       </div>
 
@@ -506,21 +715,22 @@ const dialogSubtitle = computed(() => {
           style="padding: 0 14px 14px; display: flex; flex-direction: column; gap: 12px"
         >
           <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; padding: 8px 0">
-            <input v-model="form.roles.player" type="checkbox" />
+            <input v-model="form.roles.player" type="checkbox" :disabled="useRealFirestore" />
             <span>Joueur</span>
           </label>
           <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; padding: 8px 0">
-            <input v-model="form.roles.official" type="checkbox" />
+            <input v-model="form.roles.official" type="checkbox" :disabled="useRealFirestore" />
             <span>Officiel</span>
           </label>
           <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; padding: 8px 0">
-            <input v-model="form.roles.coach" type="checkbox" />
+            <input v-model="form.roles.coach" type="checkbox" :disabled="useRealFirestore" />
             <span>Coach</span>
           </label>
           <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; padding: 8px 0">
-            <input v-model="form.roles.referee" type="checkbox" />
+            <input v-model="form.roles.referee" type="checkbox" :disabled="useRealFirestore" />
             <span>Arbitre</span>
           </label>
+          <div v-if="useRealFirestore" class="cb-helper">Les rôles sont gérés par l'admin.</div>
         </div>
       </div>
     </div>
@@ -530,6 +740,7 @@ const dialogSubtitle = computed(() => {
         type="button"
         class="cb-btn outline"
         style="flex: 1"
+        :disabled="submitting"
         @click="onCancel"
       >
         Annuler
@@ -538,10 +749,10 @@ const dialogSubtitle = computed(() => {
         type="button"
         class="cb-btn primary"
         style="flex: 2"
-        :disabled="!canSubmit"
+        :disabled="!canSubmit || submitting"
         @click="onSubmit"
       >
-        Enregistrer
+        {{ submitting ? 'Enregistrement…' : 'Enregistrer' }}
       </button>
     </CbBottomBar>
   </CbMobileShell>
@@ -605,6 +816,7 @@ const dialogSubtitle = computed(() => {
             type="button"
             class="cb-btn outline"
             style="flex: 1"
+            :disabled="deactivateSubmitting"
             @click="closeDeactivateDialog"
           >
             Annuler
@@ -613,10 +825,10 @@ const dialogSubtitle = computed(() => {
             type="button"
             class="cb-btn danger"
             style="flex: 2"
-            :disabled="!deactivateConfirmed"
+            :disabled="!deactivateConfirmed || deactivateSubmitting"
             @click="submitDeactivate"
           >
-            Désactiver
+            {{ deactivateSubmitting ? 'Désactivation…' : 'Désactiver' }}
           </button>
         </CbBottomBar>
       </div>

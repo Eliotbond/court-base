@@ -251,6 +251,21 @@ a { color: inherit; text-decoration: none; }
 }
 .cb-logo.lg { width: 56px; height: 56px; border-radius: 14px; font-size: 22px; }
 
+/* Image logo : remplit le cercle .cb-logo, fond transparent (la couleur de
+   fond noire reste pour les initiales en fallback). Hérite du border-radius
+   du parent — pas de re-déclaration pour rester compatible avec .lg. */
+.cb-logo > .cb-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}
+.cb-logo:has(> .cb-logo-img) {
+  background: transparent;
+  overflow: hidden;
+}
+
 /* Tab bar mobile */
 .cb-tabbar {
   min-height: 56px;
@@ -773,3 +788,52 @@ select.cb-input {
 .cb-booking.match-home { border-left: 3px solid var(--violet-500); }
 .cb-booking.match-away { border-left: 3px solid var(--sky-500); }
 .cb-booking.freed      { border-left: 3px solid var(--slate-300); background: var(--slate-50); color: var(--text-muted); }
+
+/* ──────────────────────────────────────────────────────────────
+ * Booking visual kinds — `.cb-bk-*`
+ *
+ * Classes consommées par les 3 vues bookings (TeamPlanning vue-cal,
+ * Créneaux libres, Toutes les réservations). Le mapping kind → classe
+ * vit dans `src/utils/bookingColors.ts` (source unique).
+ *
+ * Convention : un fond léger + bordure gauche colorée (3px). Les états
+ * terminaux (`cancelled` / `freed`) overrident le fond / l'opacité.
+ * ────────────────────────────────────────────────────────────── */
+
+.cb-bk-training {
+  background: var(--emerald-50);
+  border-left: 3px solid var(--emerald-500);
+  color: var(--emerald-800, var(--emerald-700));
+}
+.cb-bk-match-home {
+  background: var(--violet-50);
+  border-left: 3px solid var(--violet-500);
+  color: var(--violet-700);
+}
+.cb-bk-match-away {
+  background: var(--sky-50);
+  border-left: 3px solid var(--sky-500);
+  color: var(--sky-700);
+}
+.cb-bk-reserve {
+  background: var(--slate-100);
+  border-left: 3px solid var(--slate-400);
+  color: var(--slate-700);
+}
+.cb-bk-custom {
+  background: var(--amber-50);
+  border-left: 3px solid var(--amber-500);
+  color: var(--amber-700);
+}
+.cb-bk-freed {
+  background: var(--slate-100);
+  border-left: 3px dashed var(--slate-400);
+  color: var(--text-muted);
+}
+.cb-bk-cancelled {
+  background: var(--rose-50);
+  border-left: 3px solid var(--rose-300);
+  color: var(--rose-700);
+  text-decoration: line-through;
+  opacity: 0.6;
+}

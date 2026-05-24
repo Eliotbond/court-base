@@ -33,6 +33,7 @@ import {
   type TeamGenderFilter,
   type TeamStatusFilter,
 } from '@/stores/teams'
+import { useAuthStore } from '@/stores/auth'
 import { useCategoriesStore } from '@/stores/categories'
 import { useCotisationTypesStore } from '@/stores/cotisationTypes'
 import { useTagsStore } from '@/stores/tags'
@@ -40,10 +41,19 @@ import { useMembersStore } from '@/stores/members'
 import type { TeamRow, TeamCoachAvatar } from '@/repositories/teams.repo'
 import type { MemberRow } from '@/repositories/members.repo'
 import type {
+  BasketplanCompetitionLink,
   TeamGender,
   TeamRegistrationStatus,
   TeamTagRef,
 } from '@club-app/shared-types'
+import { FirebaseError } from 'firebase/app'
+import { Plug, Trophy } from 'lucide-vue-next'
+import ToggleSwitch from 'primevue/toggleswitch'
+import BasketplanLinkDialog from '@/components/teams/BasketplanLinkDialog.vue'
+import {
+  toggleTeamBasketplanLink,
+  unlinkTeamBasketplan,
+} from '@/services/cloudFunctions'
 import Avatar from '@/components/ui/Avatar.vue'
 import Chip from '@/components/ui/Chip.vue'
 import Pill from '@/components/ui/Pill.vue'
@@ -51,6 +61,7 @@ import Checkbox from 'primevue/checkbox'
 
 const router = useRouter()
 const store = useTeamsStore()
+const auth = useAuthStore()
 const categoriesStore = useCategoriesStore()
 const cotisationTypesStore = useCotisationTypesStore()
 const tagsStore = useTagsStore()
@@ -744,6 +755,108 @@ async function removeCoach(memberId: string): Promise<void> {
     await store.removeCoach(team.id, memberId)
   } finally {
     coachActionPending.value = null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Basketplan — section "Compétitions Basketplan" dans le drawer team.
+//
+// Visible uniquement pour admin / rootAdmin / coach-of-this-team. Les
+// mutations passent par les callables `linkTeamToBasketplan` /
+// `unlinkTeamBasketplan` / `toggleTeamBasketplanLink` (cf.
+// docs/basketplan-integration.md § 6.2).
+// ---------------------------------------------------------------------------
+
+/**
+ * `true` si le user courant peut administrer les liens Basketplan de l'équipe
+ * sélectionnée. Aligné sur la garde serveur `assertAdminOrCoachOfTeam`.
+ */
+const canManageBasketplan = computed<boolean>(() => {
+  const team = selectedTeam.value
+  if (!team) return false
+  if (auth.rootAdmin) return true
+  if (auth.roles.includes('admin')) return true
+  const uid = auth.authSnap?.uid
+  if (!uid) return false
+  return team.coachIds.includes(uid)
+})
+
+const isBasketplanDialogOpen = ref(false)
+/** Id du link en cours de toggle/unlink, pour disabled granulaire. */
+const basketplanActionPending = ref<string | null>(null)
+/** Erreur transitoire (toggle/unlink) — affichée sous la liste. */
+const basketplanError = ref<string | null>(null)
+
+function openBasketplanDialog(): void {
+  basketplanError.value = null
+  isBasketplanDialogOpen.value = true
+}
+
+function onBasketplanLinked(payload: { link: BasketplanCompetitionLink }): void {
+  const team = selectedTeam.value
+  if (!team) return
+  // Patch local — pas de re-fetch nécessaire, la callable a déjà résolu les
+  // caches côté serveur et renvoyé le link complet.
+  store.addBasketplanLinkLocal(team.id, payload.link)
+}
+
+async function onToggleBasketplanLink(
+  link: BasketplanCompetitionLink,
+  active: boolean,
+): Promise<void> {
+  const team = selectedTeam.value
+  if (!team) return
+  basketplanActionPending.value = link.id
+  basketplanError.value = null
+  // Optimistic local toggle puis rollback en cas d'erreur.
+  store.toggleBasketplanLinkLocal(team.id, link.id, active)
+  try {
+    await toggleTeamBasketplanLink({
+      teamId: team.id,
+      linkId: link.id,
+      active,
+    })
+  } catch (err) {
+    // Rollback.
+    store.toggleBasketplanLinkLocal(team.id, link.id, !active)
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`toggleTeamBasketplanLink failed [${code}]`, err)
+    basketplanError.value =
+      code === 'permission-denied'
+        ? "Tu n'as pas les droits pour modifier ce lien."
+        : err instanceof Error
+          ? err.message
+          : 'Erreur lors du toggle du lien Basketplan.'
+  } finally {
+    basketplanActionPending.value = null
+  }
+}
+
+async function onUnlinkBasketplan(
+  link: BasketplanCompetitionLink,
+): Promise<void> {
+  const team = selectedTeam.value
+  if (!team) return
+  const confirmed = window.confirm(
+    `Retirer le lien Basketplan vers "${link.leagueHoldingName}" (${link.federationCode}) ?\n\nLes matchs déjà synchronisés ne seront pas supprimés, mais le sync nocturne s'arrêtera pour cette compétition.`,
+  )
+  if (!confirmed) return
+  basketplanActionPending.value = link.id
+  basketplanError.value = null
+  try {
+    await unlinkTeamBasketplan({ teamId: team.id, linkId: link.id })
+    store.removeBasketplanLinkLocal(team.id, link.id)
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`unlinkTeamBasketplan failed [${code}]`, err)
+    basketplanError.value =
+      code === 'permission-denied'
+        ? "Tu n'as pas les droits pour retirer ce lien."
+        : err instanceof Error
+          ? err.message
+          : 'Erreur lors du retrait du lien Basketplan.'
+  } finally {
+    basketplanActionPending.value = null
   }
 }
 </script>
@@ -1570,6 +1683,87 @@ async function removeCoach(memberId: string): Promise<void> {
                   </div>
                 </div>
               </section>
+
+              <!-- ============== Compétitions Basketplan ============== -->
+              <section
+                v-if="canManageBasketplan"
+                class="space-y-2"
+              >
+                <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold flex items-center gap-1">
+                  <Trophy
+                    :size="11"
+                    :stroke-width="2"
+                  />
+                  Compétitions Basketplan
+                </h4>
+                <div
+                  v-if="!selectedTeam.basketplanLinks || selectedTeam.basketplanLinks.length === 0"
+                  class="text-[12px] text-surface-500"
+                >
+                  Aucune compétition liée pour l'instant. Lie l'équipe à une
+                  compétition Swiss Basketball pour synchroniser
+                  automatiquement ses matchs.
+                </div>
+                <ul
+                  v-else
+                  class="space-y-1.5"
+                >
+                  <li
+                    v-for="link in selectedTeam.basketplanLinks"
+                    :key="link.id"
+                    class="flex items-center gap-2 px-2 py-1.5 rounded-md border border-surface-200 bg-white"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="text-[11px] font-semibold text-surface-700 shrink-0">
+                          {{ link.federationCode }}
+                        </span>
+                        <span class="text-[13px] truncate">
+                          {{ link.leagueHoldingName }}
+                        </span>
+                      </div>
+                      <div class="text-[11px] text-surface-500 mt-0.5 truncate">
+                        Équipe : {{ link.teamNameInLeague }}
+                      </div>
+                    </div>
+                    <ToggleSwitch
+                      :model-value="link.active"
+                      :disabled="basketplanActionPending === link.id"
+                      :aria-label="link.active ? 'Désactiver le lien' : 'Activer le lien'"
+                      @update:model-value="(v: boolean) => onToggleBasketplanLink(link, v)"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm !px-1.5 text-surface-500"
+                      :disabled="basketplanActionPending === link.id"
+                      :aria-label="`Retirer le lien ${link.leagueHoldingName}`"
+                      @click="onUnlinkBasketplan(link)"
+                    >
+                      <X
+                        :size="14"
+                        :stroke-width="2"
+                      />
+                    </button>
+                  </li>
+                </ul>
+                <div
+                  v-if="basketplanError"
+                  class="text-[11px] text-rose-600"
+                >
+                  {{ basketplanError }}
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  @click="openBasketplanDialog"
+                >
+                  <Plug
+                    :size="14"
+                    :stroke-width="2"
+                  />
+                  Lier une compétition
+                </button>
+              </section>
             </template>
           </div>
 
@@ -1978,5 +2172,14 @@ async function removeCoach(memberId: string): Promise<void> {
         </button>
       </template>
     </Dialog>
+
+    <!-- ================= Basketplan link dialog =================== -->
+    <BasketplanLinkDialog
+      v-if="selectedTeam"
+      v-model:visible="isBasketplanDialogOpen"
+      :team-id="selectedTeam.id"
+      :team-name="selectedTeam.name"
+      @linked="onBasketplanLinked"
+    />
   </section>
 </template>

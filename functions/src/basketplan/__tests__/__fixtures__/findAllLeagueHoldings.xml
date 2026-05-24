@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<basketplan version="2.0" remarks="Data Securtiy changes. If you lack some data please contact contact@orcasys.ch">
+<editLeagueHoldingForm>
+  <editLeagueHoldingForm seasonId="30" federationId="9"/>
+</editLeagueHoldingForm>
+<federations>
+  <Array>
+    <RegionFederationVOSeList id="5" languageDependentName="Association Genevoise" name="ASS. GENEVOISE" shortName="ACGBA"/>
+    <RegionFederationVOSeList id="7" languageDependentName="Association Neuchateloise" name="ASS. NEUCHATELOISE" shortName="ACNBA / Bernbasket"/>
+    <RegionFederationVOSeList id="9" languageDependentName="Association Fribourgeoise de Basketball" name="AFBB" shortName="AFBB"/>
+    <RegionFederationVOSeList id="4" languageDependentName="Ticino Basket" name="Ticino Basket" shortName="ATP"/>
+    <RegionFederationVOSeList id="6" languageDependentName="Association Vaudoise" name="ASS. VAUDOISE" shortName="AVB"/>
+    <RegionFederationVOSeList id="8" languageDependentName="Association Valaisanne" name="ASS. VALAISANNE" shortName="AVSBA"/>
+    <RegionFederationVOSeList id="3" languageDependentName="Association suisse centrale" name="ASS. LUCERNOISE" shortName="BVI"/>
+    <RegionFederationVOSeList id="1" languageDependentName="Association suisse nord-ouest" name="ASS. BALOISE" shortName="BVN"/>
+    <RegionFederationVOSeList id="13" languageDependentName="Conférence Ouest" name="Conférence Ouest" shortName="COBB"/>
+    <RegionFederationVOSeList id="100" languageDependentName="FIBA Europe" name="FIBA Europe" shortName="FIBA"/>
+    <RegionFederationVOSeList id="10" languageDependentName="Association zurichoise et nord-est" name="ProBasket" shortName="ProBasket"/>
+    <RegionFederationVOSeList id="12" languageDependentName="Swiss Basketball League" name="Swiss Basketball League" shortName="SBL"/>
+    <RegionFederationVOSeList id="300" languageDependentName="Special Olympics Switzerland" name="Special Olympics Switzerland" shortName="SOSWI"/>
+    <RegionFederationVOSeList id="200" languageDependentName="Basket en fauteuil roulant suisse" name="Rollstuhlbasketball Schweiz" shortName="SPV / ASP"/>
+    <RegionFederationVOSeList id="11" languageDependentName="Fédération Suisse de basketball" name="Swiss Basketball" shortName="SWB"/>
+  </Array>
+</federations>
+<leagueHoldingList>
+  <ArrayList>
+    <leagueHolding additionalTime="5" from="2025-09-01" fullName="Match de préparation Saison 25/26" id="10708" ignoreDirectEncounter="false" legs="4" name="Saison 25/26" numberOfPromotionPlaces="0" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-06-30">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="1862" legs="4" name="Match de préparation" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="X" shortName="Match de préparation" showRanking="false" sortOrderOnline="0">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueLevel id="13" languageDependentName="Match Amical rég." shortName="FR" sortOrder="20"/>
+        <playerCategory id="24" name="U 16" shortLabel="U16" shortName="U16" underYear="16" upperCategoryShortName="U19"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-11-10" fullName="U14 X Coupe Coupe U14 - Saison 25/26" id="10570" ignoreDirectEncounter="false" legs="4" name="Coupe U14 - Saison 25/26" numberOfPromotionPlaces="0" numberOfRelegationPlaces="0" playPeriodsMinutes="8" startRankingWith="1" to="2026-03-29">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="1837" legs="4" name="U14 X Coupe" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="8" sex="X" shortName="U14 X Coupe" showRanking="true" sortOrderOnline="1">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueGroup id="74" name="Coupe" shortName="Coupe"/>
+        <leagueLevel id="8" languageDependentName="Ligue cantonale" shortName="Cant." sortOrder="5"/>
+        <playerCategory id="26" name="U 14" shortLabel="U14" shortName="U14" underYear="14" upperCategoryShortName="U16"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-11-10" fullName="U16 M Coupe Coupe U16M - Saison 25/26" id="10573" ignoreDirectEncounter="false" legs="4" name="Coupe U16M - Saison 25/26" numberOfPromotionPlaces="0" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-29">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="1836" legs="4" name="U16 M Coupe" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="M" shortName="U16 M Coupe" showRanking="true" sortOrderOnline="3">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueGroup id="74" name="Coupe" shortName="Coupe"/>
+        <leagueLevel id="8" languageDependentName="Ligue cantonale" shortName="Cant." sortOrder="5"/>
+        <playerCategory id="24" name="U 16" shortLabel="U16" shortName="U16" underYear="16" upperCategoryShortName="U19"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2026-01-12" fullName="U18 M Coupe Coupe U18 - Saison 25/26" id="10580" ignoreDirectEncounter="false" legs="4" name="Coupe U18 - Saison 25/26" numberOfPromotionPlaces="0" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-05-31">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="1835" legs="4" name="U18 M Coupe" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="M" shortName="U18 M Coupe" showRanking="true" sortOrderOnline="5">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueGroup id="74" name="Coupe" shortName="Coupe"/>
+        <leagueLevel id="8" languageDependentName="Ligue cantonale" shortName="Cant." sortOrder="5"/>
+        <playerCategory id="23" name="U 18" shortLabel="U18" shortName="U18" underYear="18" upperCategoryShortName="U20"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2026-01-12" fullName="Senior F Coupe Coupe Senior F - Saison 25/26" id="10581" ignoreDirectEncounter="false" legs="4" name="Coupe Senior F - Saison 25/26" numberOfPromotionPlaces="0" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-29">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="1833" legs="4" name="Senior F Coupe" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="F" shortName="Senior F Coupe" showRanking="true" sortOrderOnline="7">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueGroup id="74" name="Coupe" shortName="Coupe"/>
+        <leagueLevel id="8" languageDependentName="Ligue cantonale" shortName="Cant." sortOrder="5"/>
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-11-10" fullName="Senior M Coupe Coupe Senoir M - Saison 25/26" id="10582" ignoreDirectEncounter="false" legs="4" name="Coupe Senoir M - Saison 25/26" numberOfPromotionPlaces="0" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-29">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="1834" legs="4" name="Senior M Coupe" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="M" shortName="Senior M Coupe" showRanking="true" sortOrderOnline="8">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueGroup id="74" name="Coupe" shortName="Coupe"/>
+        <leagueLevel id="8" languageDependentName="Ligue cantonale" shortName="Cant." sortOrder="5"/>
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-09-01" fullName="Mini-basket (U8-U10-U12) Saison 25/26" id="11265" ignoreDirectEncounter="false" legs="4" name="Saison 25/26" numberOfPromotionPlaces="0" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-06-30">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="172" legs="4" name="Mini-basket (U8-U10-U12)" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="X" shortName="Mini-basket (U8-U10-U12)" showRanking="true" sortOrderOnline="10">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueLevel id="8" languageDependentName="Ligue cantonale" shortName="Cant." sortOrder="5"/>
+        <playerCategory id="28" name="U 12" shortLabel="U12" shortName="U12" underYear="12" upperCategoryShortName="U14"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-09-01" fullName="U14 Saison 25/26 - Final Four" id="11269" ignoreDirectEncounter="false" legs="4" name="Saison 25/26 - Final Four" numberOfPromotionPlaces="4" numberOfRelegationPlaces="0" playPeriodsMinutes="8" startRankingWith="1" to="2026-06-30">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="287" legs="4" name="U14" numberOfPromotionPlaces="4" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="X" shortName="U14" showRanking="true" sortOrderOnline="12">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <playerCategory id="26" name="U 14" shortLabel="U14" shortName="U14" underYear="14" upperCategoryShortName="U16"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-09-30" fullName="U14 U14 - Saison 25/26 - Phase préliminaire" id="10571" ignoreDirectEncounter="false" legs="4" name="U14 - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="4" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-02-01">
+      <category id="PRELIMINARY_ROUND" label="Phase préliminaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="287" legs="4" name="U14" numberOfPromotionPlaces="4" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="X" shortName="U14" showRanking="true" sortOrderOnline="12">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <playerCategory id="26" name="U 14" shortLabel="U14" shortName="U14" underYear="14" upperCategoryShortName="U16"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2026-02-09" fullName="U14 U14 - Saison 25/26 - Deuxième phase - G1" id="10996" ignoreDirectEncounter="false" legs="4" name="U14 - Saison 25/26 - Deuxième phase - G1" numberOfPromotionPlaces="4" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-05-10">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="287" legs="4" name="U14" numberOfPromotionPlaces="4" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="X" shortName="U14" showRanking="true" sortOrderOnline="12">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <playerCategory id="26" name="U 14" shortLabel="U14" shortName="U14" underYear="14" upperCategoryShortName="U16"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2026-02-09" fullName="U14  U14 - Saison 25/26 - Deuxième phase - G2 " id="10995" ignoreDirectEncounter="false" legs="4" name=" U14 - Saison 25/26 - Deuxième phase - G2 " numberOfPromotionPlaces="4" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-05-10">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="287" legs="4" name="U14" numberOfPromotionPlaces="4" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="X" shortName="U14" showRanking="true" sortOrderOnline="12">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <playerCategory id="26" name="U 14" shortLabel="U14" shortName="U14" underYear="14" upperCategoryShortName="U16"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-09-01" fullName="U16 M Saison 25/26 - Final Four" id="11270" ignoreDirectEncounter="false" legs="4" name="Saison 25/26 - Final Four" numberOfPromotionPlaces="4" numberOfRelegationPlaces="0" playPeriodsMinutes="8" startRankingWith="1" to="2026-06-30">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="101" legs="4" name="U16 M" numberOfPromotionPlaces="4" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="M" shortName="U16 M" showRanking="true" sortOrderOnline="14">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <playerCategory id="24" name="U 16" shortLabel="U16" shortName="U16" underYear="16" upperCategoryShortName="U19"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-09-30" fullName="U16 M U16 - Saison 25/26" id="10572" ignoreDirectEncounter="false" legs="4" name="U16 - Saison 25/26" numberOfPromotionPlaces="4" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-05-17">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="101" legs="4" name="U16 M" numberOfPromotionPlaces="4" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="M" shortName="U16 M" showRanking="true" sortOrderOnline="14">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <playerCategory id="24" name="U 16" shortLabel="U16" shortName="U16" underYear="16" upperCategoryShortName="U19"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-09-30" fullName="3LM 3LM - Saison 25/26 - Phase préliminaire" id="10583" ignoreDirectEncounter="false" legs="4" name="3LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="100" legs="4" numberOfPromotionPlaces="2" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="M" shortName="3LM" showRanking="true" sortOrderOnline="18">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueLevel id="4" languageDependentName="3ème ligue cantonale" shortName="3" sortOrder="7"/>
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2026-03-16" fullName="3LM 3LM - Saison 25/26 - 1/4 Playoffs " id="11084" ignoreDirectEncounter="false" legs="4" name="3LM - Saison 25/26 - 1/4 Playoffs " numberOfPromotionPlaces="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-05-31">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="100" legs="4" numberOfPromotionPlaces="2" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="M" shortName="3LM" showRanking="true" sortOrderOnline="18">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueLevel id="4" languageDependentName="3ème ligue cantonale" shortName="3" sortOrder="7"/>
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2026-04-20" fullName="3LM 3LM - Saison 25/26 - 1/2 Playoffs " id="11176" ignoreDirectEncounter="false" legs="4" name="3LM - Saison 25/26 - 1/2 Playoffs " numberOfPromotionPlaces="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" startRankingWith="1" to="2026-05-03">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="100" legs="4" numberOfPromotionPlaces="2" numberOfReferees="2" numberOfRelegationPlaces="0" playPeriodsMinutes="10" sex="M" shortName="3LM" showRanking="true" sortOrderOnline="18">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueLevel id="4" languageDependentName="3ème ligue cantonale" shortName="3" sortOrder="7"/>
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+    <leagueHolding additionalTime="5" from="2026-03-16" fullName="2LM 2LM - Saison 25/26 - Playoffs " id="11083" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Playoffs " numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-05-31">
+      <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+      <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+        <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+        <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </league>
+      <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    </leagueHolding>
+  </ArrayList>
+</leagueHoldingList>
+<listSize>
+  <Integer>18</Integer>
+</listSize>
+<seasonList>
+  <Array>
+    <SeasonVO from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+    <SeasonVO from="2024-07-01 00:00" fromYMD="2024-07-01" id="29" name="2024/2025" shortName="24/25" to="2025-06-30 23:59" toYMD="2025-06-30"/>
+    <SeasonVO from="2023-07-01 00:00" fromYMD="2023-07-01" id="28" name="2023/2024" shortName="23/24" to="2024-06-30 23:59" toYMD="2024-06-30"/>
+    <SeasonVO from="2022-07-01 00:00" fromYMD="2022-07-01" id="27" name="2022/2023" shortName="22/23" to="2023-06-30 23:59" toYMD="2023-06-30"/>
+    <SeasonVO from="2021-07-01 00:00" fromYMD="2021-07-01" id="26" name="2021/2022" shortName="21/22" to="2022-06-30 23:59" toYMD="2022-06-30"/>
+    <SeasonVO from="2020-07-01 00:00" fromYMD="2020-07-01" id="25" name="2020/2021" shortName="20/21" to="2021-06-30 23:59" toYMD="2021-06-30"/>
+    <SeasonVO from="2019-07-01 00:00" fromYMD="2019-07-01" id="24" name="2019/2020" shortName="19/20" to="2020-06-30 23:59" toYMD="2020-06-30"/>
+    <SeasonVO from="2018-07-01 00:00" fromYMD="2018-07-01" id="23" name="2018/2019" shortName="18/19" to="2019-06-30 23:59" toYMD="2019-06-30"/>
+    <SeasonVO from="2017-07-01 00:00" fromYMD="2017-07-01" id="22" name="2017/2018" shortName="17/18" to="2018-06-30 23:59" toYMD="2018-06-30"/>
+    <SeasonVO from="2016-07-01 00:00" fromYMD="2016-07-01" id="21" name="2016/2017" shortName="16/17" to="2017-06-30 23:59" toYMD="2017-06-30"/>
+    <SeasonVO from="2015-07-01 00:00" fromYMD="2015-07-01" id="20" name="2015/2016" shortName="15/16" to="2016-06-30 23:59" toYMD="2016-06-30"/>
+    <SeasonVO from="2014-07-01 00:00" fromYMD="2014-07-01" id="18" name="2014/2015" shortName="14/15" to="2015-06-30 23:59" toYMD="2015-06-30"/>
+    <SeasonVO from="2013-07-01 00:00" fromYMD="2013-07-01" id="17" name="2013/2014" shortName="13/14" to="2014-06-30 23:59" toYMD="2014-06-30"/>
+    <SeasonVO from="2012-07-01 00:00" fromYMD="2012-07-01" id="16" name="2012/2013" shortName="12/13" to="2013-06-30 23:59" toYMD="2013-06-30"/>
+    <SeasonVO from="2011-07-01 00:00" fromYMD="2011-07-01" id="15" name="2011/2012" shortName="11/12" to="2012-06-30 23:59" toYMD="2012-06-30"/>
+    <SeasonVO from="2010-07-01 00:00" fromYMD="2010-07-01" id="14" name="2010/2011" shortName="10/11" to="2011-06-30 23:59" toYMD="2011-06-30"/>
+    <SeasonVO from="2009-07-01 00:00" fromYMD="2009-07-01" id="13" name="2009/2010" shortName="09/10" to="2010-06-30 23:59" toYMD="2010-06-30"/>
+    <SeasonVO from="2008-07-01 00:00" fromYMD="2008-07-01" id="12" name="2008/2009" shortName="08/09" to="2009-06-30 23:59" toYMD="2009-06-30"/>
+    <SeasonVO from="2007-07-01 00:00" fromYMD="2007-07-01" id="11" name="2007/2008" shortName="07/08" to="2008-06-30 23:59" toYMD="2008-06-30"/>
+    <SeasonVO from="2006-07-01 00:00" fromYMD="2006-07-01" id="10" name="2006/2007" shortName="06/07" to="2007-06-30 23:59" toYMD="2007-06-30"/>
+    <SeasonVO from="2005-07-01 00:00" fromYMD="2005-07-01" id="9" name="2005/2006" shortName="05/06" to="2006-06-30 23:59" toYMD="2006-06-30"/>
+    <SeasonVO from="2004-07-01 00:00" fromYMD="2004-07-01" id="8" name="2004/2005" shortName="04/05" to="2005-06-30 23:59" toYMD="2005-06-30"/>
+  </Array>
+</seasonList>
+<title>
+  <String>Ligues</String>
+</title>
+</basketplan>

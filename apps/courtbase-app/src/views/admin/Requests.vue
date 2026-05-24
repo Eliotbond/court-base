@@ -32,13 +32,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  Bell,
-  BellRing,
-  Home as HomeIcon,
-  Inbox,
-  Megaphone,
-} from 'lucide-vue-next'
+import { Inbox } from 'lucide-vue-next'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Textarea from 'primevue/textarea'
@@ -50,8 +44,7 @@ import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
 import CbPill from '@/components/ui/CbPill.vue'
 import type { CbPillTone } from '@/components/ui/CbPill.vue'
-import type { CbNavItem } from '@/components/ui/CbSidebar.vue'
-import type { CbTab } from '@/components/ui/CbTabBar.vue'
+import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
 import {
   countUnread,
@@ -63,6 +56,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const { isDesktop } = useViewport()
+const { tabs, nav, primaryRoleLabel } = useShellNav()
 
 // ─── Onglets ────────────────────────────────────────────────
 type TabKind = MockRequest['kind']
@@ -213,69 +207,11 @@ function cancelReject(): void {
   rejectAttempted.value = false
 }
 
-// ─── Shell — tabs + sidebar admin ──────────────────────────
+// ─── Shell (badge cloche header) ──────────────────────────────
 const notifBadgeCount = computed(() => countUnread())
 const requestsTotalPending = computed(
   () => counts.value.license + counts.value.payment_exception + counts.value.match_move,
 )
-
-const tabsAdmin = computed<CbTab[]>(() => [
-  { icon: BellRing, label: 'Staffing' },
-  {
-    icon: Inbox,
-    label: 'Demandes',
-    badge: requestsTotalPending.value || undefined,
-  },
-  { icon: Megaphone, label: 'Diffuser' },
-  { icon: Bell, label: 'Notifs', badge: notifBadgeCount.value || undefined },
-])
-
-const navAdmin = computed<CbNavItem[]>(() => [
-  { icon: HomeIcon, label: 'Accueil' },
-  { icon: BellRing, label: 'Staffing' },
-  {
-    icon: Inbox,
-    label: 'Demandes',
-    badge: requestsTotalPending.value || undefined,
-  },
-  { icon: Megaphone, label: 'Diffuser' },
-  { icon: Bell, label: 'Notifications', badge: notifBadgeCount.value || undefined },
-])
-
-function onTabSelect(index: number): void {
-  switch (index) {
-    case 0:
-      router.push({ name: 'staffing' })
-      break
-    case 1:
-      return // déjà ici
-    case 2:
-      router.push({ name: 'broadcast' })
-      break
-    case 3:
-      router.push({ name: 'notifications' })
-      break
-  }
-}
-
-function onNavSelect(index: number): void {
-  switch (index) {
-    case 0:
-      router.push({ name: 'home' })
-      break
-    case 1:
-      router.push({ name: 'staffing' })
-      break
-    case 2:
-      return // déjà ici
-    case 3:
-      router.push({ name: 'broadcast' })
-      break
-    case 4:
-      router.push({ name: 'notifications' })
-      break
-  }
-}
 
 function onNotifClick(): void {
   router.push({ name: 'notifications' })
@@ -286,14 +222,12 @@ function onNotifClick(): void {
   <!-- Desktop shell (≥1024px) ────────────────────────────────── -->
   <CbDesktopShell
     v-if="isDesktop"
-    :items="navAdmin"
-    :active="2"
+    :items="nav"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
     user-name="Admin"
-    user-role="Admin restreint"
-    @nav-select="onNavSelect"
+    :user-role="primaryRoleLabel"
   >
     <CbPageHead
       title="Demandes"
@@ -362,10 +296,8 @@ function onNotifClick(): void {
     title="Demandes"
     club="BCA"
     :notif-badge="notifBadgeCount > 0"
-    :tabs="tabsAdmin"
-    :active-tab="1"
+    :tabs="tabs"
     @notif-click="onNotifClick"
-    @tab-select="onTabSelect"
   >
     <div class="cb-req-tabs">
       <button

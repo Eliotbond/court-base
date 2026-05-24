@@ -102,7 +102,17 @@ const ALLOW: Record<UserRole, RouteName[]> = {
 }
 ```
 
-Un user avec **plusieurs rôles** voit la **union** des routes. La home affiche un tab bar dérivé de ses rôles (1 tab par audience, ordre fixe : Coach → Officiel → Admin).
+Un user avec **plusieurs rôles** voit la **union** des routes. La home est un **single-page unifié** (cf. § "Home unifié single-page" ci-dessous) qui empile les sections par rôle dans l'ordre fixe Coach → Officiel → Admin → Joueur ; pas de role switcher. Le tab bar mobile en dérive (max 4 slots, sélection par priorité de rôle).
+
+## Home unifié single-page
+
+> Refactor 2026-05-24 (PR-M). Brief produit : `docs/courtbase-app/menu-refactor.md`. Détails d'implémentation : `apps/courtbase-app/CLAUDE.md` § "Menu unifié single-page".
+
+L'écran d'accueil est **un seul template** quelle que soit la combinaison de rôles de l'utilisateur. Plutôt qu'un role switcher artificiel, les **sections** propres à chaque rôle (Coach / Officiel / Admin / Joueur) sont empilées dans cet ordre fixe et n'apparaissent que si l'utilisateur porte le rôle. Un user `coach + admin` voit donc les deux univers ensemble, sans bascule. Un user sans rôle voit un fallback `HomeEmpty` (situation théorique post-`acceptInvitation` qui n'aurait pas posé de rôle).
+
+Chaque section charge ses données indépendamment au mount (idempotent — pas de re-fetch si déjà chargé). Si un rôle est absent, sa section n'est pas rendue, donc aucun fetch ne se déclenche pour ce périmètre.
+
+La sidebar desktop suit le même principe : un groupe (`CbNavItemGroup`) par rôle, avec un label section ("COACH" / "OFFICIEL" / "ADMIN" / "JOUEUR"), pour que la navigation reflète visuellement les périmètres dont l'utilisateur dispose.
 
 ## Membre inactif — accès coupé
 
@@ -173,7 +183,7 @@ Une fois `courtbase-app` livré et déployé en prod sur le projet pilote, `apps
 - `src/assets/tokens.css` (~600 lignes) — design tokens + classes utilitaires `.cb-*` portés littéralement du bundle claude.design (rendu via `claude.ai/design`, fetché en gzip, extrait dans `/tmp/courtbase-app-design/`).
 - **16 primitives `Cb*`** dans `src/components/ui/` (`CbMobileShell`, `CbDesktopShell`, `CbHeader`, `CbTabBar`, `CbSidebar`, `CbPageHead`, `CbPill`, `CbAvatar`, `CbMemberRow`, `CbMatchCard`, `CbMatchTypeChip`, `CbEmptyState`, `CbBottomBar`, `CbBanner`, `CbNotifItem`, `CbSkel`) + `CbMockBadge` (badge "Données simulées" persistant) + `CbAssignmentActionDialog`.
 - `src/composables/useViewport.ts` — switch responsive mobile/desktop ≥ 1024px.
-- `src/composables/useShellNav.ts` — tabs + nav sidebar role-aware avec badges réactifs (à utiliser pour toute nouvelle vue, évite la duplication des arrays `CbTab[]`).
+- `src/composables/useShellNav.ts` — retourne `{ tabs, nav, primaryRoleLabel }` role-aware (refactor PR-M-A, 2026-05-24) : tab bar mobile + sidebar `CbNavItemGroup[]` groupée par rôle + label rôle prioritaire pour l'avatar du shell. À utiliser pour toute nouvelle vue (évite la duplication des arrays).
 - Showcase visuel sur `/_design` (route hors auth) — reproduit toutes les primitives + frames mobile/desktop.
 
 ### Auth réel (Phase 1, partiel)
@@ -189,7 +199,7 @@ Une fois `courtbase-app` livré et déployé en prod sur le projet pilote, `apps
 
 | Audience | Vues |
 |---|---|
-| Commun | SignIn, ProfileSetup, MemberInactiveBlocker, Home (role-aware), Notifications, ProfileSettings |
+| Commun | SignIn, ProfileSetup, MemberInactiveBlocker, Home (single-page unifié — cf. § "Home unifié single-page"), Notifications, ProfileSettings |
 | Officiel | OpenMatches, MyAssignments, MatchDetail + dialog CbAssignmentActionDialog |
 | Coach | MyTeams, TeamRoster, MemberForm (create+edit), MemberDetail (+ 3 dialogs inline), TeamPlanning (week + day strip), TrainingAttendance (avec enforcement exclusion), AwayMatchCreate, Registrations, RegistrationDetail, MatchMoveRequest |
 | Admin | Staffing, StaffingDetail, Requests, RequestDetail, Broadcast |

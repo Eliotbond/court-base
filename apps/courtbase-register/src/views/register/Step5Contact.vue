@@ -83,11 +83,13 @@ async function onContinue(): Promise<void> {
         ? previousClubAbroad.value
         : false,
     })
-    if (previouslyLicensed.value) {
-      router.push('/register/step-6')
-    } else {
-      router.push('/register/step-7')
-    }
+    // Plus de Step 6 (lettre de sortie) dans le wizard d'inscription :
+    // les documents de licence (lettre de sortie, passeport, AVS) sont
+    // collectés à part via le form parent `LicenseRequestForm.vue`, déclenché
+    // par le coach quand il fait la demande de licence (post-inscription).
+    // L'inscription elle-même se contente du flag `previouslyLicensed` +
+    // métadonnées (nom de l'ancien club, club étranger) — pour info coach.
+    router.push('/register/step-7')
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {

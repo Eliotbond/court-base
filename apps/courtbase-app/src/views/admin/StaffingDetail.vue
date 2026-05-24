@@ -36,7 +36,6 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   AlertTriangle,
   ArrowLeft,
-  BellRing,
   CheckCircle2,
   CircleHelp,
   Inbox,
@@ -56,7 +55,7 @@ import CbMatchTypeChip from '@/components/ui/CbMatchTypeChip.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
 import CbPill from '@/components/ui/CbPill.vue'
-import type { CbNavItem } from '@/components/ui/CbSidebar.vue'
+import { useShellNav } from '@/composables/useShellNav'
 
 import {
   getMatch,
@@ -74,6 +73,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const { nav, primaryRoleLabel } = useShellNav()
 
 const matchId = computed<string>(() => {
   const raw = route.params['matchId']
@@ -405,17 +405,6 @@ function onBack(): void {
 }
 
 // ────────────────────────────────────────────────────────────────
-// Sidebar desktop (admin)
-// ────────────────────────────────────────────────────────────────
-
-const navAdmin: CbNavItem[] = [
-  { icon: Shield, label: 'Accueil' },
-  { icon: BellRing, label: 'Staffing' },
-  { icon: Inbox, label: 'Demandes', badge: 5 },
-  { icon: Send, label: 'Diffuser' },
-]
-
-// ────────────────────────────────────────────────────────────────
 // Status pill helper
 // ────────────────────────────────────────────────────────────────
 
@@ -639,13 +628,12 @@ function statusTone(
   <CbDesktopShell
     v-if="match"
     class="a2-desktop"
-    :items="navAdmin"
-    :active="1"
+    :items="nav"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
     user-name="Mathieu Brun"
-    user-role="Admin · Officiel"
+    :user-role="primaryRoleLabel"
   >
     <CbPageHead
       :title="matchHeaderTitle"

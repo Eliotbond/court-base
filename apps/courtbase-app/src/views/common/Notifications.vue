@@ -1,26 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  Bell,
-  BellRing,
-  Calendar,
-  Clipboard,
-  Home as HomeIcon,
-  Inbox,
-  Megaphone,
-  RefreshCw,
-  Shield,
-  Users,
-} from 'lucide-vue-next'
+import { Bell, RefreshCw } from 'lucide-vue-next'
 
 import CbDesktopShell from '@/components/ui/CbDesktopShell.vue'
 import CbEmptyState from '@/components/ui/CbEmptyState.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbNotifItem from '@/components/ui/CbNotifItem.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
-import type { CbNavItem } from '@/components/ui/CbSidebar.vue'
-import type { CbTab } from '@/components/ui/CbTabBar.vue'
+import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
 import {
   countUnread,
@@ -48,6 +36,7 @@ import { useAuthStore } from '@/stores/auth'
 const router = useRouter()
 const auth = useAuthStore()
 const { isDesktop } = useViewport()
+const { tabs, nav, primaryRoleLabel } = useShellNav()
 
 // ─── Filtres ─────────────────────────────────────────────────────
 type FilterKind = 'all' | 'unread' | 'match' | 'requests' | 'urgent'
@@ -132,84 +121,6 @@ function onNotifClick(n: MockNotification): void {
   })
 }
 
-// ─── Shell — tabs role-aware + sidebar nav ──────────────────────
-const tabs = computed<CbTab[]>(() => {
-  const items: CbTab[] = []
-  if (auth.isCoach) items.push({ icon: Users, label: 'Coach' })
-  if (auth.isOfficial) items.push({ icon: BellRing, label: 'Officiel' })
-  if (auth.isAdmin) items.push({ icon: Megaphone, label: 'Admin' })
-  items.push({
-    icon: Bell,
-    label: 'Notifs',
-    badge: unreadCount.value > 0 ? unreadCount.value : undefined,
-  })
-  return items
-})
-
-const activeTabIndex = computed(() => tabs.value.length - 1)
-
-const nav = computed<CbNavItem[]>(() => {
-  const items: CbNavItem[] = [{ icon: HomeIcon, label: 'Accueil' }]
-  if (auth.isCoach) {
-    items.push({ icon: Users, label: 'Mes équipes' })
-    items.push({ icon: Calendar, label: 'Planning' })
-    items.push({ icon: Clipboard, label: 'Inscriptions' })
-  }
-  if (auth.isOfficial) {
-    items.push({ icon: BellRing, label: 'Matchs à pourvoir' })
-  }
-  if (auth.isAdmin) {
-    items.push({ icon: Shield, label: 'Demandes' })
-  }
-  items.push({
-    icon: Bell,
-    label: 'Notifications',
-    badge: unreadCount.value > 0 ? unreadCount.value : undefined,
-  })
-  return items
-})
-
-const activeNavIndex = computed(() => nav.value.length - 1)
-
-function onTabSelect(index: number): void {
-  // Mapping inverse : on retrouve l'item via son label.
-  const item = tabs.value[index]
-  if (!item || index === activeTabIndex.value) return
-  switch (item.label) {
-    case 'Coach':
-      router.push({ name: 'team' })
-      break
-    case 'Officiel':
-      router.push({ name: 'matches-open' })
-      break
-    case 'Admin':
-      router.push({ name: 'requests' })
-      break
-  }
-}
-
-function onNavSelect(index: number): void {
-  const item = nav.value[index]
-  if (!item || index === activeNavIndex.value) return
-  switch (item.label) {
-    case 'Accueil':
-      router.push({ name: 'home' })
-      break
-    case 'Mes équipes':
-      router.push({ name: 'team' })
-      break
-    case 'Matchs à pourvoir':
-      router.push({ name: 'matches-open' })
-      break
-    case 'Demandes':
-      router.push({ name: 'requests' })
-      break
-    case 'Inscriptions':
-      router.push({ name: 'registrations' })
-      break
-  }
-}
-
 function onBack(): void {
   router.push({ name: 'home' })
 }
@@ -220,13 +131,11 @@ function onBack(): void {
   <CbDesktopShell
     v-if="isDesktop"
     :items="nav"
-    :active="activeNavIndex"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
     :user-name="auth.displayName"
-    :user-role="auth.isAdmin ? 'Admin' : auth.isCoach ? 'Coach' : 'Officiel'"
-    @nav-select="onNavSelect"
+    :user-role="primaryRoleLabel"
   >
     <CbPageHead
       title="Notifications"
@@ -294,9 +203,7 @@ function onBack(): void {
     show-back
     :notif-badge="unreadCount > 0"
     :tabs="tabs"
-    :active-tab="activeTabIndex"
     @back="onBack"
-    @tab-select="onTabSelect"
   >
     <div class="cb-chiprow">
       <button

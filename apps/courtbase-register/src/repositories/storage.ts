@@ -1,4 +1,5 @@
 import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage'
+import type { LicenseDocKind } from '@club-app/shared-types'
 import { firebaseApp } from '@/services/firebase'
 
 /**
@@ -68,12 +69,39 @@ export async function uploadTransferLetter(args: {
 export async function uploadLicenseDocument(args: {
   uid: string
   requestId: string
-  kind: 'id_front' | 'id_back' | 'license_form_signed' | 'transfer_letter'
+  kind: LicenseDocKind
   file: File
 }): Promise<UploadResult> {
   const { uid, requestId, kind, file } = args
   const ext = inferExtension(file)
   const path = `licenseRequests/${uid}/${requestId}/${kind}${ext}`
+  const fileRef = ref(storage, path)
+  await uploadBytes(fileRef, file, { contentType: file.type })
+  return {
+    storagePath: path,
+    contentType: file.type,
+    size: file.size,
+  }
+}
+
+/**
+ * Upload du PDF signé par le parent (phase trésorier — status
+ * `awaiting_parent_signature → parent_signed`). Path fixe `signed.{ext}` pour
+ * permettre le remplacement (parent re-signe si besoin avant que le trésorier
+ * confirme).
+ *
+ * Distinct de `uploadLicenseDocument` (typé sur `LicenseDocKind` qui n'inclut
+ * pas `'signed'` — c'est un slot dédié dans le doc Firestore via
+ * `signedDocStoragePath`, pas une entrée de `uploadedDocs`).
+ */
+export async function uploadSignedLicenseDoc(args: {
+  uid: string
+  requestId: string
+  file: File
+}): Promise<UploadResult> {
+  const { uid, requestId, file } = args
+  const ext = inferExtension(file)
+  const path = `licenseRequests/${uid}/${requestId}/signed${ext}`
   const fileRef = ref(storage, path)
   await uploadBytes(fileRef, file, { contentType: file.type })
   return {

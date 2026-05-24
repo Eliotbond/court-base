@@ -183,6 +183,23 @@ export interface MemberData {
    * transfert national ou international (cf. `docs/chantier-registrations.md` §4.9).
    */
   transferState: MemberTransferState
+  /**
+   * Chemin Storage de la photo licence du membre (format passeport, réutilisée
+   * par l'admin/trésorier lors de la création de la licence fédérale).
+   * Pattern : `members/{memberId}/license-photo.{ext}`.
+   * `null` tant qu'aucune photo n'a été uploadée.
+   * Posé par le coach (scope team via callable serveur) ou un
+   * admin/treasurer/rootAdmin. Pas d'écriture self par le membre.
+   * Cf. `docs/members/license-photo.md`.
+   */
+  photoStoragePath: string | null
+  /**
+   * Timestamp du dernier upload de photo licence. Sert d'audit + de
+   * cache-buster pour les URLs signées. `null` si aucune photo.
+   */
+  photoUpdatedAt: Timestamp | null
+  /** UID du coach/admin ayant uploadé la dernière version. `null` si aucune photo. */
+  photoUpdatedByUid: string | null
 }
 
 export type Member = MemberData & { id: string }

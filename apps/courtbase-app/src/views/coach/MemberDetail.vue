@@ -12,7 +12,7 @@
  *
  * Mock-only — toutes les mutations passent par `logMockAction(...)`.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   AlertTriangle,
@@ -34,17 +34,20 @@ import CbBottomBar from '@/components/ui/CbBottomBar.vue'
 import CbEmptyState from '@/components/ui/CbEmptyState.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPill, { type CbPillTone } from '@/components/ui/CbPill.vue'
+import CbLicenseRequestDialog from '@/components/dialogs/CbLicenseRequestDialog.vue'
+import MemberPhotoSection from '@/components/member/MemberPhotoSection.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   getDueForMember,
-  getMember,
-  getTeam,
-  inferRequiredDocs,
+  getMember as getMemberMock,
+  getTeam as getTeamMock,
   logMockAction,
   type MockDue,
   type MockMember,
   type MockTeam,
 } from '@/repositories/mock'
+import { getMember as getMemberReal } from '@/repositories/members.repo'
+import { listTeamsForMember } from '@/repositories/teams.repo'
 import { useLicenseRequestsStore } from '@/stores/licenseRequests'
 import type { DuesStatus } from '@/types/mock'
 import { canRequestLicense, licenseGateReason } from '@/utils/licenseGate'
@@ -65,7 +68,8 @@ const MOCK_DEMO_MEMBER_ID: string | null = null
 
 const route = useRoute()
 const router = useRouter()
-useAuthStore()
+const auth = useAuthStore()
+const licenseRequestsStore = useLicenseRequestsStore()
 
 const memberId = computed<string>(() => {
   if (MOCK_DEMO_MEMBER_ID !== null) return MOCK_DEMO_MEMBER_ID
@@ -73,19 +77,64 @@ const memberId = computed<string>(() => {
   return Array.isArray(raw) ? (raw[0] ?? '') : (raw ?? '')
 })
 
-const member = computed<MockMember | null>(() =>
-  memberId.value ? getMember(memberId.value) : null,
-)
+// ─── Hybrid mode (mock vs firestore réel) ────────────────────────
+// Pattern doc'd dans `apps/courtbase-app/CLAUDE.md` § Différences :
+// si le coach est lié à un memberId réel (`userDoc.memberId`) on charge
+// depuis Firestore ; sinon fallback mock (compte démo /_design).
+const useRealFirestore = computed<boolean>(() => !!auth.userDoc?.memberId)
 
-const due = computed<MockDue | null>(() =>
-  memberId.value ? getDueForMember(memberId.value) : null,
-)
+const realMember = ref<MockMember | null>(null)
+const realTeam = ref<MockTeam | null>(null)
+const realLoading = ref(false)
+
+const member = computed<MockMember | null>(() => {
+  if (useRealFirestore.value) return realMember.value
+  return memberId.value ? getMemberMock(memberId.value) : null
+})
+
+const due = computed<MockDue | null>(() => {
+  // Pas branché en mode firestore (nécessite query /dues + saison active —
+  // hors scope PR coach). UI dégrade en "—" pour le montant.
+  if (useRealFirestore.value) return null
+  return memberId.value ? getDueForMember(memberId.value) : null
+})
 
 const primaryTeam = computed<MockTeam | null>(() => {
+  if (useRealFirestore.value) return realTeam.value
   if (!member.value || member.value.teamIds.length === 0) return null
   const firstTeamId = member.value.teamIds[0]
-  return firstTeamId ? getTeam(firstTeamId) : null
+  return firstTeamId ? getTeamMock(firstTeamId) : null
 })
+
+async function loadFromFirestore(id: string): Promise<void> {
+  if (!useRealFirestore.value || !id) return
+  realLoading.value = true
+  realMember.value = null
+  realTeam.value = null
+  try {
+    const m = await getMemberReal(id)
+    realMember.value = m
+    if (m) {
+      const teams = await listTeamsForMember(m.id)
+      realTeam.value = teams[0] ?? null
+      // Hydrate le cache demande licence pour cohérence avec TeamRoster.
+      void licenseRequestsStore.hydrateForMembers([m.id])
+    }
+  } finally {
+    realLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void loadFromFirestore(memberId.value)
+})
+
+watch(
+  () => [useRealFirestore.value, memberId.value] as const,
+  ([, id]) => {
+    void loadFromFirestore(id)
+  },
+)
 
 const memberFullName = computed(() =>
   member.value ? `${member.value.firstName} ${member.value.lastName}` : '',
@@ -327,8 +376,13 @@ function submitException(): void {
 // Dialog "Demande / Retrait de licence" + gate cotisation
 // ────────────────────────────────────────────────────────────────
 
-const licenseRequestsStore = useLicenseRequestsStore()
-const licenseDialogOpen = ref(false)
+const licenseDialogVisible = ref(false)
+/**
+ * Withdraw uniquement (utilisé pour le retrait, pas pour la demande
+ * canonique). PR1 garde le flow retrait en log-only — le nouveau dialog
+ * `CbLicenseRequestDialog` ne gère que la demande de licence.
+ */
+const withdrawDialogOpen = ref(false)
 
 /**
  * `true` si la cotisation autorise la demande de licence (cf.
@@ -342,48 +396,92 @@ const gateReason = computed(() =>
   member.value ? licenseGateReason(member.value) : null,
 )
 
+/**
+ * Liste consolidée des destinataires des notifications associés à ce
+ * member. PR1 : pas de `linkedUserId` sur `MockMember` (cf. `types/mock.ts`)
+ * — on dérive uniquement depuis `guardianUserIds`. Quand le type sera
+ * promu vers `@club-app/shared-types/Member` (incluant `linkedUserId`),
+ * on ajoutera l'union ici.
+ */
+const notifyUserIds = computed<string[]>(() => {
+  if (!member.value) return []
+  return Array.from(new Set<string>(member.value.guardianUserIds))
+})
+
+/** Team minimal pour le dialog — préfère la team primaire. */
+const licenseDialogTeam = computed<{ id: string; name: string } | null>(() => {
+  if (!primaryTeam.value) return null
+  return { id: primaryTeam.value.id, name: primaryTeam.value.name }
+})
+
 function openLicenseDialog(): void {
-  // Si déjà licencié → on autorise toujours l'ouverture (cas "retrait").
-  // Sinon, on n'ouvre que si le gate cotisation passe.
-  if (!isLicensed.value && !canRequest.value) return
-  licenseDialogOpen.value = true
-}
-
-function closeLicenseDialog(): void {
-  licenseDialogOpen.value = false
-}
-
-function confirmLicenseAction(): void {
   if (!member.value) return
-  const kind: 'request' | 'withdraw' = isLicensed.value ? 'withdraw' : 'request'
-
-  if (kind === 'request') {
-    // Garde-fou (le CTA est déjà disabled, mais on évite l'appel en cas de
-    // race ou de deep-link forçant l'ouverture).
-    if (!canRequest.value) {
-      licenseDialogOpen.value = false
-      return
-    }
-    // Le store logge + console.info du faux email parent (pas besoin de
-    // doubler avec un logMockAction ici).
-    const requiredDocs = inferRequiredDocs(member.value)
-    licenseRequestsStore.create({
-      memberId: member.value.id,
-      teamId: member.value.teamIds[0],
-      requiredDocs,
-    })
-    licenseDialogOpen.value = false
-    showToast('Demande envoyée. Le parent recevra un email.', 'emerald')
+  if (isLicensed.value) {
+    // Cas "retrait" : ouvre le dialog legacy (out-of-scope PR1, log-only).
+    withdrawDialogOpen.value = true
     return
   }
+  if (!canRequest.value) return
+  licenseDialogVisible.value = true
+}
 
-  // Retrait — pas de fixture côté shared-types (out-of-scope mock).
+function closeWithdrawDialog(): void {
+  withdrawDialogOpen.value = false
+}
+
+function confirmWithdraw(): void {
+  if (!member.value) return
   logMockAction('co4.license-withdraw', { memberId: memberId.value })
-  licenseDialogOpen.value = false
+  withdrawDialogOpen.value = false
   showToast(
     'Demande de retrait envoyée — en attente de validation admin.',
     'emerald',
   )
+}
+
+/**
+ * Nettoie le query param `?action=request-license` pour éviter qu'un
+ * refresh ne ré-ouvre le dialog.
+ */
+function clearRequestLicenseQuery(): void {
+  if (route.query['action'] !== 'request-license') return
+  const { action: _action, ...rest } = route.query
+  void rest
+  void router.replace({
+    name: route.name ?? undefined,
+    params: route.params,
+    query: rest,
+    hash: route.hash,
+  })
+}
+
+function onLicenseDialogVisibility(value: boolean): void {
+  licenseDialogVisible.value = value
+  if (!value) clearRequestLicenseQuery()
+}
+
+function onLicenseRequestCreated(payload: {
+  requestId: string
+  alreadyExisted: boolean
+}): void {
+  // Toast contextuel — distinct si demande déjà existante.
+  if (payload.alreadyExisted) {
+    showToast(
+      'Une demande existait déjà pour ce joueur.',
+      'amber',
+    )
+  } else {
+    showToast(
+      'Demande envoyée. Le parent va recevoir une notification.',
+      'emerald',
+    )
+  }
+  // Re-hydrate le cache du store pour que les autres vues (TeamRoster
+  // notamment, via la nav back) voient l'état "déjà en cours".
+  if (member.value) {
+    void licenseRequestsStore.hydrateForMembers([member.value.id])
+  }
+  clearRequestLicenseQuery()
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -391,15 +489,20 @@ function confirmLicenseAction(): void {
 // ────────────────────────────────────────────────────────────────
 //
 // Permet à `TeamRoster.vue` (kebab menu sur un joueur) de naviguer
-// directement vers le dialog sans étape intermédiaire. On ne déclenche
-// l'ouverture qu'à 2 conditions : member chargé ET gate cotisation OK.
+// directement vers le dialog sans étape intermédiaire. On watch en réactif
+// pour gérer le cas où le member est chargé après mount (mode firestore
+// dans une future itération).
 
-onMounted(() => {
-  if (route.query['action'] !== 'request-license') return
-  if (!member.value) return
-  if (!canRequest.value) return
-  licenseDialogOpen.value = true
-})
+watch(
+  () => [route.query['action'], member.value?.id ?? null, canRequest.value] as const,
+  ([action, mid, gate]) => {
+    if (action !== 'request-license') return
+    if (!mid) return
+    if (!gate) return
+    licenseDialogVisible.value = true
+  },
+  { immediate: true },
+)
 
 // ────────────────────────────────────────────────────────────────
 // Dialog "Désactiver" (type-to-confirm)
@@ -466,12 +569,69 @@ function goEdit(): void {
   logMockAction('co4.edit', { memberId: memberId.value })
   void router.push({ name: 'member-edit', params: { memberId: member.value.id } })
 }
+
+// ────────────────────────────────────────────────────────────────
+// Photo licence — gate édition + suppression + reload après mutation
+// ────────────────────────────────────────────────────────────────
+//
+// Cf. `docs/members/license-photo.md` :
+//  - canEdit  : coach scope (l'équipe est la sienne) ou admin.
+//  - canDelete: admin uniquement.
+//
+// La discrimination "coach scope" est dérivée du rôle `coach` du caller
+// (le routing courtbase-app n'autorise déjà cette vue qu'aux coachs des
+// teams qui ont ce member dans le roster — cohérent avec l'allowlist).
+const canEditPhoto = computed<boolean>(() => auth.isCoach || auth.isAdmin)
+const canDeletePhoto = computed<boolean>(() => auth.isAdmin)
+
+function onPhotoUpdated(payload: { storagePath: string }): void {
+  // Patch optimistic du state local pour éviter un flicker — le refetch
+  // remettra le `photoUpdatedAt.seconds` à jour.
+  if (realMember.value) {
+    realMember.value = {
+      ...realMember.value,
+      photoStoragePath: payload.storagePath,
+      photoUpdatedAt: { seconds: Math.floor(Date.now() / 1000) },
+    }
+  }
+  // Source de vérité : refetch Firestore (récupère le vrai `photoUpdatedAt`).
+  void loadFromFirestore(memberId.value)
+  showToast('Photo enregistrée.', 'emerald')
+}
+
+function onPhotoRemoved(): void {
+  if (realMember.value) {
+    realMember.value = {
+      ...realMember.value,
+      photoStoragePath: null,
+      photoUpdatedAt: null,
+    }
+  }
+  void loadFromFirestore(memberId.value)
+  showToast('Photo supprimée.', 'rose')
+}
 </script>
 
 <template>
+  <!-- ─── Loading (mode firestore, fetch initial) ─────────────── -->
+  <CbMobileShell
+    v-if="!member && realLoading"
+    title="Chargement…"
+    show-back
+    @back="goBack"
+  >
+    <div class="cb-page">
+      <CbEmptyState
+        :icon="User"
+        title="Chargement du joueur"
+        body="Récupération des informations en cours."
+      />
+    </div>
+  </CbMobileShell>
+
   <!-- ─── Cas erreur : membre introuvable ───────────────────── -->
   <CbMobileShell
-    v-if="!member"
+    v-else-if="!member"
     title="Joueur introuvable"
     show-back
     @back="goBack"
@@ -557,6 +717,22 @@ function goEdit(): void {
               </CbPill>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Section Photo licence (cf. docs/members/license-photo.md) -->
+      <div>
+        <div class="cb-section-label" style="padding: 0 0 6px">Photo licence</div>
+        <div class="cb-card" style="padding: 14px">
+          <MemberPhotoSection
+            :member-id="member.id"
+            :photo-storage-path="member.photoStoragePath ?? null"
+            :photo-updated-at="member.photoUpdatedAt ?? null"
+            :can-edit="canEditPhoto"
+            :can-delete="canDeletePhoto"
+            @updated="onPhotoUpdated"
+            @removed="onPhotoRemoved"
+          />
         </div>
       </div>
 
@@ -770,54 +946,53 @@ function goEdit(): void {
     </div>
   </Teleport>
 
-  <!-- ─── Dialog Licence (request / withdraw) ─────────────────── -->
+  <!-- ─── Dialog Licence — demande (PR1, store réel) ──────────── -->
+  <CbLicenseRequestDialog
+    :visible="licenseDialogVisible"
+    :member="member"
+    :team="licenseDialogTeam"
+    :notify-user-ids="notifyUserIds"
+    @update:visible="onLicenseDialogVisibility"
+    @created="onLicenseRequestCreated"
+  />
+
+  <!-- ─── Dialog Licence — retrait (legacy mock, log-only) ─────── -->
   <Teleport to="body">
     <div
-      v-if="licenseDialogOpen"
+      v-if="withdrawDialogOpen"
       class="co4-dialog-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="Confirmation demande de licence"
-      @click.self="closeLicenseDialog"
+      aria-label="Confirmation retrait de licence"
+      @click.self="closeWithdrawDialog"
     >
       <div class="co4-dialog">
         <div class="co4-dialog-head">
-          <h2 class="cb-h2">
-            <span v-if="isLicensed">Retrait de licence</span>
-            <span v-else>Demande de licence</span>
-          </h2>
+          <h2 class="cb-h2">Retrait de licence</h2>
           <button
             type="button"
             class="cb-iconbtn"
             aria-label="Fermer"
-            @click="closeLicenseDialog"
+            @click="closeWithdrawDialog"
           >
             <X :size="18" />
           </button>
         </div>
         <div class="co4-dialog-body">
           <p style="font-size: 13px; line-height: 1.55">
-            <template v-if="isLicensed">
-              Vous allez soumettre une demande de retrait de la licence
-              <strong class="mono">#{{ member?.licenseNumber }}</strong> pour
-              <strong>{{ memberFullName }}</strong>. L'admin examinera votre demande
-              avant transmission à la fédération.
-            </template>
-            <template v-else>
-              Vous allez soumettre une demande de licence fédérale pour
-              <strong>{{ memberFullName }}</strong>. L'admin du club validera la
-              demande et transmettra le dossier à la fédération.
-            </template>
+            Vous allez soumettre une demande de retrait de la licence
+            <strong class="mono">#{{ member?.licenseNumber }}</strong> pour
+            <strong>{{ memberFullName }}</strong>. L'admin examinera votre demande
+            avant transmission à la fédération.
           </p>
         </div>
         <div class="co4-dialog-actions">
-          <button type="button" class="cb-btn ghost" @click="closeLicenseDialog">
+          <button type="button" class="cb-btn ghost" @click="closeWithdrawDialog">
             Annuler
           </button>
-          <button type="button" class="cb-btn primary" @click="confirmLicenseAction">
+          <button type="button" class="cb-btn primary" @click="confirmWithdraw">
             <CheckCircle2 :size="16" />
-            <span v-if="isLicensed">Confirmer le retrait</span>
-            <span v-else>Soumettre la demande</span>
+            Confirmer le retrait
           </button>
         </div>
       </div>

@@ -23,12 +23,14 @@ import {
   ScrollText,
   Scale,
   Calculator,
+  ShieldCheck,
 } from 'lucide-vue-next'
 import { computed, onMounted, type Component } from 'vue'
 import Pill from '@/components/ui/Pill.vue'
 import { useMembersStore } from '@/stores/members'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
+import { useCotisationsStore } from '@/stores/cotisations'
 
 type NavItem = {
   to: string
@@ -41,6 +43,15 @@ type NavItem = {
 const membersStore = useMembersStore()
 const settingsStore = useSettingsStore()
 const authStore = useAuthStore()
+const cotisationsStore = useCotisationsStore()
+
+// La route `/cotisations` est `ADMIN_ONLY` ; on ne charge le store que pour
+// les rôles capables d'y accéder. `rootAdmin` bypasse également la rule
+// `isAdminOrTreasurer` côté `firestore.rules`. Évite `permission-denied`
+// inutile pour un coach connecté qui voit la sidebar mais pas l'entrée.
+const canSeeCotisations = computed(
+  () => authStore.rootAdmin || authStore.roles.includes('admin'),
+)
 
 onMounted(() => {
   // Sidebar globalement montée → charge la liste si pas encore en cache,
@@ -51,6 +62,32 @@ onMounted(() => {
   }
   if (!settingsStore.config && !settingsStore.loading) {
     void settingsStore.load()
+  }
+  // Charge les cotisations pour alimenter le badge "en retard" de la
+  // sidebar (cf. `cotisationsBadge` ci-dessous). La page `/cotisations`
+  // lit le même store, donc pas de double fetch lors de la navigation.
+  if (
+    canSeeCotisations.value &&
+    cotisationsStore.cotisations.length === 0 &&
+    !cotisationsStore.loading
+  ) {
+    void cotisationsStore.load()
+  }
+})
+
+/**
+ * Badge "Cotisations" — compte des cotisations `overdue` (les plus
+ * actionnables pour l'admin / trésorier). Renvoie `null` quand le compte
+ * vaut 0 pour éviter d'afficher un rond rouge inutile. Format `'99+'` au
+ * delà de 99 pour préserver la lisibilité du Pill.
+ */
+const cotisationsBadge = computed<NavItem['badge'] | null>(() => {
+  if (!canSeeCotisations.value) return null
+  const count = cotisationsStore.stats.overdue.count
+  if (count <= 0) return null
+  return {
+    text: count > 99 ? '99+' : String(count),
+    variant: 'rose',
   }
 })
 
@@ -70,25 +107,29 @@ const workspace = computed<NavItem[]>(() => [
   { to: '/bookings', label: 'Bookings', icon: Calendar },
 ])
 
-const operations: NavItem[] = [
-  { to: '/registrations', label: 'Inscriptions', icon: ClipboardList },
-  { to: '/officials', label: 'Officials', icon: UsersRound },
-  { to: '/cotisations', label: 'Cotisations', icon: Banknote, badge: { text: '7', variant: 'rose' } },
-  {
-    to: '/licenses',
-    label: 'License requests',
-    icon: BadgeCheck,
-    badge: { text: '3', variant: 'amber' },
-  },
-  {
-    to: '/exceptions',
-    label: 'Payment exceptions',
-    icon: CircleHelp,
-    badge: { text: '2', variant: 'amber' },
-  },
-  { to: '/attendance', label: 'Attendance', icon: ClipboardCheck },
-  { to: '/matches', label: 'Matches', icon: Trophy },
-]
+// Items "Operations" — `Cotisations` reçoit un badge réactif (`overdue`)
+// piloté par `useCotisationsStore`. Les autres entrées n'ont pas (encore)
+// de source live ; l'ancien badge `Payment exceptions: 2` était hardcoded
+// et la vue elle-même est un placeholder — il a été retiré tant qu'il
+// n'existe pas de store dédié à brancher.
+const operations = computed<NavItem[]>(() => {
+  const items: NavItem[] = [
+    { to: '/registrations', label: 'Inscriptions', icon: ClipboardList },
+    { to: '/officials', label: 'Officials', icon: UsersRound },
+    {
+      to: '/cotisations',
+      label: 'Cotisations',
+      icon: Banknote,
+      ...(cotisationsBadge.value ? { badge: cotisationsBadge.value } : {}),
+    },
+    { to: '/license-requests', label: 'Demandes de licence', icon: ShieldCheck },
+    { to: '/licenses', label: 'Licences', icon: BadgeCheck },
+    { to: '/exceptions', label: 'Payment exceptions', icon: CircleHelp },
+    { to: '/attendance', label: 'Attendance', icon: ClipboardCheck },
+    { to: '/matches', label: 'Matches', icon: Trophy },
+  ]
+  return items
+})
 
 const details: NavItem[] = [
   { to: '/members/_preview', label: 'Member detail', icon: IdCard },

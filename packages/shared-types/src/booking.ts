@@ -95,6 +95,31 @@ export interface OfficialAssignmentData {
   /** uid */
   assignedBy: string
   respondedAt: Timestamp | null
+  /**
+   * Horodatage de la demande de remplacement par l'officiel (lui-même ou un
+   * admin/coach en son nom). L'assignation reste `confirmed` jusqu'à ce qu'un
+   * remplaçant soit trouvé — ce champ est juste un drapeau "à remplacer" qui
+   * alimente la métrique « Remplacements demandés » du tab Officiels.
+   *
+   * `null` (défaut) tant qu'aucun remplacement n'a été demandé. Posé via un
+   * `serverTimestamp()` client-direct (rules autorisent l'officiel à muter
+   * `replacementRequestedAt` + `replacementRequestedByUid` sur sa propre
+   * assignation).
+   *
+   * NB : champ optionnel pour rester rétro-compatible avec les docs créés
+   * avant l'introduction de ces métriques (count JS-side : null ou absent →
+   * pas comptabilisé).
+   */
+  replacementRequestedAt?: Timestamp | null
+  /**
+   * uid de celui qui a demandé le remplacement. Typiquement l'officiel
+   * lui-même (`memberId.linkedUserId`) via l'app courtbase-app ; ou un admin
+   * agissant en son nom depuis apps/web.
+   *
+   * `null` si pas de demande, sinon uid valide. Champ optionnel pour la même
+   * raison que `replacementRequestedAt` (rétro-compat).
+   */
+  replacementRequestedByUid?: string | null
 }
 
 export type OfficialAssignment = OfficialAssignmentData & { id: string }

@@ -44,7 +44,7 @@ const router = useRouter()
 const auth = useAuthStore()
 void auth // référencé pour cohérence avec les autres vues coach
 
-const { coachNav } = useShellNav()
+const { nav } = useShellNav()
 
 const teamId = computed<string>(() => {
   const raw = route.params['teamId']
@@ -236,7 +236,7 @@ function onSubmit(): void {
   </CbMobileShell>
 
   <!-- ─── Desktop (≥1024 px) — même contenu, layout centré ───── -->
-  <CbDesktopShell v-if="team" :items="coachNav" :active="1" class="co7-desktop">
+  <CbDesktopShell v-if="team" :items="nav" class="co7-desktop">
     <div class="co7-desktop-body">
       <div class="cb-card co7-desktop-card">
         <div style="display: flex; align-items: center; gap: 8px">
@@ -329,7 +329,7 @@ function onSubmit(): void {
   </CbDesktopShell>
 
   <!-- ─── Desktop : équipe introuvable ───────────────────────── -->
-  <CbDesktopShell v-else :items="coachNav" :active="1" class="co7-desktop">
+  <CbDesktopShell v-else :items="nav" class="co7-desktop">
     <div class="co7-desktop-body">
       <div class="cb-card co7-desktop-card">
         <CbEmptyState

@@ -102,10 +102,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
     return getSession().roles
   })
-  const isCoach = computed(() => roles.value.includes('coach'))
-  const isOfficial = computed(() => roles.value.includes('official'))
-  const isAdmin = computed(() => roles.value.includes('admin'))
-
   /**
    * Member lié — fallback mock pour l'instant (repos members pas branchées).
    * Quand on branchera Firestore, on ajoutera `linkedMemberId = userDoc.memberId`
@@ -120,6 +116,24 @@ export const useAuthStore = defineStore('auth', () => {
   const isMemberInactive = computed(() => linkedMember.value?.active === false)
   const officialLevel = computed(() => linkedMember.value?.officialLevel ?? null)
   const hasActiveOfficialLicense = computed(() => linkedMember.value?.officialLicense != null)
+  const hasActiveCoachLicense = computed(() => linkedMember.value?.coachLicense != null)
+
+  /**
+   * Flags de rôle **inclusifs** — vrai si le rôle est déclaré dans
+   * `/users.roles` OU si le member lié porte une licence active du rôle.
+   * Aligné sur la sémantique du badge "Officiel actif" / "Coach actif" côté
+   * admin web : avoir une licence confirmée pour la saison vaut rôle pour
+   * l'affichage des sections / nav. Le router applique sa propre allowlist
+   * stricte sur `roles` côté guard — donc cette inclusivité ne contourne
+   * pas la sécurité, elle aligne juste l'UI sur la réalité métier.
+   */
+  const isCoach = computed(
+    () => roles.value.includes('coach') || hasActiveCoachLicense.value,
+  )
+  const isOfficial = computed(
+    () => roles.value.includes('official') || hasActiveOfficialLicense.value,
+  )
+  const isAdmin = computed(() => roles.value.includes('admin'))
 
   /** Session "façade" pour compat avec les vues qui lisent `auth.session.xxx`. */
   const session = computed(() => ({
@@ -287,6 +301,7 @@ export const useAuthStore = defineStore('auth', () => {
     uid,
     officialLevel,
     hasActiveOfficialLicense,
+    hasActiveCoachLicense,
     // actions
     init,
     signInWithEmailPassword,

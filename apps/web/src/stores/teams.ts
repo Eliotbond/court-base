@@ -4,6 +4,7 @@ import {
   assignCoach as repoAssignCoach,
   createTeam as repoCreate,
   duplicateTeam as repoDuplicate,
+  getTeamById as repoGetTeamById,
   listTeams,
   removeCoach as repoRemoveCoach,
   setTeamActive as repoSetActive,
@@ -12,7 +13,10 @@ import {
   type TeamRow,
   type UpdateTeamInput,
 } from '@/repositories/teams.repo'
-import type { TeamGender } from '@club-app/shared-types'
+import type {
+  BasketplanCompetitionLink,
+  TeamGender,
+} from '@club-app/shared-types'
 
 /**
  * Filtres rapides (chips) — aligné sur le design Mockups (screen 4).
@@ -242,6 +246,83 @@ export const useTeamsStore = defineStore('teams', () => {
     }
   }
 
+  /**
+   * Re-fetch une équipe et upsert le row local. Utile après une mutation
+   * server-side dont on n'a pas le résultat enrichi (ex. liaison Basketplan
+   * via callable qui ne renvoie que le link ajouté). Pattern aligné sur
+   * `update` / `assignCoach` mais sans patch — on rafraîchit tout le row.
+   */
+  async function refreshTeam(teamId: string): Promise<void> {
+    error.value = null
+    try {
+      const row = await repoGetTeamById(teamId)
+      if (row) upsert(row)
+    } catch (e: unknown) {
+      error.value =
+        e instanceof Error ? e.message : "Erreur lors du rafraîchissement de l'équipe"
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Basketplan links — patches locaux pour éviter un re-fetch sur chaque
+  // mutation. Les écritures Firestore sont faites par les callables
+  // (`linkTeamToBasketplan` / `unlinkTeamBasketplan` / `toggleTeamBasketplanLink`).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Ajoute un lien Basketplan au row local sans re-fetch. Le link complet
+   * (avec ses caches) est fourni par la callable serveur. Pas d'écriture
+   * Firestore ici — le doc est déjà à jour côté serveur.
+   */
+  function addBasketplanLinkLocal(
+    teamId: string,
+    link: BasketplanCompetitionLink,
+  ): void {
+    const team = teams.value.find((t) => t.id === teamId)
+    if (!team) return
+    const existing = team.basketplanLinks ?? []
+    const next: TeamRow = {
+      ...team,
+      basketplanLinks: [...existing, link],
+    }
+    upsert(next)
+  }
+
+  /**
+   * Retire un lien Basketplan du row local par `linkId`. Pas d'écriture
+   * Firestore (le doc est déjà à jour côté serveur via la callable).
+   */
+  function removeBasketplanLinkLocal(teamId: string, linkId: string): void {
+    const team = teams.value.find((t) => t.id === teamId)
+    if (!team) return
+    const existing = team.basketplanLinks ?? []
+    const next: TeamRow = {
+      ...team,
+      basketplanLinks: existing.filter((l) => l.id !== linkId),
+    }
+    upsert(next)
+  }
+
+  /**
+   * Toggle le flag `active` d'un lien Basketplan localement.
+   */
+  function toggleBasketplanLinkLocal(
+    teamId: string,
+    linkId: string,
+    active: boolean,
+  ): void {
+    const team = teams.value.find((t) => t.id === teamId)
+    if (!team) return
+    const existing = team.basketplanLinks ?? []
+    const next: TeamRow = {
+      ...team,
+      basketplanLinks: existing.map((l) =>
+        l.id === linkId ? { ...l, active } : l,
+      ),
+    }
+    upsert(next)
+  }
+
   // -------------------------------------------------------------------------
   // Derived counts — utilisés pour les badges chips ("U16 · 3").
   // -------------------------------------------------------------------------
@@ -364,5 +445,9 @@ export const useTeamsStore = defineStore('teams', () => {
     duplicate,
     assignCoach,
     removeCoach,
+    refreshTeam,
+    addBasketplanLinkLocal,
+    removeBasketplanLinkLocal,
+    toggleBasketplanLinkLocal,
   }
 })

@@ -60,6 +60,12 @@ Avant toute tâche, identifie où elle se passe et ouvre **uniquement** les fich
 
     plutôt qu'un composite `(uid ASC, createdAt DESC)`. Avantages : pas d'index à déployer, tolère les docs avec `serverTimestamp` pas encore résolu (qui sont exclus d'un `orderBy` Firestore). Au-delà des dizaines/centaines de docs : repasser à un index composite.
 
+11. **Dans `firestore.rules`, JAMAIS `.data.field` — toujours `.data.get('field', default)`.** Un seul doc legacy sans le champ throw côté Rules engine et refuse toute la LIST query en `permission-denied` (pas juste le doc problématique). Mémoire `[[firestore-rules-safe-field-access]]`. Cas vécu : `isGuardianOf` sans default sur `guardianUserIds` a paralysé l'app register pendant 4h le 2026-05-23.
+
+12. **LIST queries Firestore + rule avec `get()` dynamique = risque de refus en bloc.** Si la rule fait `get(/foo/{X}).data...` (lookup dynamique), Firestore peut refuser la LIST query d'office (impossible à pré-valider). Pour les collections lues en LIST par les utilisateurs finaux, dénormaliser un champ statiquement filtrable (ex. `registeredByUid` sur `/dues`). Mémoires `[[firestore-list-query-dynamic-rule]]` et `[[due-registered-by-uid]]`.
+
+13. **`err instanceof FirestoreError` / `FirebaseError` n'est PAS fiable côté bundle Vite.** Le tree-shaking peut casser l'`instanceof`. Toujours check `err.code === '<code>'` directement via un helper. Pattern obligatoire pour tous les catches Firestore. Mémoire `[[firebase-error-instanceof-unreliable]]`.
+
 ## Mise à jour de la doc
 
 Quand tu modifies une règle métier, un schéma, ou un workflow, **mets à jour le doc correspondant dans la même PR**. La doc est la source de vérité — le code doit la refléter, jamais l'inverse.

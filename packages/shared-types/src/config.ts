@@ -64,6 +64,43 @@ export interface BankingInfo {
   paymentInstructions: string | null
 }
 
+/**
+ * Configuration de l'intégration Basketplan (Swiss Basketball / ORCA
+ * Systems). Vit sous `/config/club.basketplan` — singleton par projet
+ * (un projet Firebase = un club). `undefined` ou `enabled: false` =
+ * intégration désactivée (le scheduler de sync no-op, les callables de
+ * mapping restent disponibles pour préparer la migration).
+ *
+ * Voir `docs/basketplan-integration.md` § 4.3 pour la spec et § 5 pour les
+ * services qui consomment ces champs. La fédération par défaut sert au
+ * dropdown initial de la cascade de mapping et au ping `testConnection`.
+ *
+ * Cycle de vie :
+ *  - `clubId` / `defaultFederationId` : saisis par l'admin via Settings →
+ *    Intégrations → Basketplan.
+ *  - `lastSyncAt` / `lastSyncError` : mis à jour par le scheduler nocturne
+ *    (PR 2). `null` jusqu'à la première sync réussie / échouée.
+ *
+ * Sécurité : même frontière que le reste de `/config/club` (write
+ * `admin` + `rootAdmin` uniquement, cf. `firestore.rules`).
+ */
+export interface BasketplanIntegrationConfig {
+  /** Id Basketplan du club court-base (ex. 60 pour Marly). */
+  clubId: number
+  /**
+   * Fédération principale du club (ex. 9 = AFBB). Sert de défaut au
+   * dropdown du dialog de linkage et de cible au ping `testConnection`.
+   * Une équipe peut être liée à des compétitions d'autres fédérations.
+   */
+  defaultFederationId: number
+  /** Toggle global — `false` => scheduler no-op, UI reste accessible. */
+  enabled: boolean
+  /** Timestamp du dernier sync (réussi ou non). `null` tant qu'aucun run. */
+  lastSyncAt?: Timestamp | null
+  /** Message d'erreur en clair du dernier ping/sync KO. `null` si OK. */
+  lastSyncError?: string | null
+}
+
 export interface ClubConfigData {
   name: string
   /**
@@ -82,6 +119,12 @@ export interface ClubConfigData {
   banking: BankingInfo | null
   officialsConfig: OfficialsConfig
   duesConfig: DuesConfig
+  /**
+   * Intégration Basketplan (Swiss Basketball). `undefined` = jamais
+   * configuré (intégration off par défaut sur un nouveau projet).
+   * Voir `BasketplanIntegrationConfig` ci-dessus.
+   */
+  basketplan?: BasketplanIntegrationConfig
   createdAt: Timestamp
   /** uid du créateur (rootAdmin du provisioning). */
   createdBy: string
@@ -106,6 +149,8 @@ export interface ClubConfigPatch {
   banking?: BankingInfo | null
   officialsConfig?: OfficialsConfig
   duesConfig?: DuesConfig
+  /** Patch partiel de l'intégration Basketplan — voir `BasketplanIntegrationConfig`. */
+  basketplan?: BasketplanIntegrationConfig
 }
 
 // ---------------------------------------------------------------------------

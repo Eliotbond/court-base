@@ -64,11 +64,26 @@ interface StatusCounts {
   rejected: number
 }
 
-function countByStatus<T extends { status: 'pending' | 'approved' | 'rejected' }>(
+/**
+ * Mappe les statuts étendus du workflow demande de licence
+ * (`pending_parent_docs`, `parent_docs_submitted`, `coach_validated`) sur les
+ * 3 buckets historiques (`pending` / `approved` / `rejected`) — tant que la
+ * page admin n'a pas d'UI dédiée pour les étapes intermédiaires (PR2/PR3),
+ * elles s'agrègent toutes sous "pending".
+ */
+function bucketStatus(
+  status: string,
+): 'pending' | 'approved' | 'rejected' {
+  if (status === 'approved') return 'approved'
+  if (status === 'rejected') return 'rejected'
+  return 'pending'
+}
+
+function countByStatus<T extends { status: string }>(
   rows: readonly T[],
 ): StatusCounts {
   const out: StatusCounts = { pending: 0, approved: 0, rejected: 0 }
-  for (const r of rows) out[r.status]++
+  for (const r of rows) out[bucketStatus(r.status)]++
   return out
 }
 

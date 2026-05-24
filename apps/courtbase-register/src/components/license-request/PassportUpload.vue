@@ -1,47 +1,26 @@
 <script setup lang="ts">
 /**
  * Wrapper autour de `DocumentUploadTile.vue` pour les pièces d'identité du
- * workflow demande de licence parent (mock-only).
+ * workflow demande de licence parent.
  *
  * Différences par rapport au tile générique :
  *  - Helper text métier fixe ("passeport OU CNI uniquement").
  *  - Validation MIME stricte (`image/jpeg|png|application/pdf`) + taille
- *    ≤ 10 Mo. Tout rejet bascule en état `refused` avec un motif lisible.
- *  - Upload mocké via `URL.createObjectURL(file)` → `blobUrl` éphémère.
- *  - `v-model` (`update:modelValue`) émet l'objet métier
- *    `{ kind, file: { fileName, sizeBytes, blobUrl, mimeType } }` pour que le
- *    parent puisse persister la métadonnée (le tile interne, lui, expose un
- *    `UploadState` adapté à son rendu — on convertit dans les deux sens).
+ *    ≤ 10 Mo. Tout rejet bascule l'état en `refused` avec un motif lisible.
+ *
+ * L'upload effectif vers Firebase Storage est délégué au parent (le
+ * `LicenseRequestForm` qui orchestre Storage + Firestore via le store). Ce
+ * composant ne fait que :
+ *  - valider côté client avant de remonter le `File` pické ;
+ *  - rendre la tile dans l'état que le parent lui passe.
  */
-import { computed } from 'vue'
 import DocumentUploadTile, { type UploadState } from '@/components/wizard/DocumentUploadTile.vue'
-
-/**
- * Modèle externe — ce que le parent persiste dans la request mock. On le
- * garde minimal : seuls les champs nécessaires à `LicenseRequestMock.uploadedDocs`.
- */
-export type PassportUploadValue =
-  | { kind: 'empty' }
-  | {
-      kind: 'uploading'
-      file: { fileName: string; sizeBytes: number; mimeType: string }
-    }
-  | {
-      kind: 'uploaded'
-      file: {
-        fileName: string
-        sizeBytes: number
-        /** Blob URL éphémère — perdu au refresh, à régénérer si besoin. */
-        blobUrl: string
-        mimeType: string
-      }
-    }
-  | { kind: 'refused'; reason: string }
 
 const props = withDefaults(
   defineProps<{
-    modelValue: PassportUploadValue
+    modelValue: UploadState
     label: string
+    /** Conservé pour compat appels existants — non utilisé en interne. */
     side: 'front' | 'back'
     accept?: string
   }>(),
@@ -51,7 +30,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: PassportUploadValue): void
+  (e: 'update:modelValue', value: UploadState): void
   (e: 'pick', file: File): void
   (e: 'remove'): void
   (e: 'retry'): void
@@ -64,37 +43,11 @@ const MAX_BYTES = 10 * 1024 * 1024 // 10 Mo
 const ACCEPTED_MIME = new Set(['image/jpeg', 'image/png', 'application/pdf'])
 
 /**
- * Convertit le modèle externe (parent) en `UploadState` interne (tile). Le
- * tile ne connaît pas les `blobUrl` ; on lui passe un `storagePath` factice
- * `'mock://passport-{side}'` pour qu'il reste dans son état "uploaded".
- */
-const tileState = computed<UploadState>(() => {
-  const v = props.modelValue
-  switch (v.kind) {
-    case 'empty':
-      return { kind: 'empty' }
-    case 'uploading':
-      return { kind: 'uploading', fileName: v.file.fileName, progress: 50 }
-    case 'uploaded':
-      return {
-        kind: 'uploaded',
-        fileName: v.file.fileName,
-        size: v.file.sizeBytes,
-        storagePath: `mock://passport-${props.side}`,
-      }
-    case 'refused':
-      return { kind: 'refused', reason: v.reason }
-  }
-})
-
-/**
- * Reçoit un `File` du `<input>` interne, valide, et bascule le modelValue.
- * On émet aussi un `pick` pour les consumers qui voudraient instrumenter
- * (logs, analytics), sans dépendre du `update:modelValue`.
+ * Reçoit un `File` du `<input>` interne, valide MIME + taille, et délègue
+ * l'upload au parent en émettant `pick(file)`. Sur rejet de validation, on
+ * pose directement l'état `refused` sans remonter le pick.
  */
 function onPick(file: File): void {
-  emit('pick', file)
-
   if (!ACCEPTED_MIME.has(file.type)) {
     emit('update:modelValue', {
       kind: 'refused',
@@ -103,52 +56,33 @@ function onPick(file: File): void {
     })
     return
   }
-
   if (file.size > MAX_BYTES) {
     emit('update:modelValue', {
       kind: 'refused',
-      reason: `Fichier trop volumineux (max 10 Mo).`,
+      reason: 'Fichier trop volumineux (max 10 Mo).',
     })
     return
   }
-
-  // Mock upload : pas de Storage, on crée juste un blob URL éphémère.
-  const blobUrl = URL.createObjectURL(file)
-  emit('update:modelValue', {
-    kind: 'uploaded',
-    file: {
-      fileName: file.name,
-      sizeBytes: file.size,
-      blobUrl,
-      mimeType: file.type,
-    },
-  })
+  emit('pick', file)
 }
 
 function onRemove(): void {
-  // Révoque le blob URL pour libérer la mémoire si on en avait un.
-  if (props.modelValue.kind === 'uploaded') {
-    try {
-      URL.revokeObjectURL(props.modelValue.file.blobUrl)
-    } catch {
-      /* noop — sentinel ou déjà révoqué */
-    }
-  }
   emit('remove')
-  emit('update:modelValue', { kind: 'empty' })
 }
 
 function onRetry(): void {
   emit('retry')
   emit('update:modelValue', { kind: 'empty' })
 }
+
+void props
 </script>
 
 <template>
   <DocumentUploadTile
     :label="label"
     :helper="HELPER_TEXT"
-    :file="tileState"
+    :file="modelValue"
     :accept="accept"
     @pick="onPick"
     @remove="onRemove"

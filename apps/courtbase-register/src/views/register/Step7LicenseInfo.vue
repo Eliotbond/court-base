@@ -5,10 +5,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronLeft,
-  CircleDot,
-  FileCheck,
-  FileText,
-  IdCard,
+  Info,
   Loader2,
   Send,
 } from 'lucide-vue-next'
@@ -17,14 +14,16 @@ import WizardLayout from '@/components/wizard/WizardLayout.vue'
 import { useRegistrationsStore } from '@/stores/registrations'
 
 /**
- * Étape 7/8 — Récap des pièces à fournir + soumission finale.
+ * Étape 7/8 — Récap + soumission finale.
  *
- * Cette page ne collecte rien : elle informe l'utilisateur des documents
- * qu'il devra fournir une fois l'intégration validée par le coach, puis
- * déclenche l'appel à la callable `submitRegistration` via le store.
+ * Cette page ne collecte aucun document : les pièces de licence (passeport,
+ * lettre de sortie, AVS, contexte joueur étranger) sont collectées par le
+ * parent au moment où le coach déclenche la création de la licence (vue
+ * `LicenseRequestForm.vue`, cf. `docs/licenses/parent-completion-workflow.md`).
  *
- * Tout est lu depuis `currentDraft` (déjà persisté côté Firestore par les
- * étapes 1-6) ; si le draft est introuvable, on retombe sur l'étape 1.
+ * Ici on se contente d'un récap (équipe, identité joueur, statut après
+ * soumission) et d'un bouton "Envoyer mon inscription" qui appelle la
+ * callable `submitRegistration` via le store.
  */
 
 const router = useRouter()
@@ -38,19 +37,24 @@ const error = ref<string | null>(null)
 onMounted(() => {
   // Garde-fou : sans draft ou sans équipe choisie, on ne peut pas soumettre.
   const draft = currentDraft.value
-  if (draft === null || draft.teamId === null || draft.teamId === undefined || draft.teamId === '') {
+  if (
+    draft === null ||
+    draft.teamId === null ||
+    draft.teamId === undefined ||
+    draft.teamId === ''
+  ) {
     void router.replace('/register/step-1')
   }
 })
 
-const previouslyLicensed = computed<boolean>(() => currentDraft.value?.previouslyLicensed === true)
-const transferUploaded = computed<boolean>(() =>
-  currentDraft.value?.transferLetterStoragePath !== null &&
-  currentDraft.value?.transferLetterStoragePath !== undefined,
-)
+const playerName = computed<string>(() => {
+  const d = currentDraft.value
+  if (d === null) return ''
+  return `${d.player.firstName ?? ''} ${d.player.lastName ?? ''}`.trim()
+})
 
-const backTo = computed<string>(() =>
-  previouslyLicensed.value ? '/register/step-6' : '/register/step-5',
+const previouslyLicensed = computed<boolean>(
+  () => currentDraft.value?.previouslyLicensed === true,
 )
 
 /**
@@ -103,7 +107,10 @@ async function onSubmit(): Promise<void> {
       previouslyLicensed: draft.previouslyLicensed,
       previousClubName: draft.previousClubName,
       previousClubAbroad: draft.previousClubAbroad,
-      transferLetterStoragePath: draft.transferLetterStoragePath,
+      // `transferLetterStoragePath` toujours null à la soumission : les
+      // documents de licence sont collectés plus tard via
+      // `LicenseRequestForm.vue` (workflow parent post-inscription).
+      transferLetterStoragePath: null,
     }
 
     const result = await registrations.submit(payload)
@@ -116,92 +123,74 @@ async function onSubmit(): Promise<void> {
 
 function onBack(): void {
   if (submitting.value) return
-  void router.push(backTo.value)
+  void router.push('/register/step-5')
 }
 </script>
 
 <template>
-  <WizardLayout :current="7" title="Avant de terminer">
+  <WizardLayout :current="6" title="Récap & envoi">
     <div v-if="error" class="banner banner-strong step7__error">
       <AlertCircle :size="14" class="banner-icon" />
       <span>{{ error }}</span>
     </div>
 
-    <h1 class="step7__title">Avant de valider votre inscription</h1>
+    <h1 class="step7__title">Vous êtes prêt(e) à envoyer votre inscription</h1>
     <p class="step7__subtitle">
-      Voici les pièces qu'il vous sera demandé de fournir pour la licence fédérale,
-      une fois l'intégration validée par le coach.
+      Le coach va recevoir votre demande et planifiera un essai. Vous serez
+      ensuite invité(e) à compléter les documents nécessaires à la licence
+      fédérale — uniquement après confirmation par le coach.
     </p>
 
     <div class="step7__section">
-      <div class="step7__label">DOCUMENTS REQUIS</div>
+      <div class="step7__label">RÉCAPITULATIF</div>
 
-      <div class="card-flat p-3 step7__doc">
-        <div class="step7__doc-icon">
-          <IdCard :size="16" />
+      <div class="card-flat p-3 step7__summary">
+        <div class="step7__summary-row">
+          <span class="step7__summary-key">Joueur</span>
+          <span class="step7__summary-value">{{ playerName }}</span>
         </div>
-        <div class="step7__doc-body">
-          <div class="step7__doc-title">Carte d'identité ou passeport (recto + verso)</div>
-          <div class="step7__doc-sub">
-            Lisible, en entier.
-            <strong>Le permis de conduire et le permis de séjour ne sont pas acceptés.</strong>
-          </div>
-        </div>
-      </div>
-
-      <div class="card-flat p-3 step7__doc">
-        <div class="step7__doc-icon">
-          <FileText :size="16" />
-        </div>
-        <div class="step7__doc-body">
-          <div class="step7__doc-title">Formulaire de demande de licence</div>
-          <div class="step7__doc-sub">
-            Pré-rempli et à signer (numérique ou imprimé/scanné).
-          </div>
-        </div>
-      </div>
-
-      <div class="card-flat p-3 step7__doc">
-        <div class="step7__doc-icon">
-          <FileCheck :size="16" />
-        </div>
-        <div class="step7__doc-body">
-          <div class="step7__doc-title">Lettre de sortie de l'ancien club</div>
-          <div v-if="!previouslyLicensed" class="step7__doc-sub step7__doc-sub--muted">
-            Non requise pour cette inscription.
-          </div>
-          <div v-else-if="transferUploaded" class="step7__doc-sub step7__doc-sub--ok">
-            <CheckCircle2 :size="12" />
-            Document déjà uploadé
-          </div>
-          <div v-else class="step7__doc-sub step7__doc-sub--warn">
-            À uploader plus tard.
-          </div>
+        <div v-if="previouslyLicensed" class="step7__summary-row">
+          <span class="step7__summary-key">Ancien club</span>
+          <span class="step7__summary-value">
+            {{ currentDraft?.previousClubName ?? '—' }}
+            <small v-if="currentDraft?.previousClubAbroad" class="step7__summary-note">
+              · à l'étranger
+            </small>
+          </span>
         </div>
       </div>
     </div>
 
     <div class="step7__section">
-      <div class="step7__label">CONDITIONS DE DÉLIVRANCE</div>
-      <ul class="step7__conditions">
-        <li class="step7__cond">
-          <CircleDot :size="12" class="step7__cond-icon" />
-          <span>Validation de l'intégration à l'équipe par le coach</span>
+      <div class="step7__label">ET ENSUITE ?</div>
+
+      <ul class="step7__steps">
+        <li class="step7__step">
+          <CheckCircle2 :size="14" class="step7__step-icon" />
+          <span>Le coach planifie un essai (généralement sous 7 jours).</span>
         </li>
-        <li class="step7__cond">
-          <CircleDot :size="12" class="step7__cond-icon" />
-          <span>Paiement de la cotisation</span>
+        <li class="step7__step">
+          <CheckCircle2 :size="14" class="step7__step-icon" />
+          <span>Après confirmation, la cotisation vous est envoyée par email.</span>
         </li>
-        <li class="step7__cond">
-          <CircleDot :size="12" class="step7__cond-icon" />
-          <span>Réception de tous les documents requis</span>
+        <li class="step7__step">
+          <CheckCircle2 :size="14" class="step7__step-icon" />
+          <span>
+            Au moment où le coach demande la licence, vous compléterez votre
+            dossier (pièce d'identité, AVS si manquant, lettre de sortie le
+            cas échéant) depuis votre espace.
+          </span>
         </li>
       </ul>
     </div>
 
-    <p class="step7__final">
-      La décision d'établir une licence appartient au coach et à l'administration du club.
-    </p>
+    <div class="banner banner-info step7__note">
+      <Info :size="14" />
+      <span>
+        Vous n'avez aucun document à fournir maintenant — uniquement à la
+        création de la licence.
+      </span>
+    </div>
 
     <template #footer>
       <button
@@ -225,7 +214,7 @@ function onBack(): void {
         </template>
         <template v-else>
           <Send :size="14" />
-          Soumettre mon inscription
+          Envoyer mon inscription
         </template>
       </button>
     </template>
@@ -245,10 +234,10 @@ function onBack(): void {
   color: #0f172a;
 }
 .step7__subtitle {
-  font-size: 12.5px;
-  color: #64748b;
+  font-size: 13px;
+  color: #475569;
   margin: 6px 0 0 0;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 .step7__section {
   margin-top: 22px;
@@ -266,81 +255,54 @@ function onBack(): void {
 .p-3 {
   padding: 12px;
 }
-.step7__doc {
+.step7__summary {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
 }
-.step7__doc-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: #f1f5f9;
-  color: #475569;
+.step7__summary-row {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+.step7__summary-key {
+  color: #64748b;
   flex: none;
 }
-.step7__doc-body {
-  flex: 1;
-  min-width: 0;
-}
-.step7__doc-title {
-  font-size: 13.5px;
-  font-weight: 600;
+.step7__summary-value {
   color: #0f172a;
-  line-height: 1.35;
+  font-weight: 600;
+  text-align: right;
 }
-.step7__doc-sub {
-  font-size: 12px;
+.step7__summary-note {
   color: #64748b;
-  margin-top: 3px;
-  line-height: 1.45;
+  font-weight: 400;
 }
-.step7__doc-sub strong {
-  color: #0f172a;
-  font-weight: 600;
-}
-.step7__doc-sub--muted {
-  color: #94a3b8;
-}
-.step7__doc-sub--ok {
-  color: #047857;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.step7__doc-sub--warn {
-  color: #b45309;
-}
-.step7__conditions {
+.step7__steps {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
-.step7__cond {
+.step7__step {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   font-size: 13px;
   color: #334155;
-  line-height: 1.45;
+  line-height: 1.5;
 }
-.step7__cond-icon {
-  color: #10b981;
-  margin-top: 4px;
+.step7__step-icon {
+  color: #047857;
+  margin-top: 3px;
   flex: none;
 }
-.step7__final {
-  margin-top: 22px;
-  font-size: 12.5px;
-  font-style: italic;
-  color: #64748b;
-  line-height: 1.5;
+.step7__note {
+  margin-top: 18px;
 }
 .flex-1 {
   flex: 1;

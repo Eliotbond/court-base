@@ -41,6 +41,57 @@ export interface TeamSchedulingConstraints {
   coachAvailability: TeamCoachAvailability[]
 }
 
+/**
+ * Lien entre une équipe court-base et une compétition Basketplan (Swiss
+ * Basketball / ORCA Systems). Une même équipe peut être inscrite dans
+ * **plusieurs** compétitions (championnat + coupe, ou plusieurs fédérations
+ * en parallèle) — d'où le tableau `basketplanLinks[]` ci-dessous.
+ *
+ * Voir `docs/basketplan-integration.md` § 4.1 pour la spec complète et
+ * `docs/chantier-basketplan.md` (PR 1) pour le plan d'exécution. Le lien
+ * porte des **caches** d'affichage (`federationCode`, `leagueHoldingName`,
+ * `season`, `teamNameInLeague`) résolus côté serveur au moment du linkage,
+ * pour éviter un re-fetch Basketplan à chaque rendu de la liste.
+ *
+ * Identifiants externes :
+ *  - `federationId` : id numérique de la fédération Basketplan (ex. 9 = AFBB).
+ *  - `leagueHoldingId` : id de la compétition (championnat / coupe) saison-précis.
+ *  - `teamIdInLeague` : id Basketplan de l'équipe DANS cette compétition
+ *    (différent d'une compétition à l'autre, même pour la "même" équipe club).
+ *
+ * Cycle de vie :
+ *  - Créé par les callables `linkTeamToBasketplan` (résout les caches + pose
+ *    `id` uuid, `addedAt`, `addedBy`).
+ *  - Toggleable via `toggleTeamBasketplanLink` (`active: false` = pause sans
+ *    perte). Retiré via `unlinkTeamBasketplan`.
+ *  - Les `leagueHoldingId` changent à chaque saison Basketplan : à la fin
+ *    d'une saison, prévoir un mécanisme de "renouveler les liens" (cf.
+ *    brief § 7.2).
+ */
+export interface BasketplanCompetitionLink {
+  /** UUID local, généré côté Cloud Function via `crypto.randomUUID()`. */
+  id: string
+  /** Id numérique de la fédération Basketplan (ex. 9 = AFBB). */
+  federationId: number
+  /** Code court de la fédération (cache pour affichage rapide, ex. "AFBB"). */
+  federationCode: string
+  /** Id Basketplan de la compétition (championnat ou coupe) — saison-précis. */
+  leagueHoldingId: number
+  /** Nom complet de la compétition (cache pour affichage). */
+  leagueHoldingName: string
+  /** Saison extraite du nom (ex. "25/26"). Cache pour groupement UI. */
+  season: string
+  /** Id Basketplan de l'équipe **dans cette ligue** (≠ id "team club" global). */
+  teamIdInLeague: number
+  /** Nom de l'équipe tel qu'inscrit dans cette ligue (cache, ex. "Marly Basket 2LM"). */
+  teamNameInLeague: string
+  /** Pause sans suppression — sync ignore les liens inactifs. */
+  active: boolean
+  addedAt: Timestamp
+  /** uid du caller (admin ou coach) au moment du linkage. */
+  addedBy: string
+}
+
 export interface TeamData {
   /** Ex. "U20F" */
   name: string
@@ -94,6 +145,14 @@ export interface TeamData {
   publicHeadCoachMemberId: string | null
   active: boolean
   createdAt: Timestamp
+  /**
+   * Liens Basketplan (1→N) — voir `BasketplanCompetitionLink` au-dessus et
+   * `docs/basketplan-integration.md` § 4.1. `undefined` ou `[]` = équipe
+   * jamais liée. Toutes les mutations passent par les callables
+   * `linkTeamToBasketplan` / `unlinkTeamBasketplan` / `toggleTeamBasketplanLink`
+   * (Admin SDK — `/teams` reste write admin-only côté rules).
+   */
+  basketplanLinks?: BasketplanCompetitionLink[]
 }
 
 export type Team = TeamData & { id: string }

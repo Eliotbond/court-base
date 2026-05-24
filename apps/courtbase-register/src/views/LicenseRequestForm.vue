@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * `LicenseRequestForm` — vue parent du workflow "compléter ma demande de
- * licence" (mock-only).
+ * licence" (Firestore réel).
  *
  * Pattern : page longue scrollable (pas un wizard), sections en cards style
  * `Account.vue`. Chaque section porte une mini-checklist (✓ vert si remplie,
@@ -14,38 +14,49 @@
  *    Firestore réelle, parce qu'il faut le `avs` actuel pour décider si la
  *    section AVS est nécessaire). Si le member n'est pas accessible, on
  *    dégrade : on demande l'AVS au parent (cas worst-case sans crash).
- *  - Persistance : chaque saisie est patchée via `patchRequest` →
- *    sessionStorage immédiat (pas de bouton "enregistrer" intermédiaire).
+ *  - Persistance : chaque saisie/upload patche directement Firestore via le
+ *    store (pas de bouton "enregistrer" intermédiaire). L'upload Storage
+ *    précède le write Firestore — en cas d'échec on bascule la tile en
+ *    `refused` avec le code d'erreur.
  *
- * Submit final : `submitRequest()` bascule status + toast → redirect Home.
+ * Submit final : `submitRequest()` bascule status `pending_parent_docs →
+ * parent_docs_submitted` + redirige Home après toast.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { FirebaseError } from 'firebase/app'
 import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   Circle,
+  Download,
   FileSignature,
   Hash,
   Info,
   ShieldCheck,
   Sparkles,
 } from 'lucide-vue-next'
-import type { Member } from '@club-app/shared-types'
+import type {
+  ForeignPlayerContext,
+  LicenseDocKind,
+  Member,
+} from '@club-app/shared-types'
+import { useAuthStore } from '@/stores/auth'
 import { useLicenseRequestsStore } from '@/stores/licenseRequests'
 import { getLinkedMember } from '@/repositories/members.repo'
 import { COUNTRIES, countryName } from '@/constants/countries'
-import PassportUpload, {
-  type PassportUploadValue,
-} from '@/components/license-request/PassportUpload.vue'
+import { licenseDocLabel } from '@/constants/licenseDocLabels'
+import PassportUpload from '@/components/license-request/PassportUpload.vue'
 import ForeignTransferBanner from '@/components/license-request/ForeignTransferBanner.vue'
+import DocStatusBanner from '@/components/license-request/DocStatusBanner.vue'
 import DocumentUploadTile, {
   type UploadState,
 } from '@/components/wizard/DocumentUploadTile.vue'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const store = useLicenseRequestsStore()
 
 const requestId = computed(() => String(route.params.requestId ?? ''))
@@ -59,8 +70,8 @@ const member = ref<Member | null>(null)
 // =============================================================================
 
 const avsInput = ref<string>('')
-const idFront = ref<PassportUploadValue>({ kind: 'empty' })
-const idBack = ref<PassportUploadValue>({ kind: 'empty' })
+const idFront = ref<UploadState>({ kind: 'empty' })
+const idBack = ref<UploadState>({ kind: 'empty' })
 const previouslyLicensed = ref<boolean>(false)
 const previousClubName = ref<string>('')
 const previousCountry = ref<string>('CH')
@@ -124,8 +135,6 @@ const idBackDone = computed(() => idBack.value.kind === 'uploaded')
 const idDone = computed(() => idFrontDone.value && idBackDone.value)
 
 const historyDone = computed(() => {
-  // La section est toujours "OK" car le défaut "non licencié" est valide.
-  // Si l'utilisateur dit oui : exiger nom de club + pays.
   if (!previouslyLicensed.value) return true
   return previousClubName.value.trim().length > 0 && Boolean(previousCountry.value)
 })
@@ -141,10 +150,154 @@ const alreadySubmitted = computed(
   () => request.value?.status === 'parent_docs_submitted',
 )
 
+/**
+ * `true` si la demande est en phase signature parent (trésorier a uploadé le
+ * PDF à signer). Le parent télécharge, signe, et re-uploade. `parent_signed`
+ * est inclus pour afficher le résumé "document signé envoyé" sans repasser
+ * en formulaire d'édition.
+ */
+const isAwaitingSignature = computed(() => {
+  const s = request.value?.status
+  return s === 'awaiting_parent_signature' || s === 'parent_signed'
+})
+
+/**
+ * `true` si la demande est dans un état où le parent n'a plus à interagir
+ * avec le formulaire (post-submit, ou décision avancée coach/trésorier).
+ * Cache le formulaire d'édition + le bouton submit en bas. Refus de coach
+ * /trésorier sont gérés à part (`hasRefused`) car ils renvoient en
+ * `pending_parent_docs`. La phase signature (`awaiting_parent_signature` /
+ * `parent_signed`) est gérée à part via `isAwaitingSignature` car elle
+ * requiert une action parent (download + re-upload).
+ */
+const isReadOnlyStatus = computed(() => {
+  const s = request.value?.status
+  return (
+    s === 'parent_docs_submitted' ||
+    s === 'coach_validated' ||
+    s === 'form_confirmed' ||
+    s === 'sent_paid' ||
+    s === 'approved' ||
+    s === 'rejected'
+  )
+})
+
+// =============================================================================
+// État global de review (PR2/PR3 — affichage refus + blocage submit).
+// =============================================================================
+
+/**
+ * Liste les `LicenseDocKind` actuellement en `refused` côté coach OU
+ * trésorier sur la demande en cours. Quand le parent re-uploade un doc, le
+ * store reset `coachReview` + `treasurerReview` à `null` → l'entrée
+ * disparaît de cette liste automatiquement.
+ */
+const refusedKinds = computed<LicenseDocKind[]>(() => {
+  const r = request.value
+  if (!r) return []
+  return store.refusedDocsKinds(r.id)
+})
+
+const hasRefused = computed(() => refusedKinds.value.length > 0)
+
+/** Sections groupées par doc kind — utilisé pour le scroll-to et l'aria-label. */
+const refusedLabels = computed(() =>
+  refusedKinds.value.map((k) => licenseDocLabel(k)),
+)
+
+type GlobalBanner = {
+  kind: 'info' | 'success' | 'warn' | 'strong'
+  title: string
+  desc: string
+  showAdminComment?: boolean
+}
+
+/**
+ * Banner global posé en haut de la vue, dérivé du status de la request
+ * (croisé avec l'agrégation des refus per-doc). Si des docs sont refusés —
+ * peu importe le status global — on affiche la version "attention" pour
+ * driver l'œil du parent vers ce qu'il a à faire.
+ */
+const globalBanner = computed<GlobalBanner | null>(() => {
+  const r = request.value
+  if (!r) return null
+
+  if (hasRefused.value) {
+    return {
+      kind: 'strong',
+      title: 'Des documents nécessitent votre attention',
+      desc:
+        refusedLabels.value.length === 1
+          ? `« ${refusedLabels.value[0]} » a été refusé. Voir le détail plus bas et téléverser à nouveau.`
+          : `${refusedLabels.value.length} documents ont été refusés. Voir le détail plus bas et les téléverser à nouveau.`,
+    }
+  }
+
+  switch (r.status) {
+    case 'pending_parent_docs':
+    case 'pending':
+      return {
+        kind: 'info',
+        title: 'Compléter votre demande',
+        desc: 'Veuillez compléter les documents demandés ci-dessous puis envoyer la demande.',
+      }
+    case 'parent_docs_submitted':
+      return {
+        kind: 'success',
+        title: 'Documents transmis',
+        desc: 'Vos documents ont été transmis. Le coach va les examiner.',
+      }
+    case 'coach_validated':
+      return {
+        kind: 'success',
+        title: 'Documents validés par le coach',
+        desc: 'En attente de validation du trésorier du club.',
+      }
+    case 'awaiting_parent_signature':
+      return {
+        kind: 'info',
+        title: 'Document de licence à signer',
+        desc: 'Le trésorier a préparé votre document. Téléchargez-le, signez-le puis renvoyez la version signée.',
+      }
+    case 'parent_signed':
+      return {
+        kind: 'success',
+        title: 'Document signé reçu',
+        desc: 'Le trésorier va finaliser votre licence sous peu.',
+      }
+    case 'form_confirmed':
+    case 'sent_paid':
+      return {
+        kind: 'info',
+        title: 'Finalisation en cours',
+        desc: 'Votre demande est en cours de traitement administratif par le club et la fédération.',
+      }
+    case 'approved':
+      return {
+        kind: 'success',
+        title: 'Demande approuvée',
+        desc: 'La licence sera émise après confirmation par la fédération.',
+      }
+    case 'rejected':
+      return {
+        kind: 'strong',
+        title: 'Demande refusée',
+        desc:
+          r.adminComment?.trim()
+            ? r.adminComment.trim()
+            : 'La demande a été refusée. Contactez le club pour plus d\'informations.',
+        showAdminComment: false,
+      }
+    default:
+      return null
+  }
+})
+
 const canSubmit = computed(
   () =>
     !alreadySubmitted.value &&
     !submitting.value &&
+    !hasRefused.value &&
     avsValid.value &&
     idDone.value &&
     historyDone.value &&
@@ -152,52 +305,55 @@ const canSubmit = computed(
     certifiedDone.value,
 )
 
+/** Tooltip affiché sur le bouton submit selon le frein. */
+const submitDisabledReason = computed<string | null>(() => {
+  if (alreadySubmitted.value) return null
+  if (hasRefused.value) {
+    return 'Re-téléversez d\'abord les documents refusés ci-dessus.'
+  }
+  if (!certifiedDone.value) return 'Cochez la certification en bas pour continuer.'
+  if (!idDone.value) return 'Téléversez le recto et le verso de la pièce d\'identité.'
+  if (!avsValid.value) return 'Saisissez un numéro AVS valide (756.XXXX.XXXX.XX).'
+  if (!historyDone.value) return 'Complétez l\'historique sportif (club + pays).'
+  if (!foreignDone.value)
+    return 'Indiquez si le joueur a participé à des compétitions à l\'étranger.'
+  return null
+})
+
 // =============================================================================
 // Hydratation : remplit le state local depuis la request + member.
 // =============================================================================
 
+function uploadStateFromRef(
+  ref: { fileName: string; sizeBytes: number; storagePath: string } | null | undefined,
+): UploadState {
+  if (!ref) return { kind: 'empty' }
+  return {
+    kind: 'uploaded',
+    fileName: ref.fileName,
+    size: ref.sizeBytes,
+    storagePath: ref.storagePath,
+  }
+}
+
 function hydrateFromRequest(): void {
   const r = request.value
   if (!r) return
-  // AVS : si une saisie était persistée dans parentNotes JSON, on la lit.
-  // Cas générique : on ne pré-remplit pas — l'AVS est saisi à la volée.
 
-  // Uploaded docs → state local (le blob URL peut être perdu après refresh).
-  const front = r.uploadedDocs.id_front
-  if (front) {
-    idFront.value = {
-      kind: 'uploaded',
-      file: {
-        fileName: front.fileName,
-        sizeBytes: front.sizeBytes,
-        blobUrl: front.url,
-        mimeType: 'image/*',
-      },
-    }
-  }
-  const back = r.uploadedDocs.id_back
-  if (back) {
-    idBack.value = {
-      kind: 'uploaded',
-      file: {
-        fileName: back.fileName,
-        sizeBytes: back.sizeBytes,
-        blobUrl: back.url,
-        mimeType: 'image/*',
-      },
-    }
-  }
-  const transfer = r.uploadedDocs.transfer_letter_swiss
-  if (transfer) {
-    transferLetter.value = {
-      kind: 'uploaded',
-      fileName: transfer.fileName,
-      size: transfer.sizeBytes,
-      storagePath: transfer.url,
-    }
+  // Documents uploadés.
+  idFront.value = uploadStateFromRef(r.uploadedDocs.id_front ?? null)
+  idBack.value = uploadStateFromRef(r.uploadedDocs.id_back ?? null)
+  transferLetter.value = uploadStateFromRef(
+    r.uploadedDocs.transfer_letter_swiss ?? null,
+  )
+
+  // AVS saisi précédemment.
+  if (r.parentSubmittedAvs) {
+    avsInput.value = r.parentSubmittedAvs
   }
 
-  // Contexte étranger pré-chargé depuis la fixture.
+  // Contexte étranger pré-chargé (posé soit par le coach à la création,
+  // soit par le parent à une visite précédente).
   if (r.foreignPlayerContext) {
     previouslyLicensed.value = true
     previousCountry.value = r.foreignPlayerContext.previousCountry
@@ -206,70 +362,212 @@ function hydrateFromRequest(): void {
 }
 
 // =============================================================================
-// Persistance — patche la request à chaque modif significative.
+// Persistance — patche Firestore au fil des saisies.
 // =============================================================================
 
-function persistUploadedDocs(): void {
+/** Debounce manuel pour l'input AVS (évite un write par frappe). */
+let avsDebounceTimer: number | null = null
+
+function scheduleAvsPersist(): void {
+  if (!request.value) return
+  if (avsDebounceTimer !== null) window.clearTimeout(avsDebounceTimer)
+  avsDebounceTimer = window.setTimeout(() => {
+    void persistAvs()
+    avsDebounceTimer = null
+  }, 500)
+}
+
+async function persistAvs(): Promise<void> {
   const r = request.value
   if (!r) return
-  const uploadedDocs: typeof r.uploadedDocs = { ...r.uploadedDocs }
-
-  uploadedDocs.id_front =
-    idFront.value.kind === 'uploaded'
-      ? {
-          url: idFront.value.file.blobUrl,
-          fileName: idFront.value.file.fileName,
-          sizeBytes: idFront.value.file.sizeBytes,
-          uploadedAt: Date.now(),
-        }
-      : null
-
-  uploadedDocs.id_back =
-    idBack.value.kind === 'uploaded'
-      ? {
-          url: idBack.value.file.blobUrl,
-          fileName: idBack.value.file.fileName,
-          sizeBytes: idBack.value.file.sizeBytes,
-          uploadedAt: Date.now(),
-        }
-      : null
-
-  if (showSwissTransferSection.value && transferLetter.value.kind === 'uploaded') {
-    uploadedDocs.transfer_letter_swiss = {
-      url: transferLetter.value.storagePath,
-      fileName: transferLetter.value.fileName,
-      sizeBytes: transferLetter.value.size,
-      uploadedAt: Date.now(),
+  const value = avsInput.value.trim()
+  // On ne pousse que si valide OU si on clear. Sinon : laisser le state local.
+  if (value === '' || AVS_REGEX.test(value)) {
+    try {
+      await store.setParentAvs(r.id, value === '' ? null : value)
+    } catch {
+      // Erreur déjà loggée par le store.
     }
-  } else {
-    uploadedDocs.transfer_letter_swiss = null
   }
-
-  store.patchRequest(r.id, { uploadedDocs })
 }
 
-function persistForeignContext(): void {
+async function persistForeignContext(): Promise<void> {
   const r = request.value
   if (!r) return
-  if (showForeignTransferSection.value) {
-    store.patchRequest(r.id, {
-      foreignPlayerContext: {
-        previousCountry: previousCountry.value,
-        hadCompetition: hasCompetition.value,
-        isMinor: isMinor.value,
-        ...(foreignLevel.value ? { level: foreignLevel.value } : {}),
-      },
-    })
+  if (!showForeignTransferSection.value) {
+    // L'utilisateur a retiré le toggle ou changé pour la Suisse :
+    // on nettoie le contexte étranger.
+    if (r.foreignPlayerContext) {
+      try {
+        await store.setForeignContext(r.id, null)
+      } catch {
+        /* déjà loggé */
+      }
+    }
+    return
+  }
+  const ctx: ForeignPlayerContext = {
+    previousCountry: previousCountry.value,
+    hadCompetition: hasCompetition.value,
+    isMinor: isMinor.value,
+    ...(foreignLevel.value ? { level: foreignLevel.value } : {}),
+  }
+  try {
+    await store.setForeignContext(r.id, ctx)
+  } catch {
+    /* déjà loggé */
   }
 }
 
-// Watch les uploads + contexte étranger pour persister à la volée.
-watch([idFront, idBack, transferLetter], persistUploadedDocs, { deep: true })
+// Watch AVS — debounce 500 ms.
+watch(avsInput, scheduleAvsPersist)
+
+// Watch contexte étranger — write immédiat à chaque changement résolu.
 watch(
   [previouslyLicensed, previousCountry, hasCompetition],
-  persistForeignContext,
-  { deep: true },
+  () => {
+    void persistForeignContext()
+  },
 )
+
+// =============================================================================
+// Upload handlers — Storage réel via le store.
+// =============================================================================
+
+async function uploadFor(
+  kind: 'id_front' | 'id_back' | 'transfer_letter_swiss',
+  file: File,
+  target: typeof idFront,
+): Promise<void> {
+  const r = request.value
+  const uid = auth.authSnap?.uid
+  if (!r || !uid) return
+  target.value = { kind: 'uploading', fileName: file.name, progress: 50 }
+  try {
+    await store.uploadDoc({ requestId: r.id, kind, file, uid })
+    // Le store met à jour `currentRequest` — on relit le ref depuis là pour
+    // garder une seule source de vérité (storagePath / sizeBytes).
+    const updated = request.value?.uploadedDocs[kind]
+    target.value = uploadStateFromRef(updated ?? null)
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    target.value = {
+      kind: 'refused',
+      reason: `Échec de l'upload (${code}). Réessayez ou contactez le club.`,
+    }
+  }
+}
+
+async function removeUploadFor(
+  kind: 'id_front' | 'id_back' | 'transfer_letter_swiss',
+  target: typeof idFront,
+): Promise<void> {
+  const r = request.value
+  if (!r) return
+  try {
+    await store.removeUploadedDoc(r.id, kind)
+  } catch {
+    /* déjà loggé */
+  }
+  target.value = { kind: 'empty' }
+}
+
+function onIdFrontPick(file: File): void {
+  void uploadFor('id_front', file, idFront)
+}
+function onIdFrontRemove(): void {
+  void removeUploadFor('id_front', idFront)
+}
+function onIdBackPick(file: File): void {
+  void uploadFor('id_back', file, idBack)
+}
+function onIdBackRemove(): void {
+  void removeUploadFor('id_back', idBack)
+}
+
+function onTransferPick(file: File): void {
+  if (file.size > 10 * 1024 * 1024) {
+    transferLetter.value = {
+      kind: 'refused',
+      reason: 'Fichier trop volumineux (max 10 Mo).',
+    }
+    return
+  }
+  void uploadFor('transfer_letter_swiss', file, transferLetter)
+}
+function onTransferRemove(): void {
+  void removeUploadFor('transfer_letter_swiss', transferLetter)
+}
+function onTransferRetry(): void {
+  transferLetter.value = { kind: 'empty' }
+}
+
+// =============================================================================
+// Phase trésorier — download du PDF à signer + upload du PDF signé.
+// =============================================================================
+
+const signedUploadState = ref<UploadState>({ kind: 'empty' })
+const downloadingSignable = ref(false)
+
+/** True si le parent a déjà uploadé le PDF signé (status `parent_signed`). */
+const signedDocUploaded = computed(() => {
+  const r = request.value
+  return Boolean(r?.signedDocStoragePath)
+})
+
+async function onDownloadSignable(): Promise<void> {
+  const r = request.value
+  if (!r?.signableDocStoragePath) return
+  downloadingSignable.value = true
+  try {
+    const url = await store.resolveStorageUrl(r.signableDocStoragePath)
+    window.open(url, '_blank', 'noopener')
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`[LicenseRequestForm] download signable failed [${code}]`, err)
+  } finally {
+    downloadingSignable.value = false
+  }
+}
+
+async function onSignedPick(file: File): Promise<void> {
+  const r = request.value
+  const uid = auth.authSnap?.uid
+  if (!r || !uid) return
+  if (file.size > 10 * 1024 * 1024) {
+    signedUploadState.value = {
+      kind: 'refused',
+      reason: 'Fichier trop volumineux (max 10 Mo).',
+    }
+    return
+  }
+  signedUploadState.value = {
+    kind: 'uploading',
+    fileName: file.name,
+    progress: 50,
+  }
+  try {
+    await store.uploadSignedDoc({ requestId: r.id, file, uid })
+    // Le store met à jour `currentRequest` — on bascule la tile en uploaded.
+    const path = request.value?.signedDocStoragePath ?? ''
+    signedUploadState.value = {
+      kind: 'uploaded',
+      fileName: file.name,
+      size: file.size,
+      storagePath: path,
+    }
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    signedUploadState.value = {
+      kind: 'refused',
+      reason: `Échec de l'upload (${code}). Réessayez ou contactez le club.`,
+    }
+  }
+}
+
+function onSignedRetry(): void {
+  signedUploadState.value = { kind: 'empty' }
+}
 
 // =============================================================================
 // Lifecycle
@@ -295,6 +593,9 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  // Si on revient sur une demande avec des refus, on focus l'œil dessus.
+  await nextTick()
+  if (hasRefused.value) scrollToFirstRefused()
 })
 
 // =============================================================================
@@ -305,21 +606,47 @@ function goBack(): void {
   void router.push({ name: 'home' })
 }
 
+// Refs vers les sections qu'on peut vouloir scroller (cas refus).
+const idSectionEl = ref<HTMLElement | null>(null)
+const avsSectionEl = ref<HTMLElement | null>(null)
+const transferSectionEl = ref<HTMLElement | null>(null)
+
+/**
+ * Scroll vers la section concernée par le 1er doc refusé. Appelé au mount
+ * si la demande revient en `pending_parent_docs` avec un doc refusé : le
+ * parent est posé directement à hauteur du problème.
+ */
+function scrollToFirstRefused(): void {
+  const first = refusedKinds.value[0]
+  if (!first) return
+  const target =
+    first === 'avs'
+      ? avsSectionEl.value
+      : first === 'transfer_letter_swiss'
+        ? transferSectionEl.value
+        : idSectionEl.value
+  if (!target) return
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function onSubmit(): Promise<void> {
   if (!canSubmit.value || !request.value) return
   submitting.value = true
   try {
-    // Sécurité : on persiste une dernière fois avant submit.
-    persistUploadedDocs()
-    persistForeignContext()
+    // Dernière persistance avant submit (couvre un AVS resté dans le debounce).
+    if (avsDebounceTimer !== null) {
+      window.clearTimeout(avsDebounceTimer)
+      avsDebounceTimer = null
+    }
+    await persistAvs()
+    await persistForeignContext()
     await store.submitRequest(request.value.id)
     justSubmitted.value = true
-    // Petite latence pour laisser le toast lisible.
     window.setTimeout(() => {
       void router.push({ name: 'home' })
     }, 2000)
   } catch (err) {
-    console.error('[LicenseRequestForm] submitRequest failed', err)
+    console.error('[LicenseRequestForm] submit failed', err)
   } finally {
     submitting.value = false
   }
@@ -343,47 +670,20 @@ function formatDob(): string {
 
 function formatCreatedAt(): string {
   const r = request.value
-  if (!r) return ''
-  return dateFmt.format(new Date(r.createdAt))
+  if (!r?.createdAt?.seconds) return ''
+  return dateFmt.format(new Date(r.createdAt.seconds * 1000))
 }
 
 function memberFullName(): string {
   if (member.value) return `${member.value.firstName} ${member.value.lastName}`
   const r = request.value
   if (!r) return ''
-  return `${r.denorm.memberFirstName} ${r.denorm.memberLastName}`
+  if (r.denorm) return `${r.denorm.memberFirstName} ${r.denorm.memberLastName}`
+  return 'Joueur'
 }
 
-// Handlers DocumentUploadTile pour transfer letter (Suisse).
-function onTransferPick(file: File): void {
-  // Validation rapide identique à PassportUpload.
-  if (file.size > 10 * 1024 * 1024) {
-    transferLetter.value = {
-      kind: 'refused',
-      reason: 'Fichier trop volumineux (max 10 Mo).',
-    }
-    return
-  }
-  const blobUrl = URL.createObjectURL(file)
-  transferLetter.value = {
-    kind: 'uploaded',
-    fileName: file.name,
-    size: file.size,
-    storagePath: blobUrl,
-  }
-}
-function onTransferRemove(): void {
-  if (transferLetter.value.kind === 'uploaded') {
-    try {
-      URL.revokeObjectURL(transferLetter.value.storagePath)
-    } catch {
-      /* noop */
-    }
-  }
-  transferLetter.value = { kind: 'empty' }
-}
-function onTransferRetry(): void {
-  transferLetter.value = { kind: 'empty' }
+function teamLabel(): string {
+  return request.value?.denorm?.teamName ?? '—'
 }
 </script>
 
@@ -425,24 +725,216 @@ function onTransferRetry(): void {
         </div>
       </div>
 
-      <!-- Déjà soumise -->
-      <div v-else-if="alreadySubmitted" class="banner banner-success lrf__submitted">
-        <CheckCircle2 :size="16" class="banner-icon" />
-        <div>
-          <div class="lrf__submitted-title">Demande déjà transmise</div>
-          <p class="lrf__submitted-desc">
-            Vos documents sont en cours de validation par l'administration du
-            club. Vous recevrez un message dès qu'ils auront été vérifiés.
+      <!-- Phase signature parent — télécharger + uploader le PDF signé -->
+      <div v-else-if="isAwaitingSignature && request" class="lrf__sign">
+        <div
+          class="banner lrf__global-banner"
+          :class="{
+            'banner-info': !signedDocUploaded,
+            'banner-success': signedDocUploaded,
+          }"
+        >
+          <CheckCircle2
+            v-if="signedDocUploaded"
+            :size="16"
+            class="banner-icon"
+          />
+          <Info v-else :size="16" class="banner-icon" />
+          <div class="lrf__global-banner-body">
+            <div class="lrf__global-banner-title">
+              {{
+                signedDocUploaded
+                  ? 'Document signé envoyé'
+                  : 'Document de licence à signer'
+              }}
+            </div>
+            <p class="lrf__global-banner-desc">
+              {{
+                signedDocUploaded
+                  ? 'Le trésorier va finaliser votre licence sous peu. Vous serez prévenu(e) dès qu\'elle sera émise.'
+                  : 'Le trésorier a préparé votre document de licence. Téléchargez-le, signez-le, puis renvoyez la version signée.'
+              }}
+            </p>
+          </div>
+        </div>
+
+        <!-- Étape 1 — télécharger -->
+        <section class="card lrf__card">
+          <header class="lrf__card-head">
+            <div class="lrf__card-title">
+              <Download :size="14" class="lrf__card-title-ic" />
+              1. Télécharger le document
+            </div>
+            <CheckCircle2
+              v-if="request.signableDocStoragePath"
+              :size="16"
+              class="lrf__check lrf__check--done"
+            />
+            <Circle v-else :size="16" class="lrf__check" />
+          </header>
+          <p class="lrf__helper-top">
+            Téléchargez le PDF, imprimez-le, signez-le à la main puis scannez
+            ou prenez une photo de la version signée.
           </p>
+          <button
+            type="button"
+            class="btn btn-secondary btn-block"
+            :disabled="!request.signableDocStoragePath || downloadingSignable"
+            @click="onDownloadSignable"
+          >
+            <Download :size="16" />
+            {{
+              downloadingSignable
+                ? 'Préparation…'
+                : request.signableDocStoragePath
+                  ? 'Télécharger le document à signer'
+                  : 'Document non disponible'
+            }}
+          </button>
+        </section>
+
+        <!-- Étape 2 — re-uploader signé -->
+        <section class="card lrf__card">
+          <header class="lrf__card-head">
+            <div class="lrf__card-title">
+              <FileSignature :size="14" class="lrf__card-title-ic" />
+              2. Renvoyer la version signée
+            </div>
+            <CheckCircle2
+              v-if="signedDocUploaded"
+              :size="16"
+              class="lrf__check lrf__check--done"
+            />
+            <Circle v-else :size="16" class="lrf__check" />
+          </header>
+          <p class="lrf__helper-top">
+            PDF, JPG ou PNG · Max 10 Mo. Vous pouvez prendre une photo de la
+            page signée directement avec votre téléphone.
+          </p>
+          <DocumentUploadTile
+            class="lrf__tile"
+            label="Document signé"
+            helper="Téléversez le PDF signé ou prenez une photo de la page signée."
+            :file="signedUploadState"
+            accept=".pdf,image/png,image/jpeg"
+            @pick="onSignedPick"
+            @retry="onSignedRetry"
+          />
+        </section>
+      </div>
+
+      <!-- Statut terminal ou en cours côté staff (pas d'édition possible) -->
+      <div v-else-if="isReadOnlyStatus && request" class="lrf__readonly">
+        <div
+          class="banner lrf__readonly-banner"
+          :class="{
+            'banner-success':
+              request.status === 'parent_docs_submitted' ||
+              request.status === 'coach_validated' ||
+              request.status === 'approved',
+            'banner-info':
+              request.status === 'form_confirmed' ||
+              request.status === 'sent_paid',
+            'banner-strong': request.status === 'rejected',
+          }"
+        >
+          <CheckCircle2
+            v-if="
+              request.status === 'parent_docs_submitted' ||
+              request.status === 'coach_validated' ||
+              request.status === 'approved'
+            "
+            :size="16"
+            class="banner-icon"
+          />
+          <Info
+            v-else-if="
+              request.status === 'form_confirmed' ||
+              request.status === 'sent_paid'
+            "
+            :size="16"
+            class="banner-icon"
+          />
+          <AlertTriangle v-else :size="16" class="banner-icon" />
+          <div>
+            <div class="lrf__readonly-title">
+              {{
+                request.status === 'parent_docs_submitted'
+                  ? 'Demande transmise'
+                  : request.status === 'coach_validated'
+                    ? 'Documents validés par le coach'
+                    : request.status === 'form_confirmed'
+                      ? 'Document signé validé'
+                      : request.status === 'sent_paid'
+                        ? 'Demande envoyée à la fédération'
+                        : request.status === 'approved'
+                          ? 'Demande approuvée'
+                          : 'Demande refusée'
+              }}
+            </div>
+            <p class="lrf__readonly-desc">
+              {{
+                request.status === 'parent_docs_submitted'
+                  ? "Vos documents sont en cours de validation par le coach. Vous recevrez un message dès qu'ils auront été vérifiés."
+                  : request.status === 'coach_validated'
+                    ? 'Le coach a validé vos documents. Le trésorier du club va maintenant les revoir avant émission de la licence.'
+                    : request.status === 'form_confirmed'
+                      ? "Votre document signé a été validé. Le trésorier prépare l'envoi à la fédération."
+                      : request.status === 'sent_paid'
+                        ? 'La demande a été transmise à la fédération. La licence sera émise dès confirmation.'
+                        : request.status === 'approved'
+                          ? 'Votre demande a été approuvée. La licence sera émise après confirmation par la fédération.'
+                          : request.adminComment?.trim() ||
+                            "La demande a été refusée. Contactez le club pour plus d'informations."
+              }}
+            </p>
+          </div>
         </div>
       </div>
 
       <!-- Formulaire -->
       <template v-else-if="request">
+        <!-- Banner global de statut (refus prioritaires) -->
+        <div
+          v-if="globalBanner"
+          class="banner lrf__global-banner"
+          :class="{
+            'banner-info': globalBanner.kind === 'info',
+            'banner-success': globalBanner.kind === 'success',
+            'banner-warn': globalBanner.kind === 'warn',
+            'banner-strong': globalBanner.kind === 'strong',
+          }"
+        >
+          <CheckCircle2
+            v-if="globalBanner.kind === 'success'"
+            :size="16"
+            class="banner-icon"
+          />
+          <AlertTriangle
+            v-else-if="globalBanner.kind === 'strong' || globalBanner.kind === 'warn'"
+            :size="16"
+            class="banner-icon"
+          />
+          <Info v-else :size="16" class="banner-icon" />
+          <div class="lrf__global-banner-body">
+            <div class="lrf__global-banner-title">{{ globalBanner.title }}</div>
+            <p class="lrf__global-banner-desc">{{ globalBanner.desc }}</p>
+            <button
+              v-if="hasRefused"
+              type="button"
+              class="btn btn-secondary btn-xs lrf__global-banner-cta"
+              @click="scrollToFirstRefused"
+            >
+              Voir le premier document à corriger
+            </button>
+          </div>
+        </div>
+
         <!-- Intro doux -->
         <p class="lrf__intro">
           Quelques informations sont nécessaires pour finaliser la licence
-          fédérale de {{ request.denorm.memberFirstName }}. Comptez environ 5 minutes.
+          fédérale de {{ request.denorm?.memberFirstName ?? 'votre joueur' }}.
+          Comptez environ 5 minutes.
         </p>
 
         <!-- Section 1 — Identité joueur (read-only) -->
@@ -465,7 +957,7 @@ function onTransferRetry(): void {
             </div>
             <div class="lrf__id-row">
               <span class="lrf__id-label">Équipe</span>
-              <span class="lrf__id-value">{{ request.denorm.teamName }}</span>
+              <span class="lrf__id-value">{{ teamLabel() }}</span>
             </div>
             <div class="lrf__id-row">
               <span class="lrf__id-label">Demandé le</span>
@@ -473,13 +965,47 @@ function onTransferRetry(): void {
             </div>
             <div class="lrf__id-row">
               <span class="lrf__id-label">Statut</span>
-              <span class="pill pill-amber">À compléter</span>
+              <span
+                class="pill"
+                :class="{
+                  'pill-rose': hasRefused,
+                  'pill-amber':
+                    !hasRefused && request.status === 'pending_parent_docs',
+                  'pill-sky':
+                    !hasRefused && request.status === 'parent_docs_submitted',
+                  'pill-emerald':
+                    !hasRefused &&
+                    (request.status === 'coach_validated' ||
+                      request.status === 'approved'),
+                  'pill-slate': request.status === 'rejected',
+                }"
+              >
+                {{
+                  hasRefused
+                    ? 'À corriger'
+                    : request.status === 'pending_parent_docs'
+                      ? 'À compléter'
+                      : request.status === 'parent_docs_submitted'
+                        ? 'En cours de validation'
+                        : request.status === 'coach_validated'
+                          ? 'Validé par le coach'
+                          : request.status === 'approved'
+                            ? 'Approuvée'
+                            : request.status === 'rejected'
+                              ? 'Refusée'
+                              : 'À compléter'
+                }}
+              </span>
             </div>
           </div>
         </section>
 
         <!-- Section 2 — AVS (conditionnelle) -->
-        <section v-if="avsRequired || memberAvs" class="card lrf__card">
+        <section
+          v-if="avsRequired || memberAvs"
+          ref="avsSectionEl"
+          class="card lrf__card"
+        >
           <header class="lrf__card-head">
             <div class="lrf__card-title">
               <Hash :size="14" class="lrf__card-title-ic" />
@@ -521,10 +1047,14 @@ function onTransferRetry(): void {
               Le numéro AVS figure sur votre carte d'assurance maladie suisse.
             </p>
           </template>
+          <DocStatusBanner
+            :doc-ref="request.uploadedDocs.avs ?? null"
+            kind="avs"
+          />
         </section>
 
         <!-- Section 3 — Pièce d'identité (recto/verso) -->
-        <section class="card lrf__card">
+        <section ref="idSectionEl" class="card lrf__card">
           <header class="lrf__card-head">
             <div class="lrf__card-title">
               <ShieldCheck :size="14" class="lrf__card-title-ic" />
@@ -543,16 +1073,32 @@ function onTransferRetry(): void {
             par Swiss Basketball.
           </p>
           <div class="lrf__id-uploads">
-            <PassportUpload
-              v-model="idFront"
-              label="Recto"
-              side="front"
-            />
-            <PassportUpload
-              v-model="idBack"
-              label="Verso"
-              side="back"
-            />
+            <div class="lrf__id-upload-col">
+              <PassportUpload
+                v-model="idFront"
+                label="Recto"
+                side="front"
+                @pick="onIdFrontPick"
+                @remove="onIdFrontRemove"
+              />
+              <DocStatusBanner
+                :doc-ref="request.uploadedDocs.id_front ?? null"
+                kind="id_front"
+              />
+            </div>
+            <div class="lrf__id-upload-col">
+              <PassportUpload
+                v-model="idBack"
+                label="Verso"
+                side="back"
+                @pick="onIdBackPick"
+                @remove="onIdBackRemove"
+              />
+              <DocStatusBanner
+                :doc-ref="request.uploadedDocs.id_back ?? null"
+                kind="id_back"
+              />
+            </div>
           </div>
         </section>
 
@@ -615,7 +1161,11 @@ function onTransferRetry(): void {
         </section>
 
         <!-- Section 5 — Transfert national (Suisse) -->
-        <section v-if="showSwissTransferSection" class="card lrf__card">
+        <section
+          v-if="showSwissTransferSection"
+          ref="transferSectionEl"
+          class="card lrf__card"
+        >
           <header class="lrf__card-head">
             <div class="lrf__card-title">
               <FileSignature :size="14" class="lrf__card-title-ic" />
@@ -640,6 +1190,10 @@ function onTransferRetry(): void {
             @pick="onTransferPick"
             @remove="onTransferRemove"
             @retry="onTransferRetry"
+          />
+          <DocStatusBanner
+            :doc-ref="request.uploadedDocs.transfer_letter_swiss ?? null"
+            kind="transfer_letter_swiss"
           />
         </section>
 
@@ -730,11 +1284,23 @@ function onTransferRetry(): void {
     </div>
 
     <!-- Bottom bar — bouton submit -->
-    <div v-if="request && !alreadySubmitted" class="m-bottom lrf__bottom">
+    <div
+      v-if="request && !isReadOnlyStatus && !isAwaitingSignature"
+      class="m-bottom lrf__bottom"
+    >
+      <p
+        v-if="submitDisabledReason"
+        class="lrf__bottom-reason"
+        role="status"
+      >
+        {{ submitDisabledReason }}
+      </p>
       <button
         type="button"
         class="btn btn-primary btn-block"
         :disabled="!canSubmit"
+        :title="submitDisabledReason ?? ''"
+        :aria-disabled="!canSubmit"
         @click="onSubmit"
       >
         <ShieldCheck :size="16" />
@@ -865,6 +1431,11 @@ function onTransferRetry(): void {
     grid-template-columns: 1fr;
   }
 }
+.lrf__id-upload-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 
 .lrf__toggle-row {
   display: flex;
@@ -934,22 +1505,61 @@ function onTransferRetry(): void {
 .lrf__bottom {
   display: block;
 }
+.lrf__bottom-reason {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: #be123c;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.lrf__global-banner {
+  margin-bottom: 12px;
+  align-items: flex-start;
+}
+.lrf__global-banner-body {
+  flex: 1;
+  min-width: 0;
+}
+.lrf__global-banner-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.lrf__global-banner-desc {
+  font-size: 12px;
+  margin: 4px 0 0;
+  line-height: 1.55;
+}
+.lrf__global-banner-cta {
+  margin-top: 8px;
+}
 
 .lrf__notfound,
-.lrf__submitted {
+.lrf__readonly-banner {
   margin-top: 4px;
   align-items: flex-start;
 }
 .lrf__notfound-title,
-.lrf__submitted-title {
+.lrf__readonly-title {
   font-size: 13.5px;
   font-weight: 600;
   line-height: 1.4;
 }
 .lrf__notfound-desc,
-.lrf__submitted-desc {
+.lrf__readonly-desc {
   font-size: 12px;
   margin: 4px 0 0;
   line-height: 1.55;
+}
+.lrf__readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lrf__sign {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 </style>

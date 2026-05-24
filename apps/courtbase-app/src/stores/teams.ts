@@ -26,6 +26,7 @@ import {
   type MockTeam,
 } from '@/repositories/mock'
 import { listTeamsForCoach as listTeamsForCoachReal } from '@/repositories/teams.repo'
+import { useMembersStore } from '@/stores/members'
 
 export type CoachStateFilter = 'all' | 'needsCoach'
 
@@ -80,11 +81,31 @@ export const useTeamsStore = defineStore('teams', () => {
       } finally {
         loading.value = false
       }
+      // Lance en arrière-plan la résolution des members pour avoir le count
+      // exact dans les cards MyTeams (pas bloquant — les cards affichent
+      // `playerIds.length` en attendant).
+      void loadStatsForVisibleTeams()
       return
     }
     // Fallback : pas de memberId réel → mode démo mock.
     teams.value = listTeamsForCoachMock(coachUidForMock)
     source.value = 'mock'
+  }
+
+  /**
+   * Charge les members de chaque team visible pour afficher le count exact
+   * (et à terme le nombre d'exclus) dans les cards MyTeams. Mode `firestore`
+   * uniquement — en mode `mock` les counts sont déjà bons via `MOCK_MEMBERS`.
+   *
+   * Best-effort : si le fetch d'une team plante, on continue les autres. Le
+   * fallback `playerIds.length` reste visible pour les teams non résolues.
+   */
+  async function loadStatsForVisibleTeams(): Promise<void> {
+    if (source.value !== 'firestore') return
+    const membersStore = useMembersStore()
+    await Promise.all(
+      teams.value.map((t) => membersStore.loadForTeam(t.id, t.playerIds)),
+    )
   }
 
   /** Charge depuis le mock uniquement (utile pour les tests / le showcase). */
@@ -163,19 +184,26 @@ export const useTeamsStore = defineStore('teams', () => {
    * pour les cards équipe enrichies de `MyTeams.vue` — évite que la vue
    * recompose la donnée à chaque render.
    *
-   * Limite connue : utilise `listMembersByTeam` (mock). Quand on branchera
-   * un repo members réel, basculer ici en lookup Firestore async.
+   * Mode `firestore` : préfère le count exact issu de `membersStore` (rempli
+   * par `loadStatsForVisibleTeams` après le fetch teams). Fallback sur
+   * `playerIds.length` tant que les members ne sont pas chargés (≈ 1ère
+   * frame), avec `excluded: 0` (pas de signal `duesStatus` côté coach app).
+   *
+   * Mode `mock` : `listMembersByTeam` issu de `MOCK_MEMBERS`, compte les
+   * `duesStatus: 'excluded'` pour la pill rose dans la card.
    */
   const teamStats = computed<Map<string, { count: number; excluded: number }>>(() => {
     const map = new Map<string, { count: number; excluded: number }>()
-    for (const t of teams.value) {
-      // En mode firestore, on n'a pas encore le détail members → on tombe
-      // sur `playerIds.length` pour `count` et 0 exclus (à enrichir quand
-      // le store members existera).
-      if (source.value === 'firestore') {
-        map.set(t.id, { count: t.playerIds.length, excluded: 0 })
-        continue
+    if (source.value === 'firestore') {
+      const membersStore = useMembersStore()
+      const realStats = membersStore.statsByTeamId
+      for (const t of teams.value) {
+        const real = realStats.get(t.id)
+        map.set(t.id, real ?? { count: t.playerIds.length, excluded: 0 })
       }
+      return map
+    }
+    for (const t of teams.value) {
       const members = listMembersByTeam(t.id)
       const excluded = members.filter((m) => m.duesStatus === 'excluded').length
       map.set(t.id, { count: members.length, excluded })
@@ -200,6 +228,7 @@ export const useTeamsStore = defineStore('teams', () => {
     // actions
     loadForCoach,
     loadForCoachMock,
+    loadStatsForVisibleTeams,
     setSearch,
     setCategoryFilter,
     setCoachStateFilter,

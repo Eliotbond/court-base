@@ -108,6 +108,69 @@ Le trigger `fanoutNotification` (push FCM automatique sur création d'un
 
 Cf. `docs/firebase.md` § Cloud Functions + mémoire `mobile_chantier_status`.
 
+## Menu unifié single-page (refactor 2026-05-24, PR-M)
+
+> **Source de vérité produit** : `docs/courtbase-app/menu-refactor.md`. Ce
+> bloc est le résumé d'implémentation — toute évolution du modèle (sections,
+> sélection tabs, grouping sidebar) doit d'abord être actée dans le brief.
+
+L'ancien `Home.vue` (~1500 lignes) dupliquait 5 variants quasi-identiques
+(`HomeDesktop`, `HomeMultiRoleMobile`, `HomeCoachMobile`, `HomeOfficialMobile`,
+`HomeAdminMobile`) avec role switcher artificiel pour les users multi-rôles
+et data loading non-scopé. Le refactor PR-M le remplace par **un seul
+template Home** + **sections conditionnelles** empilées par rôle, dans un
+ordre fixe (Coach → Officiel → Admin → Joueur). Pas de role switcher : un
+user `coach + admin` voit les deux univers ensemble.
+
+### Architecture cible
+
+- **`Home.vue` (≤ 150 lignes)** — coquille qui choisit `CbMobileShell` vs
+  `CbDesktopShell` via `useViewport()` puis empile les sections conditionnelles
+  selon `auth.isCoach / isOfficial / isAdmin / isPlayer`. Si aucun rôle → `HomeEmpty`.
+- **`components/home/HomeCoachSection.vue`** — bloc coach (équipes,
+  registrations à traiter, license reviews, exclusions cotisation,
+  planning court terme).
+- **`components/home/HomeOfficialSection.vue`** — bloc officiel
+  (assignations en cours, matchs ouverts au niveau, no-license banner).
+- **`components/home/HomeAdminSection.vue`** — bloc admin (broadcast,
+  requests pending, staffing court terme).
+- **`components/home/HomePlayerSection.vue`** — bloc joueur (mes matchs,
+  mes cotisations).
+- **`components/home/HomeEmpty.vue`** — fallback quand `auth.roles.length === 0`.
+
+`useShellNav()` retourne désormais `{ tabs, nav, primaryRoleLabel }` (cf.
+§ Composables ci-dessous) et `CbSidebar` accepte un `CbNavItemGroup[]`
+(grouping par rôle avec label section "COACH" / "OFFICIEL" / "ADMIN" /
+"JOUEUR"). Le `CbNavItem[]` plat reste accepté en fallback (un seul groupe
+sans titre) pour la rétro-compat.
+
+### Règle "scope data per section"
+
+Chaque section est **isolée** : elle ne charge ses données qu'au `onMounted`
+**si** le rôle correspondant est présent. Concrètement, la coquille `Home.vue`
+ne déclenche **aucun** fetch — c'est chaque sous-composant section qui appelle
+son store (`teamsStore.loadForCoach` dans `HomeCoachSection`,
+`assignmentsStore.loadForOfficial` dans `HomeOfficialSection`, etc.). Si
+l'user n'a pas le rôle, la section n'est pas rendue, donc aucun fetch ne
+se déclenche. Pattern d'idempotence obligatoire (cache hit = pas de
+re-fetch), cohérent avec les autres stores du repo.
+
+### Sélection tabs mobile
+
+Max 4 slots : Slot 1 = Home (toujours). Slots 2-4 = 1 onglet par rôle actif
+dans l'ordre Coach > Officiel > Admin > Joueur, avec l'onglet le plus
+représentatif (Coach → Équipes, Officiel → Mes assignations, Admin →
+Staffing, Joueur → Mes matchs). Si > 3 rôles : slot 4 devient "Plus" (sheet
+avec le 4e rôle + Notifications + Profil).
+
+### Ancien Home multi-variant (déprécié)
+
+Les variants `HomeDesktop`, `HomeMultiRoleMobile`, `HomeCoachMobile`,
+`HomeOfficialMobile`, `HomeAdminMobile` sont **remplacés** par la coquille
+unifiée + les 5 composants de section ci-dessus. Toute référence à ces
+variants dans le code restant doit être migrée. Le role switcher est
+**supprimé** — multi-role = empilement direct.
+
 ## Conventions
 
 - **TS strict** + `noUncheckedIndexedAccess`. Pas de `any` sans justification.
@@ -197,7 +260,7 @@ Référence visuelle live : route `/_design`.
 
 | Audience | Vues |
 |---|---|
-| Communs | `SignIn`, `ProfileSetup`, `MemberInactiveBlocker`, `Home` (role-aware), `common/Notifications`, `common/ProfileSettings`, `DesignSystem`, `NotFound` |
+| Communs | `SignIn`, `ProfileSetup`, `MemberInactiveBlocker`, `Home` (single-page unifié, sections empilées par rôle — cf. § "Menu unifié single-page"), `common/Notifications`, `common/ProfileSettings`, `DesignSystem`, `NotFound` |
 | Officiel | `official/OpenMatches`, `official/MyAssignments`, `official/MatchDetail` + dialog `dialogs/CbAssignmentActionDialog` |
 | Coach | `coach/MyTeams`, `coach/TeamRoster`, `coach/MemberForm` (create+edit), `coach/MemberDetail`, `coach/TeamPlanning`, `coach/TrainingAttendance`, `coach/AwayMatchCreate`, `coach/Registrations`, `coach/RegistrationDetail`, `coach/MatchMoveRequest` |
 | Admin | `admin/Staffing`, `admin/StaffingDetail`, `admin/Requests`, `admin/RequestDetail`, `admin/Broadcast` |
@@ -208,9 +271,21 @@ pour naviguer dans toute l'app via un seul login.
 ### Composables disponibles
 
 - `useViewport()` — switch responsive mobile/desktop ≥1024px.
-- `useShellNav()` — tabs + nav sidebar role-aware avec badges réactifs.
-  À utiliser pour toute nouvelle vue qui a besoin d'un shell mobile + desktop
-  (évite de re-inliner les arrays `CbTab[]` / `CbNavItem[]`).
+- `useShellNav()` — retourne **3 valeurs** role-aware (refactor PR-M-A,
+  2026-05-24) :
+  - `tabs: ComputedRef<CbTab[]>` — tab bar mobile, max 4 items, sélection
+    par priorité Coach > Officiel > Admin > Joueur.
+  - `nav: ComputedRef<CbNavItemGroup[]>` — sidebar desktop, **groupée par
+    rôle** (un group par rôle utilisateur, label "Coach" / "Officiel" /
+    "Admin" / "Joueur").
+  - `primaryRoleLabel: ComputedRef<string>` — label du rôle prioritaire
+    pour l'avatar du shell.
+
+  À utiliser pour toute nouvelle vue qui a besoin d'un shell mobile +
+  desktop (évite de re-inliner les arrays `CbTab[]` / `CbNavItemGroup[]`).
+  L'ancienne API exposait 9 collections (`coachTabs`, `officialTabs`,
+  `adminTabs`, `playerTabs`, `multiRoleTabs`, `coachNav`, `officialNav`,
+  `adminNav`, `playerNav`) — elle a été remplacée par le triplet ci-dessus.
 
 ### Mock — conventions
 
@@ -224,6 +299,251 @@ Quand on branchera Firebase :
 2. Faire passer toutes les fonctions en `async` (les vues sont prêtes — les
    computed/refs gèrent le state initial null).
 3. Retirer `<CbMockBadge />` de `App.vue`.
+
+### Fondation Bookings (read + coach cancel) — livrée 2026-05-24
+
+Couche `bookings` opérationnelle en mode **hybride mock + Firestore réel**
+(même pattern que `licenseRequests` / `teams`).
+
+**Fichiers livrés** :
+- `src/repositories/bookings.repo.ts` — read-only + cancel coach uniquement
+  (pas de create/series/edit : ces opérations restent côté `apps/web`).
+  Exporte `listBookingsForSeason(seasonId, { teamIds? })`,
+  `listVenuesWithCourtsLite()`, `listTeamsLite(teamIds[])`,
+  `cancelTrainingBooking({ bookingId, callerUid, note? })`.
+- `src/stores/bookings.ts` — Pinia source unique `allBookings` (saison
+  complète, single fetch), `venues`, `teams`. Actions
+  `loadActiveContext()` (idempotent), `cancelTraining({ bookingId, note? })`,
+  `invalidate()`. Getters `bookingsForTeam`, `bookingsInRange`,
+  `freedUpcoming`. En mode mock : dérive depuis `MOCK_MATCHES`.
+- `src/utils/bookingColors.ts` — mapping pur slotType+status → kind visuel,
+  libellé FR, classe CSS `.cb-bk-*`, tone `CbPill`. Source unique des
+  couleurs pour les 3 vues consommatrices.
+- `src/assets/tokens.css` — classes `.cb-bk-{training,match-home,match-away,
+  reserve,custom,freed,cancelled}` (fond léger + bordure 3px, dashed pour
+  freed, line-through+opacity pour cancelled).
+- `package.json` — ajout `vue-cal@^4.10.2` (même version qu'`apps/web`,
+  cohérent pour la grille calendrier).
+
+**Annulation coach** : write client direct via `updateDoc` —
+`firestore.rules` lignes 339-342 autorisent
+`affectedKeys().hasOnly(['status', 'cancelReason', 'actionLog'])`. Pas de
+callable serveur nécessaire. Idempotent via `arrayUnion` (immunise des
+races coach → coach).
+
+**Convention pour les 3 vues consommatrices** :
+1. **Ne JAMAIS importer `bookings.repo.ts` depuis un composant** — toujours
+   via `useBookingsStore()`.
+2. **Appeler `store.loadActiveContext()` au mount** — idempotent, OK en
+   plusieurs vues.
+3. **Filtrer côté JS** sur `store.allBookings` (`bookingsForTeam`,
+   `bookingsInRange`, `freedUpcoming`). 0 re-fetch sur navigation
+   semaine/mois.
+4. **Couleurs** : utiliser `BOOKING_CLASS[visualKindOf(b)]` (classe wrapper)
+   et `BOOKING_PILL_TONE[visualKindOf(b)]` (CbPill).
+5. **Cancel** : `await store.cancelTraining({ bookingId, note })` — l'UI
+   se met à jour via `allBookings` réactif (le row passe en `status: 'freed'`).
+
+**À faire par Eliot** : `npm install` à la racine pour récupérer `vue-cal`
+(dépendance ajoutée mais pas encore installée).
+
+### Vue TeamPlanning (Planning équipe) — réécrite 2026-05-24
+
+Vue `coach/TeamPlanning.vue` **entièrement réécrite** sur `vue-cal` v4 (MIT) —
+remplace l'ancienne grille mock manuelle. Branchée sur la fondation bookings
+(`useBookingsStore`).
+
+- **3 modes Jour / Semaine / Mois** via segmented control en toolbar (mobile +
+  desktop). Drill-down mois → jour via `@cell-click` (`activeView = 'day'`).
+- **Plage horaire complète 00:00 → 24:00** (pas 30 min) — l'utilisateur veut
+  voir toute la journée (contrairement à `apps/web` qui borne 06:00-22:00).
+- **Source unique** : `bookingsStore.bookingsForTeam(teamId)` mappé vers
+  `VueCalEvent[]` (start/end Date, class `cb-bk-*`, `bookingId` portée pour
+  lookup au clic). 0 re-fetch sur navigation.
+- **Annulation training** : clic sur un event `slotType === 'training' &&
+  status === 'scheduled'` → dialog confirm + textarea note 0-200 chars →
+  `bookingsStore.cancelTraining({ bookingId, note })`. Toast emerald
+  "Créneau libéré" sur succès, rose avec message FR sur erreur.
+- **Mobile-first** : `CbMobileShell` avec toolbar custom (segmented + nav
+  prev/today/next) + label période (Intl.DateTimeFormat fr-FR) + vue-cal.
+  Desktop : `CbDesktopShell` + `CbPageHead` avec actions en haut.
+- **Couleurs** : classes `.cb-bk-*` overridées avec spécificité via
+  `:deep(.vuecal__event.cb-bk-*)` dans `<style scoped>` (vue-cal pose la
+  classe sur `.vuecal__event` hors scope Vue). Mapping `visualKindOf(b)` →
+  `BOOKING_CLASS[kind]` ; pas de palette locale.
+- **Shim TS vue-cal** : `src/types/vue-cal.d.ts` créé (aligné sur le shim
+  `apps/web/src/types/vue-cal.d.ts`). À enrichir si on active drag/drop.
+
+À tester par Eliot :
+- Naviguer vers `/teams/:teamId/planning`.
+- Switcher vue Jour / Semaine / Mois.
+- Cliquer un training pour ouvrir le dialog d'annulation.
+- Vérifier sur mobile que la plage 00h-24h est scrollable.
+
+### Vue Agenda (Calendrier + Liste unifiés) — refonte 2026-05-24
+
+Route unique `agenda` (path `/agenda`, fichier `coach/Agenda.vue`) qui
+**remplace** les anciennes vues `AllBookings.vue` (route `bookings-list`) et
+`FreeSlots.vue` (route `free-slots`), supprimées avec leurs routes. Entrée
+principale dans la sidebar/tab bar coach (icône `CalendarDays`).
+`TeamPlanning.vue` reste accessible depuis `TeamRoster` (planning par équipe,
+hors menu principal).
+
+**2 tabs** (state local, default `calendar` — pas de query string MVP) :
+
+1. **Calendrier** — `vue-cal` v4 connecté à `useBookingsStore.allBookings`
+   (saison entière du club, pas seulement teams du coach).
+   - Vue Semaine par défaut, plage horaire **17h-22h** (toggle "Soir / Journée"
+     bascule sur 6h-24h).
+   - Toggle **"Mes équipes / Tout le club"** (default Mes équipes) — quand
+     "Tout le club" : overlay des events des autres équipes avec classe
+     modifier `.cb-bk-other` (opacité 0.45).
+   - Toggle **"Créneaux libres"** (default ON) — inclut/exclut les events
+     `status === 'freed'` du rendu.
+   - Vues Jour / Semaine / Mois via segmented control. Drill-down mois → jour.
+   - Click sur **mes** trainings scheduled → dialog cancel (pattern repris
+     de `TeamPlanning.vue`). Click sur autres équipes → no-op silencieux.
+
+2. **Liste** — reprend l'ancien `AllBookings.vue` :
+   - Filtres locaux : fenêtre temporelle (À venir/Passé/Tout), équipe, type
+     visuel (chips multi sur les 7 `BookingVisualKind`).
+   - Cards à bordure gauche colorée par kind. Click → `planning/:teamId`.
+
+**Store** : `loadActiveContext` charge désormais **TOUS** les bookings du
+club (le filtre `teamIds` du fetch a été retiré). Les getters
+`myTeamIds: ReadonlyArray<string>` et `isMyBooking(b)` permettent de
+discriminer "mes events" vs "autres équipes" côté composant — pas d'index
+composite requis. Volumétrie attendue : quelques centaines de docs par
+saison, acceptable côté MVP. `bookingsForTeam` et `freedUpcoming` restent
+exposés (consommés par TeamPlanning).
+
+**Allowlist** : `agenda` remplace `bookings-list` et `free-slots` dans
+`ALLOW.coach`, `ALLOW.admin`, `ALLOW.player`. Plus aucune référence aux
+anciennes routes — `/bookings` et `/free-slots` retombent en 404.
+
+### Photo licence membre (livrée 2026-05-24, PR-C)
+
+Permet au coach d'attacher une **photo passeport** à un member depuis la fiche
+détail joueur. Cette photo devient un **pré-requis** pour valider l'ensemble
+des documents d'une demande de licence (transition `parent_docs_submitted →
+coach_validated`). Brief complet : `docs/members/license-photo.md`.
+
+**Fichiers livrés (PR-C)** :
+
+- `src/components/member/MemberPhotoSection.vue` — composant réutilisable
+  (thumbnail 96x96 + actions). Props : `memberId`, `photoStoragePath`,
+  `photoUpdatedAt`, `canEdit`, `canDelete`. Events : `updated` / `removed`.
+  Pas de Firestore direct : passe par `useMembersStore().uploadPhoto` /
+  `removePhoto`. Pré-validation MIME (jpeg/png/webp) + taille (≤ 5 Mo)
+  côté client + ré-validation repo.
+- `src/repositories/members.repo.ts` — `uploadMemberPhoto(memberId, file)`
+  (Storage `uploadBytes` puis callable `setMemberLicensePhoto`),
+  `removeMemberPhoto(memberId)` (callable `removeMemberLicensePhoto`),
+  `getMemberPhotoDownloadUrl(storagePath)`. Snapshot adapter étendu pour
+  populer `MockMember.photoStoragePath` + `photoUpdatedAt` (ces champs
+  sont devenus optionnels sur le type `MockMember`).
+- `src/stores/members.ts` — actions `uploadPhoto` / `removePhoto` + patch
+  in-place dans tous les caches `byTeamId` (re-render auto).
+- `src/services/cloudFunctions.ts` — wrappers typés
+  `setMemberLicensePhoto` / `removeMemberLicensePhoto` (PR-B). Ajoutés ici
+  pour permettre l'avancement parallèle ; PR-B peut écraser si besoin.
+- `src/views/coach/MemberDetail.vue` — section "Photo licence" insérée
+  entre la card identité et la section cotisation. `canEdit = isCoach ||
+  isAdmin`, `canDelete = isAdmin`. Refetch via `loadFromFirestore` après
+  mutation pour récupérer le vrai `photoUpdatedAt`.
+- `src/views/coach/LicenseRequestReview.vue` — charge le member lié à la
+  `licenseRequest` (`getMemberReal(lr.memberId)`) pour évaluer
+  `photoMissing`. Si manquante :
+  - Banner rouge top de page avec CTA "Ouvrir la fiche membre".
+  - **Tous** les boutons "Valider" (per-doc + bottom-bar) sont désactivés,
+    tooltip "Photo membre requise". Refus restent actifs.
+  Choix pragmatique : disable global tant que `photoMissing` (plus simple
+  à raisonner pour le coach que "seul le dernier Valider est bloqué").
+- `src/types/mock.ts` — `MockMember.photoStoragePath?` +
+  `photoUpdatedAt?: { seconds: number } | null` (optionnels, pas de
+  migration).
+
+**Pattern picker fichier+caméra mobile** :
+
+```html
+<input type="file" accept="image/jpeg,image/png,image/webp" capture="user">
+```
+
+- `capture="user"` ouvre la caméra **frontale** par défaut sur mobile
+  (idéal selfie / passeport) ;
+- desktop ignore `capture` → file picker classique ;
+- iOS/Android propose nativement "Prendre une photo / Galerie" via sheet
+  système — pas de double bouton custom à coder.
+
+**À déployer côté serveur** : `firebase deploy --only storage` pour les
+rules `/members/{memberId}/{fileName}` (déjà posées par PR-A) + déployer
+les callables `setMemberLicensePhoto` / `removeMemberLicensePhoto` (PR-B).
+
+### Vues coach review de licence (PR2 UI) — livrées 2026-05-24
+
+Couches livrées pour permettre au coach de valider/refuser les documents de
+licence soumis par le parent (workflow `parent_docs_submitted →
+coach_validated` côté serveur via la callable `coachReviewLicenseDoc`,
+backend livré le même jour — cf. `docs/licenses/parent-completion-workflow.md`).
+
+**Fichiers livrés** :
+- `src/services/cloudFunctions.ts` — wrapper `coachReviewLicenseDoc(input)`
+  + types `CoachReviewLicenseDocInput` / `CoachReviewLicenseDocResult`.
+- `src/repositories/licenseRequests.repo.ts` —
+  `listLicenseRequestsForCoach(teamIds, { status? })` (query `where teamId in
+  <chunk>` chunké par 10 + filtre status JS-side + try/catch défensif +
+  isPermissionDenied helper) et `getLicenseDocDownloadUrl(storagePath)`
+  (résout l'URL Storage pour l'aperçu doc — retourne `null` pour les paths
+  `mock://...` ou en cas d'erreur).
+- `src/stores/licenseRequests.ts` — state `pendingReviewByRequestId` (Map
+  reactive), actions `loadPendingReviewForCoach()` / `getPendingReview(id)`
+  / `reviewDoc({ requestId, kind, decision, refusalReason? })`, getter
+  `pendingReviewList` trié createdAt DESC. Optimistic update sur le cache
+  (patch `coachReview` + `status` post-callable, retire la demande du cache
+  si elle quitte `parent_docs_submitted`).
+- `src/views/coach/LicenseRequestsToReview.vue` — liste des demandes à
+  reviewer (mobile + desktop shell, card cliquable avec avatar + nom + team
+  + pill amber "À valider" + chevron).
+- `src/views/coach/LicenseRequestReview.vue` — détail per-doc : section par
+  doc avec méta fichier + lien aperçu (downloadURL Storage) + boutons
+  Valider / Refuser + dialog motif refus (textarea 5–500 chars + counter)
+  + BottomBar récap "X/Y validés" + toasts emerald/rose/sky. Quand tous
+  validés → toast info "Demande validée et transmise au trésorier" puis
+  retour à la liste.
+- `src/router/index.ts` — routes `license-reviews` (path
+  `/license-reviews`) + `license-request-review` (path
+  `/license-reviews/:requestId`).
+- `src/router/allowlist.ts` — `'license-reviews'` +
+  `'license-request-review'` ajoutés à `ALLOW.coach`.
+- `src/components/home/HomeCoachSection.vue` — card "Demandes de licence
+  à valider" affichée conditionnellement (`licenseReviewsCount > 0`) dans
+  la section coach du Home unifié (cf. § "Menu unifié single-page"). Pas
+  d'item séparé dans la sidebar / tab bar — accès via Home ou deep link
+  `/license-reviews`.
+
+  (Avant le refactor PR-M, cette card vivait directement dans `Home.vue`
+  variantes coach mobile + desktop ; elle a été migrée dans la section.)
+
+**Pattern hybride mock + Firestore réel** :
+- Mode firestore : `listLicenseRequestsForCoach` query Firestore + callable
+  `coachReviewLicenseDoc` réelle ; le store met à jour le cache
+  optimistement.
+- Mode mock : fallback sur `MOCK_LICENSE_REQUESTS.filter(status ==
+  'parent_docs_submitted')` (le fixture `lr-sarah-2025` matche). Le
+  `reviewDoc` mock log-only via `logMockAction` + simule un patch local du
+  cache pour que l'UI reflète l'action sans backend.
+
+**À tester par Eliot** :
+- Mode réel : créer une demande de licence avec `status:
+  parent_docs_submitted` + `uploadedDocs` peuplé (via parcours complet
+  parent dans `courtbase-register`), puis naviguer dans
+  `courtbase-app /license-reviews`. Vérifier que la liste affiche la
+  demande, que l'aperçu fichier ouvre une nouvelle fenêtre, que
+  Valider/Refuser appelle la callable et que la demande quitte la liste
+  quand tous les docs sont validés.
+- Mode mock (dev sans backend) : fallback `lr-sarah-2025` doit apparaître
+  dans la liste, et un click sur Valider doit logguer
+  `licenseRequests.reviewDoc` dans la console.
 
 ### À venir
 

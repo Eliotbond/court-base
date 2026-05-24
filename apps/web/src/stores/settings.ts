@@ -31,6 +31,7 @@ import {
 } from '@/repositories/roles.repo'
 import type {
   BankingInfo,
+  BasketplanIntegrationConfig,
   ClosurePeriod,
   ClubConfig,
   DuesConfig,
@@ -59,6 +60,7 @@ export type SettingsSection =
   | 'matchTypes'
   | 'closurePeriods'
   | 'adminTeam'
+  | 'basketplan'
 
 /**
  * Source unique des données de l'écran Settings.
@@ -289,6 +291,48 @@ export const useSettingsStore = defineStore('settings', () => {
     } catch (e: unknown) {
       config.value.banking = snap
       setError(e instanceof Error ? e.message : 'Erreur lors de la sauvegarde des infos bancaires')
+      throw e
+    } finally {
+      savingSection.value = null
+    }
+  }
+
+  // -----------------------------------------------------
+  // Basketplan integration — `/config/club.basketplan`
+  // -----------------------------------------------------
+
+  /**
+   * Patch la sous-section `basketplan` de `/config/club`. Couvre la
+   * configuration de l'intégration Swiss Basketball (clubId, fédération
+   * par défaut, toggle enabled). Les champs `lastSyncAt` / `lastSyncError`
+   * sont préservés à travers le patch — ils sont mis à jour côté serveur
+   * par le scheduler (PR 2).
+   *
+   * Optimistic apply + rollback en cas d'erreur Firestore. Pattern aligné
+   * sur `saveBanking` / `saveOfficialsConfig` ci-dessus.
+   */
+  async function saveBasketplan(payload: BasketplanIntegrationConfig): Promise<void> {
+    if (!config.value) throw new Error('Settings non chargés')
+    savingSection.value = 'basketplan'
+    const snap = config.value.basketplan
+      ? { ...config.value.basketplan }
+      : undefined
+    config.value.basketplan = { ...payload }
+    try {
+      await updateClubConfig({ basketplan: payload })
+      markSaved('basketplan')
+    } catch (e: unknown) {
+      // Rollback à l'état précédent.
+      if (snap) {
+        config.value.basketplan = snap
+      } else {
+        config.value.basketplan = undefined
+      }
+      setError(
+        e instanceof Error
+          ? e.message
+          : 'Erreur lors de la sauvegarde de la configuration Basketplan',
+      )
       throw e
     } finally {
       savingSection.value = null
@@ -551,6 +595,7 @@ export const useSettingsStore = defineStore('settings', () => {
     saveOfficialsConfig,
     saveDuesConfig,
     saveBanking,
+    saveBasketplan,
     addCustomRole,
     editRole,
     removeRole,

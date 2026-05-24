@@ -54,9 +54,11 @@ watch(
       selectedOfficialId.value = null
       assignError.value = null
       store.error = null
-      if (officialsStore.officials.length === 0) {
-        void officialsStore.load()
-      }
+      // Toujours re-fetch à l'ouverture : la liste des officiels peut avoir
+      // changé depuis le dernier load (ajout/retrait du rôle 'official' sur
+      // un member, nouvelle licence active, etc.). Le volume reste faible
+      // (< 50 officiels par club) — pas d'impact perf notable.
+      void officialsStore.load()
     }
   },
 )

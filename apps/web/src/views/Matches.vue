@@ -364,6 +364,132 @@ function handleCreated(payload: MatchCreatedPayload): void {
 function dismissFreedNotice(): void {
   freedNotice.value = null
 }
+
+// ---------------------------------------------------------------------------
+// Basketplan enrichment — helpers d'affichage pour les champs `external*`
+// (cf. `MatchData.externalSource` / `externalGameNumber` / `externalReferees`
+// / `externalResult` / `externalLastSyncedAt`).
+//
+// Tous les helpers sont *neutres pour les matchs purement court-base* (les
+// sections conditionnelles `v-if` côté template évitent d'afficher quoi que
+// ce soit quand `externalSource !== 'basketplan'`).
+// ---------------------------------------------------------------------------
+
+const syncedAtFormatter = new Intl.DateTimeFormat('fr-CH', {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
+function isBasketplanMatch(m: MatchRow): boolean {
+  return m.externalSource === 'basketplan'
+}
+
+function basketplanGameLabel(m: MatchRow): string {
+  return m.externalGameNumber
+    ? `Basketplan #${m.externalGameNumber}`
+    : 'Basketplan'
+}
+
+function formatExternalSyncedAt(m: MatchRow): string | null {
+  const ts = m.externalLastSyncedAt
+  if (!ts) return null
+  const ms = ts.seconds * 1000
+  if (Number.isNaN(ms)) return null
+  return syncedAtFormatter.format(new Date(ms))
+}
+
+interface RefereeRow {
+  label: string
+  value: string
+}
+
+/** Lignes arbitres non vides — vide si rien à afficher (n'affiche pas la section). */
+function refereeRows(m: MatchRow): RefereeRow[] {
+  const refs = m.externalReferees
+  if (!refs) return []
+  const rows: RefereeRow[] = []
+  if (refs.referee1 && refs.referee1.trim().length > 0) {
+    rows.push({ label: 'Arbitre 1', value: refs.referee1.trim() })
+  }
+  if (refs.referee2 && refs.referee2.trim().length > 0) {
+    rows.push({ label: 'Arbitre 2', value: refs.referee2.trim() })
+  }
+  if (refs.expert && refs.expert.trim().length > 0) {
+    rows.push({ label: 'Commissaire', value: refs.expert.trim() })
+  }
+  return rows
+}
+
+/**
+ * Renvoie `homeName` / `awayName` selon `kind` :
+ *  - `home`  : nous = `teamName`, eux = `opponentName`.
+ *  - `away`  : nous = `teamName`, eux = `opponentName` (l'ordre est inversé
+ *              côté affichage du score puisque nous sommes "guest" Basketplan).
+ *
+ * Pour le tableau quarters et le score grand format, le contrat
+ * `externalResult.homeScore / awayScore` est défini côté Basketplan : `home`
+ * = équipe locale du match (au sens géographique), `away` = visiteur.
+ * Donc :
+ *  - `kind === 'home'` → notre équipe = home côté Basketplan.
+ *  - `kind === 'away'` → notre équipe = away côté Basketplan.
+ */
+interface ResultLabels {
+  leftName: string
+  leftScore: number
+  rightName: string
+  rightScore: number
+  /** `true` si notre équipe est à gauche (orienté "nous d'abord"). */
+  ourTeamLeft: boolean
+}
+
+function resultLabels(m: MatchRow): ResultLabels | null {
+  const r = m.externalResult
+  if (!r) return null
+  const us = m.teamName ?? 'Notre équipe'
+  const them = m.opponentName ?? 'Adversaire'
+  if (m.kind === 'home') {
+    return {
+      leftName: us,
+      leftScore: r.homeScore,
+      rightName: them,
+      rightScore: r.awayScore,
+      ourTeamLeft: true,
+    }
+  }
+  return {
+    leftName: us,
+    leftScore: r.awayScore,
+    rightName: them,
+    rightScore: r.homeScore,
+    ourTeamLeft: true,
+  }
+}
+
+interface QuarterRow {
+  label: string
+  home: number
+  away: number
+}
+
+/** Lignes par quart-temps + total. Empty si aucun quart non-nul fourni. */
+function quarterRows(m: MatchRow): QuarterRow[] | null {
+  const r = m.externalResult
+  if (!r || !r.byQuarter || r.byQuarter.length === 0) return null
+  // On considère vide si TOUS les quarters sont {0,0} (la spec UI dit
+  // "tableau si byQuarter présent + au moins un score non-zéro").
+  const allZero = r.byQuarter.every((q) => q.home === 0 && q.away === 0)
+  if (allZero) return null
+  const rows = r.byQuarter.map((q, idx) => ({
+    label: `Q${idx + 1}`,
+    home: q.home,
+    away: q.away,
+  }))
+  rows.push({ label: 'Total', home: r.homeScore, away: r.awayScore })
+  return rows
+}
 </script>
 
 <template>
@@ -587,7 +713,20 @@ function dismissFreedNotice(): void {
 
           <Column header="Adversaire">
             <template #body="{ data }">
-              <span>{{ data.opponentName ?? '—' }}</span>
+              <span class="inline-flex items-center gap-1.5 min-w-0">
+                <span class="truncate">{{ data.opponentName ?? '—' }}</span>
+                <Pill
+                  v-if="isBasketplanMatch(data)"
+                  variant="violet"
+                  :title="
+                    data.externalGameNumber
+                      ? `Basketplan #${data.externalGameNumber}`
+                      : 'Match issu de la sync Basketplan'
+                  "
+                >
+                  {{ basketplanGameLabel(data) }}
+                </Pill>
+              </span>
             </template>
           </Column>
 
@@ -780,6 +919,169 @@ function dismissFreedNotice(): void {
               <div class="text-[13px] text-surface-700 whitespace-pre-line">
                 {{ selectedMatch.notes }}
               </div>
+            </section>
+
+            <!-- ============================================================
+                 Basketplan — source officielle (champs `external*`).
+                 Sections affichées uniquement pour les matchs `externalSource
+                 === 'basketplan'` (créés / synchronisés depuis le back-office
+                 fédéral). Read-only — admin peut toujours éditer les champs
+                 manuels côté `/bookings`, mais pas les champs externes.
+                 ============================================================ -->
+
+            <!-- Section : Match officiel Basketplan -->
+            <section
+              v-if="isBasketplanMatch(selectedMatch)"
+              class="space-y-2"
+            >
+              <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold">
+                Match officiel Basketplan
+              </h4>
+              <div class="flex flex-wrap items-center gap-2 text-[13px]">
+                <Pill variant="violet">
+                  {{ basketplanGameLabel(selectedMatch) }}
+                </Pill>
+                <span class="text-surface-500 text-[12px]">
+                  Source officielle (Swiss Basketball)
+                </span>
+              </div>
+              <div
+                v-if="formatExternalSyncedAt(selectedMatch)"
+                class="text-[12px] text-surface-500"
+              >
+                Dernière synchro :
+                <span class="num">{{ formatExternalSyncedAt(selectedMatch) }}</span>
+              </div>
+            </section>
+
+            <!-- Section : Arbitres fédéraux -->
+            <section
+              v-if="refereeRows(selectedMatch).length > 0"
+              class="space-y-2"
+            >
+              <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold">
+                Arbitres fédéraux
+              </h4>
+              <dl class="grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 text-[13px]">
+                <template
+                  v-for="row in refereeRows(selectedMatch)"
+                  :key="row.label"
+                >
+                  <dt class="text-surface-500">
+                    {{ row.label }}
+                  </dt>
+                  <dd class="text-surface-700 break-words">
+                    {{ row.value }}
+                  </dd>
+                </template>
+              </dl>
+            </section>
+
+            <!-- Section : Résultat officiel
+                 Affichée pour tout match Basketplan : si `externalResult` est
+                 présent on rend le score + homologation (+ tableau quarts si
+                 dispo), sinon on rend le placeholder "En attente". -->
+            <section
+              v-if="isBasketplanMatch(selectedMatch)"
+              class="space-y-2"
+            >
+              <h4 class="text-[11px] uppercase tracking-wide text-surface-500 font-semibold">
+                Résultat officiel
+              </h4>
+
+              <template v-if="selectedMatch.externalResult && resultLabels(selectedMatch)">
+                <!-- Score grand format -->
+                <div class="flex items-center gap-3 text-[15px]">
+                  <span class="font-semibold truncate flex-1 text-right">
+                    {{ resultLabels(selectedMatch)!.leftName }}
+                  </span>
+                  <span class="num font-bold text-[18px] text-surface-900">
+                    {{ resultLabels(selectedMatch)!.leftScore }}
+                  </span>
+                  <span class="text-surface-400 num">—</span>
+                  <span class="num font-bold text-[18px] text-surface-900">
+                    {{ resultLabels(selectedMatch)!.rightScore }}
+                  </span>
+                  <span class="font-semibold truncate flex-1">
+                    {{ resultLabels(selectedMatch)!.rightName }}
+                  </span>
+                </div>
+
+                <!-- Badge homologation -->
+                <div class="flex items-center gap-2">
+                  <Pill
+                    v-if="selectedMatch.externalResult.homologated"
+                    variant="emerald"
+                  >
+                    Homologué
+                  </Pill>
+                  <Pill
+                    v-else
+                    variant="amber"
+                  >
+                    En attente d'homologation
+                  </Pill>
+                </div>
+
+                <!-- Tableau par quart-temps (si disponible) -->
+                <div
+                  v-if="quarterRows(selectedMatch)"
+                  class="mt-2 overflow-hidden rounded-md border border-surface-200"
+                >
+                  <table class="w-full text-[12px] num">
+                    <thead class="bg-surface-50 text-surface-500">
+                      <tr>
+                        <th class="text-left font-medium px-2 py-1">
+                          Période
+                        </th>
+                        <th class="text-right font-medium px-2 py-1">
+                          {{ resultLabels(selectedMatch)!.ourTeamLeft
+                            ? (selectedMatch.kind === 'home' ? 'Domicile' : 'Notre équipe')
+                            : 'Domicile' }}
+                        </th>
+                        <th class="text-right font-medium px-2 py-1">
+                          {{ resultLabels(selectedMatch)!.ourTeamLeft
+                            ? (selectedMatch.kind === 'home' ? 'Visiteur' : 'Domicile')
+                            : 'Visiteur' }}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="(row, idx) in quarterRows(selectedMatch)"
+                        :key="row.label"
+                        :class="
+                          idx === quarterRows(selectedMatch)!.length - 1
+                            ? 'border-t border-surface-200 font-semibold bg-surface-50'
+                            : 'border-t border-surface-100'
+                        "
+                      >
+                        <td class="px-2 py-1 text-surface-600">
+                          {{ row.label }}
+                        </td>
+                        <td class="px-2 py-1 text-right text-surface-900">
+                          {{ row.home }}
+                        </td>
+                        <td class="px-2 py-1 text-right text-surface-900">
+                          {{ row.away }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+
+              <template v-else>
+                <!-- externalSource = basketplan mais pas encore de résultat -->
+                <div class="flex items-center gap-2">
+                  <Pill variant="amber">
+                    En attente d'homologation
+                  </Pill>
+                </div>
+                <p class="text-[12px] text-surface-500">
+                  Le résultat sera mis à jour à la prochaine synchro nocturne.
+                </p>
+              </template>
             </section>
 
             <!-- Historique (placeholder MVP — l'actionLog vit sur le booking

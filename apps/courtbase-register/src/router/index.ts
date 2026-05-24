@@ -135,6 +135,15 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/Account.vue'),
     meta: { requiresAuth: true, requiresProfile: true },
   },
+  // Mes licences — liste de TOUTES les demandes accessibles au user (self
+  // linked + pupilles), tous statuts confondus. Sert de point d'entrée stable
+  // en complément du banner Home (qui n'expose que les `pending_parent_docs`).
+  {
+    path: '/licenses',
+    name: 'my-licenses',
+    component: () => import('@/views/Licenses.vue'),
+    meta: { requiresAuth: true, requiresProfile: true },
+  },
   // Demandes de licence (workflow parent mock) — la liste utilise la même vue
   // que le détail : le banner Home reste la porte d'entrée principale. La
   // route liste sert de fallback (deep-link, marque-page) et redirige vers
@@ -215,3 +224,45 @@ router.beforeEach(async (to) => {
 
   return true
 })
+
+/**
+ * Mémorise la dernière étape du wizard visitée — utilisé par `Home.vue` pour
+ * que le bouton "Reprendre" ramène le user là où il s'est arrêté plutôt qu'à
+ * Step 1. Tab-scoped (même cycle de vie que `currentDraftId`) — si l'user
+ * ferme le tab et revient, on retombera sur la heuristique du draft.
+ *
+ * Persiste le `name` de la route, pas le `meta.wizardStep` (les noms
+ * survivront à un renumérotage côté `meta`, le mapping reverse `step → name`
+ * resterait toujours bon).
+ */
+const LAST_WIZARD_ROUTE_KEY = 'court-base.register.lastWizardRoute'
+
+router.afterEach((to) => {
+  if (typeof to.name !== 'string') return
+  // Ne mémorise que les vraies étapes éditables du wizard (pas la confirmation
+  // finale `wiz-done`, ni le step-6 redirect déprécié).
+  if (!to.name.startsWith('wiz-step-')) return
+  if (to.name === 'wiz-step-6') return
+  try {
+    sessionStorage.setItem(LAST_WIZARD_ROUTE_KEY, to.name)
+  } catch {
+    // sessionStorage inaccessible (mode privé strict) : on abandonne
+    // silencieusement, fallback à step-1 dans Home.
+  }
+})
+
+export function readLastWizardRoute(): string | null {
+  try {
+    return sessionStorage.getItem(LAST_WIZARD_ROUTE_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function clearLastWizardRoute(): void {
+  try {
+    sessionStorage.removeItem(LAST_WIZARD_ROUTE_KEY)
+  } catch {
+    // ignore
+  }
+}

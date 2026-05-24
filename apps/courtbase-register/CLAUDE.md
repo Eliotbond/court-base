@@ -66,7 +66,32 @@ Les routes ne portent pas de `meta.allowedRoles`. Le seul gating est : signed-in
 - Toucher au flow auth de `apps/web` pour aligner avec ici — les deux apps gèrent l'auth différemment **par design** (deny-orphan vs accept-orphan).
 - Ajouter `roles: ['parent']` directement à la création de `/users/{uid}` côté client — c'est la callable `submitRegistration` qui s'en charge serveur-side.
 
-## État actuel (2026-05-23)
+## État actuel (2026-05-24)
+
+**Affichage des refus per-doc + re-upload côté parent livré** (2026-05-24 — PR2/PR3 UI parent) :
+
+- `LicenseRequestForm.vue` étendu : pour chaque pièce uploadée, un nouveau composant `components/license-request/DocStatusBanner.vue` affiche un pill statut (amber "En attente de validation" / emerald "Validé par le coach" ou "Validé" / rose "Refusé par le coach"/"Refusé par le trésorier" + bandeau avec la `refusalReason` et la date FR du refus).
+- Un **banner global** en haut de page résume le status (`info` pending, `success` submitted/coach_validated/approved, `strong` rejected). Si au moins un doc est `coachReview.decision === 'refused'` OU `treasurerReview.decision === 'refused'`, le banner bascule en `strong` "Des documents nécessitent votre attention" + bouton CTA qui scroll vers la première section concernée.
+- Le pill statut de la section "Identité joueur" (read-only) est désormais dynamique (À compléter / À corriger / En cours de validation / Validé par le coach / Approuvée / Refusée).
+- Le bouton "Envoyer ma demande" est désormais **bloqué tant qu'un doc refusé n'a pas été re-uploadé** — un message rouge sous le bouton explique pourquoi (`submitDisabledReason`).
+- Quand la demande est `parent_docs_submitted` / `coach_validated` / `approved` / `rejected`, on cache le formulaire et on affiche un banner terminal `lrf__readonly` correspondant (plus de "bottom bar" submit).
+- Au mount, si la demande revient en `pending_parent_docs` avec au moins un doc refusé, on scroll automatiquement vers la section du 1er doc refusé (`scrollToFirstRefused`).
+- Store `stores/licenseRequests.ts` enrichi de 2 getters : `hasRefusedDocs(requestId)` + `refusedDocsKinds(requestId)`. Le store reset déjà `coachReview: null` + `treasurerReview: null` sur le `UploadedDocRef` à chaque re-upload (cf. `uploadDoc`) — comportement vérifié.
+- Helpers FR : nouveau fichier `constants/licenseDocLabels.ts` (mapping `LicenseDocKind` → libellé FR aligné sur `apps/courtbase-app`, + formatter de Timestamp `'lundi 24 mai à 14:32'`).
+- Détail : `docs/licenses/parent-completion-workflow.md` § UI parent (refus + re-upload).
+
+**Demande de licence parent en Firestore réel livrée** (2026-05-24) — workflow `pending_parent_docs → parent_docs_submitted` :
+
+- `LicenseRequestForm.vue` n'utilise plus de mock. Tout patch (upload, AVS, contexte étranger, soumission) écrit dans `/licenseRequests/{id}` via le store `useLicenseRequestsStore`.
+- Uploads Storage réels via `repositories/storage.ts → uploadLicenseDocument` (path `licenseRequests/{uid}/{requestId}/{kind}.{ext}`, rules déjà ouvertes).
+- AVS texte saisi par parent → champ `LicenseRequestData.parentSubmittedAvs` (nouveau, cf. `packages/shared-types/src/license.ts`). Le coach/admin sync vers `member.avs` lors du review (mutation admin-only).
+- Rule `firestore.rules` `/licenseRequests` étendue : `allow update` parent (linked member OU guardian) scopé sur `[uploadedDocs, foreignPlayerContext, parentSubmittedAvs, parentCompletedAt, status]` quand `status == 'pending_parent_docs'`, transition status verrouillée à `pending_parent_docs | parent_docs_submitted`.
+- Banner Home (`LicenseRequestBanner.vue`) consomme désormais `LicenseRequest` canonique (denorm nullable).
+- Bouton dev "🧪 Simuler demande coach" retiré (les vraies demandes arrivent depuis l'app coach `courtbase-app`).
+- Fichiers supprimés : `repositories/licenseRequests.mock.ts`, `stores/licenseDocs.ts` (draft inutilisé).
+- À déployer : `firebase deploy --only firestore:rules`.
+
+Détails : `docs/licenses/parent-completion-workflow.md` (PR1.5).
 
 **Self-service compte / RGPD livré** (2026-05-23) — page `/account` :
 
@@ -82,7 +107,7 @@ Les routes ne portent pas de `meta.allowedRoles`. Le seul gating est : signed-in
 - Scaffold Vite + Vue 3 + PrimeVue + Pinia + vue-router branché.
 - Auth complète : sign-in / sign-up email-password + OAuth Google/Apple + reset password.
 - ProfileSetup (adresse + téléphone) qui crée `/users/{uid}` avec `roles: []`.
-- **Wizard d'inscription complet — 9 vues** : `Step1Whoami` → `Step2Identity` → `Step3TeamPicker` → `Step4OpenHandbook` / `Step4ConditionalConditions` (variantes selon `team.registrationStatus`) → `Step5Contact` → `Step6TransferLetter` (conditionnel sur `previouslyLicensed`) → `Step7LicenseInfo` → `Step8Confirmation`.
+- **Wizard d'inscription — 7 étapes** : `Step1Whoami` → `Step2Identity` → `Step3TeamPicker` → `Step4OpenHandbook` / `Step4ConditionalConditions` (variantes selon `team.registrationStatus`) → `Step5Contact` → `Step7LicenseInfo` (récap + envoi, renuméroté en interne mais étape 6/7 visible) → `Step8Confirmation`. ⚠️ **Step6TransferLetter conservé en redirection défensive uniquement** (2026-05-23) : les documents de licence (lettre de sortie, passeport, AVS, contexte joueur étranger) sont collectés à part par le parent via `LicenseRequestForm.vue` au moment où le coach déclenche la création de licence. Voir `docs/licenses/parent-completion-workflow.md`.
 - **Layout & navigation** : `WizardLayout` (header avec bouton retour contextuel + slot footer) et `Stepper` (progress visuelle 1/8 → 8/8).
 - **4 composants partagés** dans `src/components/wizard/` : `RelationshipPicker`, `TeamCard`, `MatchFoundDialog`, `DocumentUploadTile` (avec export `UploadState`).
 - **Routes** : `/register/step-1` ... `/register/step-7` + `/register/step-4-open` + `/register/step-4-conditional` + `/register/confirmation/:registrationId`.
@@ -145,6 +170,54 @@ Dans tous les stores Pinia de cette app, tout `try/catch` autour d'un appel Fire
 ```
 
 Sans ça, les bugs disparaissent silencieusement (cas vécu : index manquant → bandeau "Impossible de charger" persistant sans diagnostic possible côté front). Pattern déjà appliqué dans `loadMyRegistrations` — répliquer partout ailleurs.
+
+## ⚠️ `err instanceof FirestoreError` — NE PAS UTILISER pour les guards d'exécution
+
+Le check `err instanceof FirestoreError` (et même `FirebaseError`) **n'est PAS fiable** côté bundle Vite. Le tree-shaking ou plusieurs instances du SDK peuvent produire une erreur sémantiquement FirestoreError mais que l'opérateur `instanceof` ne reconnaît pas. Le check rate silencieusement → `throw err` est exécuté → l'erreur remonte au store → bandeau d'erreur affiché alors que tout devrait dégrader.
+
+**Pattern obligatoire** pour les catches qui doivent dégrader sur un code Firestore spécifique :
+
+```ts
+function isPermissionDenied(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code: unknown }).code === 'permission-denied'
+  )
+}
+
+try {
+  await someFirestoreOp()
+} catch (err) {
+  if (isPermissionDenied(err)) return /* fallback */
+  throw err
+}
+```
+
+Déjà appliqué dans `repositories/dues.repo.ts` et `repositories/members.repo.ts`. Incident vécu 2026-05-23 — diagnostic 4h. Cf. mémoire `[[firebase-error-instanceof-unreliable]]`.
+
+`FirestoreError` reste utilisable comme TYPE (JSDoc, IDE help) — c'est l'instanceof d'exécution qui rate.
+
+## ⚠️ LIST queries `/dues` — rules avec `get()` dynamique peuvent refuser
+
+La rule `/dues` autorise la lecture via plusieurs clauses dont `get(/members/{resource.data.memberId}).data.linkedUserId == auth.uid`. Pour une LIST query (`where memberId in [...]`), Firestore évalue la rule par doc retourné, MAIS il peut REFUSER la query d'office si la rule fait un `get()` dynamique qu'il ne peut pas pré-valider statiquement.
+
+**Solution adoptée** : la clause `resource.data.get('registeredByUid', null) == request.auth.uid` est statiquement pré-validable. La LIST query `where registeredByUid == uid` passe systématiquement. C'est pourquoi le repo fait l'UNION des deux critères (cf. section ci-dessous) — chaque critère rattrape un trou de l'autre.
+
+**Aggravant complémentaire** : si la rule helper fait `.data.field` sans `.get('field', default)`, un seul doc legacy sans le champ → throw rule eval → toute la LIST query refusée. Toujours utiliser `.data.get(...)` dans les rules. Cf. mémoires `[[firestore-rules-safe-field-access]]` et `[[firestore-list-query-dynamic-rule]]`.
+
+## Pattern defensive layers pour `loadMyDues`
+
+`stores/dues.ts → loadMyDues()` est blindé sur **3 niveaux indépendants** — tous nécessaires, ne pas en retirer :
+
+1. **Per-query degradation** (`tryQuery` dans `dues.repo.ts`) : chaque query Firestore est wrappée. `permission-denied` → log warn + `[]`. Couvre les LIST queries que les rules refusent malgré tout.
+2. **`isPermissionDenied(err)` robuste** : tous les catches utilisent le helper, jamais `instanceof`. Cf. section ci-dessus.
+3. **Filet de sécurité au store** : le catch global de `loadMyDues` dégrade `permission-denied` en listes vides au lieu de poser `error.value`. UX : empty-state "Aucune facture" plutôt que bandeau anxiogène.
+
+Le bandeau "Impossible de charger vos factures" est donc TRÈS difficile à déclencher. S'il s'affiche, c'est un cas vraiment grave (réseau, config Firebase, etc.) — diagnostic via console (le warn `[dues.repo] xxx denied — degrading` ou `[stores/dues] loadMyDues failed [code]` indique exactement où).
+
+Cf. mémoire `[[register-dues-defensive-layers]]`.
 
 ## Pattern simple query + JS sort
 

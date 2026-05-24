@@ -51,6 +51,10 @@ Le projet expose plusieurs Cloud Functions (cf. `functions/src/index.ts`). **La 
 | `confirmRegistration({ registrationId })` | admin / coach (team scope) | Inscriptions → bouton "Confirmer". Crée le member si nouveau, ajoute à `team.playerIds` (déclenche cotisation). |
 | `updateCotisation({ cotisationId, activatedAt?, issuedAt?, dueAt?, status?, notes? })` | admin / treasurer / rootAdmin | Cotisations (liste) + Détail membre → "Modifier". Édite dates / statut / note. `status: 'paid'` refusé (flux `markCotisationPaid`). Wrappe la callable serveur `updateDue`. |
 | `confirmLicense({ licenseId })` | treasurer / admin / secretary / rootAdmin | Détail membre → onglet "Officiel & coach" → bouton "Confirmer" sur une licence `pending`. Passe `/licenses/{id}` en `active`, poste l'écriture comptable de la charge (débit « Licences fédérales » / crédit trésorerie) et dénormalise `member.officialLicense` / `coachLicense`. Retour `{ ok, alreadyActive, accountingEntryId }` — idempotent (re-confirmer ne re-poste pas d'écriture). |
+| `treasurerReviewLicenseDoc({ requestId, kind, decision, refusalReason? })` | treasurer / admin / secretary / rootAdmin | `/license-requests/:id` → boutons "Valider" / "Refuser" per-doc sur une demande `coach_validated`. Pose `uploadedDocs.{kind}.treasurerReview`. Refus = reset complet (`pending_parent_docs` + `coachValidatedAt/ByUid = null`). Accept = reste `coach_validated`. Retour `{ ok, requestId, newStatus, allTreasurerAccepted }`. |
+| `validateLicenseRequest({ requestId, decision, comment? })` | treasurer / admin / secretary / rootAdmin | `/license-requests/:id` → boutons "Approuver" / "Refuser la demande". **Approve** : exige `status === 'coach_validated'` + tous les docs validés trésorier, crée `/licenses/{id}` `pending` (snapshot 1er `/licenseTypes` joueur actif). **Reject** : accepte aussi `status === 'parent_docs_submitted'` (trésorier peut refuser direct doc faux/info erronée sans attendre coach), pose `request.status = 'rejected'`. La transition `pending → active` reste séparée via `confirmLicense`. Retour `{ ok, requestId, newStatus, licenseId }`. |
+| `setMemberLicensePhoto({ memberId, storagePath, contentType, sizeBytes })` | admin / rootAdmin / treasurer / coach-of-member (vérifié serveur via `assertCoachOrAdminOfMember`) | `/members/:id` → ProfileTab section "Photo licence" (bouton Ajouter/Remplacer) + `apps/courtbase-app` côté coach. Le client uploade le fichier à `members/{memberId}/license-photo.{ext}` puis appelle la callable qui pose `member.photoStoragePath / photoUpdatedAt / photoUpdatedByUid` et fait best-effort delete de l'ancien fichier Storage. |
+| `removeMemberLicensePhoto({ memberId })` | admin / rootAdmin only (vérifié serveur) | `/members/:id` → ProfileTab section "Photo licence" (bouton Supprimer rose). Efface l'objet Storage + clear les 3 champs Firestore (`photoStoragePath / photoUpdatedAt / photoUpdatedByUid = null`). |
 
 > `previewSeasonBookings` n'est plus appelée côté client (dry-run retiré 2026-05-14 — les bookings sont désormais créés manuellement via `/bookings`). La Cloud Function reste déployée mais sans wrapper TS ; à supprimer côté Functions quand on fera le nettoyage backend.
 
@@ -305,3 +309,88 @@ L'ancien onglet "Officiel" est généralisé. Il est désormais **toujours visib
 ### Rôle `secretary`
 
 Rôle staff additif. Côté web : guard du bouton "Confirmer une licence" (`canConfirmLicense` = treasurer/admin/secretary/rootAdmin) et ajout aux routes `members` / `members/:id` (constante `MEMBERS_ACCESS`) pour que le secrétaire atteigne la fiche membre.
+
+### Tab "Officiels" — dashboard saison (livré 2026-05-24)
+
+Le tab `/officials` → "Officiels" (`OfficialsRentabilityTab.vue`) a été restructuré 2026-05-24 pour devenir un **dashboard de tracking** plutôt qu'un focus rentabilité pur. Les nouveautés :
+
+- **Filtre périmètre** : chips "Actifs cette saison" (default) / "Tous (qualifiés)". Filtre dérivé du store (`activeOfficials` = `member.officialLicense.seasonId === activeSeasonId`).
+- **Stat cards (4)** : Officiels actifs / Confirmés cumul saison / Pris last-minute / Remplacements demandés. Les deux dernières s'illuminent (ring amber) quand non nulles pour attirer l'attention.
+- **DataTable enrichi** avec deux nouvelles colonnes triables : "Last-minute" (pill amber + icône Clock si > 0) et "Remplacements" (pill rose + icône Repeat2 si > 0).
+- **Export CSV** étendu aux nouvelles colonnes + statut de licence.
+
+#### Métriques calculées (repo `officials.repo.ts`)
+
+`buildOfficialMetricsBySeason(seasonId, thresholdHours)` étend `buildCountsBySeason` (existant) avec :
+
+1. **`lastMinuteClaims`** : pour chaque assignation `confirmed`, calcule `(booking.date + startTime) - assignedAt` en heures ; si `< lastMinuteThresholdHours` (default 48 h, lu depuis `/config/club.officialsConfig.lastMinuteThresholdHours`), incrémente. Les deltas négatifs (anomalie d'assignation post-match) sont exclus.
+2. **`replacementsRequested`** : count des assignations où `replacementRequestedAt != null` (orthogonal au statut — une assignation peut être confirmed ET avoir une demande de remplacement en cours).
+
+Les métriques sont calculées uniquement sur les `/bookings/{id}/officialAssignments` (matchs HOME). Pour les matchs AWAY (`/matches/{id}/officialAssignments`), seul `replacementsRequested` serait pertinent — non implémenté en MVP (le repo filtre `parentKind === 'booking'` avant agrégation).
+
+#### Action "Demander un remplacement"
+
+Le repo expose `requestReplacement({ parentKind, parentId, assignmentId, requestedByUid })` qui pose `replacementRequestedAt: serverTimestamp() + replacementRequestedByUid` via un `updateDoc` direct. Les rules autorisent l'officiel à muter ces champs sur sa propre assignation (cf. `firestore.rules` — `hasOnly(['status', 'respondedAt', 'replacementRequestedAt', 'replacementRequestedByUid'])`).
+
+**Le bouton UI** est intentionnellement laissé côté `apps/courtbase-app` (mobile officiel) — pas implémenté dans `apps/web` (cf. TODO commentaire dans `OfficialsRentabilityTab.vue`). Le schéma + les rules + la métrique sont en place pour qu'il suffise d'appeler `requestReplacement` côté mobile (ou de répliquer le repo).
+
+#### Différé "En retard pendant un match"
+
+Mentionné dans la spec produit Eliot 2026-05-24 mais déféré. Nécessitera un champ supplémentaire sur `OfficialAssignmentData` (ex. `arrivedLateAt: Timestamp | null`) + rule + action admin dans le drawer.
+
+## Review trésorier des demandes de licence (PR3 — livré 2026-05-24)
+
+Vue dédiée `/license-requests` pour traiter les `/licenseRequests` pré-validées par le coach (workflow complet décrit dans `docs/licenses/parent-completion-workflow.md`). Accès `admin | treasurer | secretary` (rootAdmin bypass guard) — mêmes rôles que `confirmLicense` et les rules. Coach exclu (il a sa propre vue dans `apps/courtbase-app`).
+
+### Fichiers livrés
+
+- `src/views/licenses/LicenseRequests.vue` — liste à 2 onglets ("À traiter" `coach_validated` / "Toutes en cours" non-terminales) + recherche denorm + DataTable `Examiner` → vue détail.
+- `src/views/licenses/LicenseRequestReview.vue` — vue détail : carte Info (membre / équipe / coach / dates / status / commentaire admin si terminale), carte Documents (un bloc par `requiredDocs[kind]` avec aperçu Storage, chips coach + trésorier, boutons Valider/Refuser per-doc), carte Footer actions (Refuser la demande / Approuver la demande).
+- `src/repositories/licenseRequests.repo.ts` — étendu : `getLicenseRequest(id)`, `listActiveLicenseRequests()`, `getLicenseDocumentUrl(storagePath)` (Storage signed URL).
+- `src/stores/licenseRequests.ts` — étendu : `loadOne(id)`, `treasurerReview(...)`, `validate(...)`, getters `byId`, `pendingTreasurer`, `allActive`.
+- `src/services/cloudFunctions.ts` — wrappers `treasurerReviewLicenseDoc` + `validateLicenseRequest` (table des callables ci-dessus).
+- `src/router/index.ts` — routes `license-requests` + `license-request-detail` (constante `LICENSES_ACCESS`).
+- `src/components/layout/AppSidebar.vue` — entrée "Demandes de licence" (icône `ShieldCheck`) dans Operations.
+
+### Gating UI
+
+- Boutons per-doc "Valider" / "Refuser" : visibles uniquement si `status === 'coach_validated'` ET doc uploadé ET pas encore reviewé par le trésorier.
+- Bouton global "Approuver la demande" : disabled tant que `!allTreasurerAccepted` OU status ≠ `coach_validated` (`canApprove`).
+- Bouton global "Refuser la demande" : disabled hors `status ∈ {parent_docs_submitted, coach_validated}` (`canReject`). Le trésorier peut donc refuser dès l'arrivée des docs parent sans attendre la validation coach — la garde serveur (`validateLicenseRequest`) accepte le même set de statuts pour un `reject`. Approve reste strict.
+- Refus per-doc : dialog avec textarea raison (5..500 chars, gardé serveur via `validateRefusalReason`). Sur succès, status repasse `pending_parent_docs` et l'UI affiche un banner info.
+- Approbation : dialog confirmation + commentaire optionnel (≤ 500). Sur succès, banner emerald affiche `licenseId` créé + rappel d'utiliser `confirmLicense` (fiche membre) pour finaliser le paiement.
+
+### Aperçu Storage
+
+`getLicenseDocumentUrl(path)` résout une signed URL via `getDownloadURL` et `window.open(_, '_blank', 'noopener')`. Cache par `storagePath` côté composant pour éviter les re-fetchs. `storage/unauthorized` (rules Storage) remonte à l'UI sous forme de banner d'erreur — pas de fallback silencieux.
+
+### Pas de toast global
+
+Cohérent avec les autres vues : banners inline rouge/vert dans la vue détail plutôt que `ToastService` global (cf. décisions Tier 1).
+
+## Photo licence membre (livré 2026-05-24, PR-D)
+
+Cf. `docs/members/license-photo.md` pour l'intention, le workflow et les rules Storage (livrées par PR-A). Backend (callables `setMemberLicensePhoto` + `removeMemberLicensePhoto`, gate `coachReviewLicenseDoc`) livré par PR-B ; UI coach (`apps/courtbase-app`) livrée par PR-C.
+
+### Fichiers livrés (PR-D — apps/web admin)
+
+- `src/components/member-detail/MemberPhotoSection.vue` — composant réutilisable (props : `memberId`, `photoStoragePath`, `photoUpdatedAt`, `canEdit`, `canDelete`) qui rend la preview 120x120 + actions (Ajouter/Remplacer/Supprimer/Voir en grand) + dialog confirmation 2-clics. Pré-validation client MIME (`image/jpeg | image/png | image/webp`) + taille ≤ 5 Mo, alignée sur la rule Storage et la callable serveur.
+- `src/components/member-detail/ProfileTab.vue` — intégration d'une carte "Photo licence" en `md:col-span-2` entre Identité et Contact. Gating UI dérivé localement (pas du prop `canEdit` parent, qui ne couvre que admin/rootAdmin) : `canEditPhoto = admin | rootAdmin | treasurer | coach-of-this-member` (intersection `user.teamIds` ∩ `member.teams`) ; `canDeletePhoto = admin | rootAdmin` only.
+- `src/views/licenses/LicenseRequestReview.vue` — thumbnail 80x80 à gauche du nom dans la card Info, avec placeholder gris + helper text "Aucune photo licence — uploader via fiche membre" si `photoStoragePath` est `null`. Bouton "Ouvrir la fiche membre" route vers `/members/:id` pour faciliter l'upload. Member chargé via `getMemberById(req.memberId)` (repo direct, pattern aligné sur `getLicenseDocumentUrl` déjà utilisé dans cette vue), photo URL résolue via `getMemberPhotoDownloadUrl(path)` avec cache-busting `?v=<photoUpdatedAt.seconds>`.
+- `src/repositories/members.repo.ts` — étendu : `uploadMemberPhoto(memberId, file)` (validation MIME + size + uploadBytes Storage + callable `setMemberLicensePhoto`), `removeMemberPhoto(memberId)` (callable `removeMemberLicensePhoto`), `getMemberPhotoDownloadUrl(storagePath)` (signed URL pour preview).
+- `src/stores/memberDetail.ts` — étendu : actions `uploadPhoto(file)` / `removePhoto()` qui wrappent le repo, posent `saving=true`, reload le member à succès. Catch enrichi `FirebaseError`.
+- `src/services/cloudFunctions.ts` — wrappers typés `setMemberLicensePhoto` + `removeMemberLicensePhoto` (cf. table des callables ci-dessus).
+
+### Gating Photo licence
+
+- **Édition** (Ajouter / Remplacer) : `admin | rootAdmin | treasurer | coach-of-member`. Le coach est dérivé par `user.teamIds ∩ member.teams` (canonique côté `/users.teamIds`, cf. mémoire `[[teamids-canonical]]`).
+- **Suppression** : `admin | rootAdmin` uniquement. Le coach peut remplacer (= upload qui écrase le fichier précédent au même path) mais pas supprimer sans remplacer.
+- **Preview / Voir en grand** : tout caller signed-in qui voit la fiche (rules Storage permissives + Firestore qui gate la lecture du `photoStoragePath`).
+
+### Cache-busting URL Storage
+
+`MemberPhotoSection` et la thumbnail de `LicenseRequestReview` ajoutent `?v=<photoUpdatedAt.seconds>` à l'URL signée Storage pour forcer le rafraîchissement après un replace (Firebase Storage ne casse pas son CDN cache automatiquement sur un `put` qui réécrit le même path).
+
+### Pas de toast global
+
+Cohérent avec le reste : erreurs de validation / upload affichées dans un banner rose inline sous les boutons d'action, jamais dans un toast global.

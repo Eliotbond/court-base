@@ -86,6 +86,7 @@ export type ClubConfigPatch = Partial<
     | 'banking'
     | 'officialsConfig'
     | 'duesConfig'
+    | 'basketplan'
   >
 >
 

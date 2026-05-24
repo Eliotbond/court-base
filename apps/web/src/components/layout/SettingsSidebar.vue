@@ -10,6 +10,7 @@ import {
   Trophy,
   CalendarX,
   BadgeCheck,
+  Plug,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 
@@ -66,6 +67,12 @@ const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: 'Finances',
     items: [{ to: '/settings/dues', label: 'Dues config', icon: Banknote }],
+  },
+  {
+    label: 'Intégrations',
+    items: [
+      { to: '/settings/integrations/basketplan', label: 'Basketplan', icon: Plug },
+    ],
   },
 ] as const
 </script>

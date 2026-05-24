@@ -365,15 +365,36 @@ Un doc `/licenses/{id}` est une **instance concrète** de licence fédérale, é
 
 > **Reste hors scope (Phase 2 non terminée)** : le refactor de `member.licensed` / `officialLevel` en dérivés des licences actives (cf. `project_members_creation_roadmap`), et le rebranchement du workflow `/licenseRequests` (demande mobile coach → admin) sur la création d'une `/licenses` au lieu de flipper `member.licensed`. Aujourd'hui `member.licensed` reste maintenu en l'état.
 
-### Workflow étendu coach → parent (mock 2026-05-23, à brancher backend)
+### Workflow de demande de licence (coach → parent → coach review → trésorier)
 
-Au-delà du toggle simple "demander licence" historique, le workflow étendu intercale une **complétion de dossier par le parent** entre la demande coach et la validation admin :
+Au-delà du toggle simple "demander licence" historique, le workflow étendu intercale une **complétion de dossier par le parent** + une **review coach doc-par-doc** entre la demande initiale et la validation finale. Workflow cible en **4 stages** :
 
-1. **Coach** déclenche depuis l'app `courtbase-app` (gate cotisation `duesStatus ∈ {paid, pending_grace, excepted}` + joueur non encore licencié).
-2. **Parent** (ou joueur majeur) reçoit un email avec lien vers `courtbase-register/account/license-requests/{id}` et complète : pièce d'identité recto/verso (passeport ou carte d'identité — pas de permis de conduire ni de permis de séjour), AVS si manquant, lettre de sortie si club précédent suisse, contexte transfert si club précédent étranger (procédure FIBA gérée hors-plateforme par l'admin).
-3. **Admin** valide ou refuse → création `/licenses` pending pour confirmation ultérieure via `confirmLicense`.
+```
+(none)
+  │ coach clique "Demander licence" (gate cotisation OK)         ← PR1 (livré 2026-05-23)
+  ▼
+pending_parent_docs
+  │ parent uploade les documents + envoie                        ← courtbase-register
+  ▼
+parent_docs_submitted
+  │ coach review doc par doc (accept / refuse per-doc)           ← PR2 (à venir)
+  ▼
+coach_validated
+  │ trésorier/secrétaire/admin valide ou refuse                  ← PR3 (à venir)
+  ▼
+approved  /  rejected
+```
 
-Statuts étendus (mock) : `pending_parent_docs` → `parent_docs_submitted` → `approved` / `rejected`. Détail complet : [`docs/licenses/parent-completion-workflow.md`](licenses/parent-completion-workflow.md).
+1. **Stage 1 — Coach launch (PR1)** : le coach déclenche depuis l'app `courtbase-app`. Gate cotisation `duesStatus ∈ {paid, pending_grace, excepted}` + joueur non encore licencié (`member.licenseNumber` vide). Crée `/licenseRequests/{id}` (ID déterministe `lr-{memberId}-{seasonId}`, idempotent sur double-clic) en `pending_parent_docs` + un doc `/notifications` (type `license_documents_pending`) qui push le parent via FCM si device enregistré.
+2. **Stage 2 — Parent upload** : le parent ouvre `courtbase-register` `/account/license-requests/{id}` et complète les documents requis (calculés par `inferRequiredDocs(member)`) : pièce d'identité recto/verso (passeport ou carte d'identité — pas de permis de conduire ni de permis de séjour), AVS si manquant, lettre de sortie si club précédent suisse, contexte transfert si club précédent étranger (procédure FIBA MAP gérée hors-plateforme par l'admin). Submit → `parent_docs_submitted`.
+3. **Stage 3 — Coach review (PR2)** : le coach review chaque document dans `courtbase-app`, peut **refuser un doc spécifique** (per-doc `refusedBy` / `refusedReason` → la demande retourne à `pending_parent_docs`, seuls les docs refusés sont à re-uploader) ou valider l'ensemble → `coach_validated`.
+4. **Stage 4 — Trésorier/secrétaire/admin (PR3)** : valide ou refuse depuis `apps/web` (vue dédiée `/license-requests`). La validation déclenche la création d'une `/licenses/{id}` `pending` que le trésorier confirme **ensuite séparément** via la callable existante `confirmLicense` (qui poste la charge comptable).
+
+**Phase trésorier étendue (PR3-trésorier, fondation backend 2026-05-24)** : workflow `coach_validated → awaiting_parent_signature → parent_signed → form_confirmed → sent_paid → approved` matérialisant les étapes administratives fédérales (4 callables `treasurerUploadSignableDoc`, `treasurerConfirmSignedDoc`, `treasurerMarkSentAndPaid`, `treasurerFinalizeLicense` — auth `rootAdmin || treasurer` uniquement, **pas admin** standard, cohérent compta). À `sent_paid`, la `/licenses` est créée en `pending` et **utilisable par le coach en match** ; à `approved`, `confirmLicense` chaîné la passe en `active`, denorm membre + écriture comptable. Détail : `docs/licenses/parent-completion-workflow.md` §"Phase trésorier".
+
+Détail complet : [`docs/licenses/parent-completion-workflow.md`](licenses/parent-completion-workflow.md). Schéma `/licenseRequests` : [`docs/firebase.md`](firebase.md) § `/licenseRequests`.
+
+**Photo licence membre** (feature 2026-05-24) : un membre doit avoir une photo (format passeport) avant que le coach puisse valider l'ensemble des documents (transition `parent_docs_submitted → coach_validated`). Upload par le coach (caméra mobile ou fichier) depuis la fiche membre, réutilisée par le trésorier/admin lors de la création de la licence fédérale. Brief : [`docs/members/license-photo.md`](members/license-photo.md). Champs `/members.photoStoragePath` / `photoUpdatedAt` / `photoUpdatedByUid`.
 
 ### Distinction avec les concepts voisins
 
@@ -390,6 +411,18 @@ Module de **comptabilité du club en partie double**. Détail complet, schéma e
 - **Plan comptable paramétrable** (`/accounts`) : comptes éditables par le trésorier, plus un jeu de **comptes par défaut** seedés (Caisse, Banque, Cotisations, Sponsoring, Subventions J+S, charges…). Les comptes de trésorerie servent de contrepartie automatique dans la saisie simplifiée.
 - **Saisie de crédits** : entrées d'argent (cash, sponsoring, subventions J+S) — crédit d'un compte de produit, contrepartie débit sur un compte de trésorerie.
 - **Factures fournisseurs** (`/invoices`) : import manuel en v1 (OCR différé, champs réservés). Comptabilisation = débit d'un compte de charge / crédit du compte Créditeurs ; règlement = débit Créditeurs / crédit trésorerie.
+
+## Intégrations externes
+
+### Basketplan (Swiss Basketball / ORCA Systems)
+
+Intégration read-only avec la plateforme fédérale officielle. Brief technique : `docs/basketplan-integration.md`. Plan d'exécution : `docs/chantier-basketplan.md`.
+
+- **Mapping (PR 1, livré)** : admin et coachs lient chaque équipe court-base à **N compétitions Basketplan** (champ `team.basketplanLinks[]`) via une cascade 3 étapes (fédération → ligue → équipe). Plusieurs liens possibles par équipe (championnat + coupes, potentiellement plusieurs fédérations en parallèle). Activation/désactivation par lien sans suppression. Settings global `/config/club.basketplan = { clubId, defaultFederationId, enabled, lastSyncAt?, lastSyncError? }`.
+- **Scope autorisations** : `linkTeamToBasketplan`, `unlinkTeamBasketplan`, `toggleTeamBasketplanLink`, `syncBasketplanForTeam` ouvertes à `admin OR coach-of-team`. Settings + `testBasketplanConnection` réservés admin.
+- **Sync auto (PR 2, livré)** : cron `scheduledBasketplanSync` quotidien à 03:00 Europe/Zurich qui (a) **crée les matchs AWAY** dans `/matches` quand notre équipe joue à l'extérieur, (b) **backfill** `externalReferees`, `externalResult` (score par quart + total + flag `homologated`), `externalLastSyncedAt` sur les matchs existants matchés par `externalGameNumber`, (c) **link les matchs manuels** créés à la main par admin/coach via fuzzy match Levenshtein ≤ 2 sur l'opposant + fenêtre ±24h sur la date, (d) **passe `status: 'played'`** quand l'état Basketplan est `homologué`. Affichage enrichi dans la page web `/matches` (badge `Basketplan #<gameNumber>`, sections "Arbitres fédéraux", "Résultat officiel" avec score + tableau quarts). CTA admin "Synchroniser maintenant" disponible dans Settings → Intégrations → Basketplan pour déclencher un sync à la demande sur une équipe précise.
+- **Création HOME + Inbox admin (PR 3, à venir)** : pour les matchs HOME, le sync tentera la création automatique du booking + match si une salle/court matche le `location` Basketplan ; sinon item dans `/basketplanInbox` à valider par l'admin.
+- **Pas de publication vers Basketplan** : API publique read-only seulement.
 
 ## Venues & courts
 

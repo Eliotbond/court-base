@@ -128,7 +128,7 @@ function validateEntryBalance(lines: AccountingEntryLine[]): void {
   }
 }
 
-interface ResolvedAccount {
+export interface ResolvedAccount {
   id: string
   data: AccountData
 }
@@ -190,6 +190,123 @@ function compareAccounts(a: ResolvedAccount, b: ResolvedAccount): number {
   return a.data.number.localeCompare(b.data.number)
 }
 
+/**
+ * Logique cœur de `confirmLicense`, réutilisable depuis une autre transaction
+ * (typiquement `treasurerFinalizeLicense` qui chaîne approve + denorm membre +
+ * écriture compta dans une seule tx).
+ *
+ * Sémantique identique à `confirmLicense` :
+ *  - idempotent : si la licence est déjà `active`, no-op et retourne
+ *    `{ alreadyActive: true, accountingEntryId: null }`.
+ *  - `pending` → `active` + écriture compta + denorm membre (official/coach).
+ *  - status autre que `pending` ou `active` → `failed-precondition`.
+ *
+ * **IMPORTANT** : tous les `tx.get` doivent être faits AVANT tous les writes —
+ * la règle Firestore [READS] avant [WRITES] s'applique sur la tx complète. Si
+ * le caller a déjà fait des reads liés à la licence (ex. `validateLicenseRequest`
+ * lit la `licenseRequest` puis appelle ce helper), c'est OK tant qu'aucun write
+ * n'a été posé entre.
+ *
+ * @param tx la transaction en cours
+ * @param licenseId id `/licenses/{id}`
+ * @param callerUid uid de l'auteur (posé sur `confirmedByUid` + `createdBy`
+ *                  de l'entry comptable)
+ * @returns `{ alreadyActive, accountingEntryId }` — `accountingEntryId` est
+ *          `null` si `alreadyActive`.
+ */
+export async function confirmLicenseCore(
+  tx: FirebaseFirestore.Transaction,
+  licenseId: string,
+  callerUid: string,
+): Promise<{ alreadyActive: boolean; accountingEntryId: string | null }> {
+  const licenseRef = db().doc(`licenses/${licenseId}`)
+  const licenseSnap = await tx.get(licenseRef)
+  if (!licenseSnap.exists) {
+    throw new HttpsError('not-found', `[confirmLicenseCore] license ${licenseId} not found`)
+  }
+  const license = licenseSnap.data() as LicenseData
+
+  if (license.status === 'active') {
+    return { alreadyActive: true, accountingEntryId: null }
+  }
+  if (license.status !== 'pending') {
+    throw new HttpsError(
+      'failed-precondition',
+      `[confirmLicenseCore] cannot confirm license in status '${license.status}' — must be 'pending'`,
+    )
+  }
+
+  const memberRef = db().doc(`members/${license.memberId}`)
+  const memberSnap = await tx.get(memberRef)
+  if (!memberSnap.exists) {
+    throw new HttpsError(
+      'not-found',
+      `[confirmLicenseCore] member ${license.memberId} not found`,
+    )
+  }
+  const member = memberSnap.data() as MemberData
+
+  const accountsSnap = await tx.get(db().collection('accounts'))
+  const accounts: ResolvedAccount[] = accountsSnap.docs.map((d) => ({
+    id: d.id,
+    data: d.data() as AccountData,
+  }))
+  const expenseAccount = resolveExpenseAccount(accounts)
+  const treasuryAccount = resolveTreasuryAccount(accounts)
+
+  const now = Timestamp.now()
+
+  const amount = license.feeSnapshot
+  const lines: AccountingEntryLine[] = [
+    { accountId: expenseAccount.id, debit: amount, credit: 0 },
+    { accountId: treasuryAccount.id, debit: 0, credit: amount },
+  ]
+  validateEntryBalance(lines)
+
+  const entryRef = db().collection('accountingEntries').doc()
+  const entryData: AccountingEntryData = {
+    date: now,
+    label: `Licence ${license.licenseName} — ${member.firstName} ${member.lastName}`,
+    reference: null,
+    source: 'manual',
+    invoiceId: null,
+    lines,
+    reversed: false,
+    reversalOfEntryId: null,
+    createdBy: callerUid,
+    createdAt: now,
+  }
+  tx.set(entryRef, entryData)
+
+  tx.update(licenseRef, {
+    status: 'active',
+    confirmedAt: now,
+    confirmedByUid: callerUid,
+    accountingEntryId: entryRef.id,
+  })
+
+  if (license.role === 'official') {
+    tx.update(memberRef, {
+      officialLicense: {
+        licenseId,
+        seasonId: license.seasonId,
+        level: license.level,
+      },
+    })
+  } else if (license.role === 'coach') {
+    tx.update(memberRef, {
+      coachLicense: {
+        licenseId,
+        seasonId: license.seasonId,
+        level: license.level,
+      },
+    })
+  }
+  // `player` / `referee` → pas de denorm membre (no-op).
+
+  return { alreadyActive: false, accountingEntryId: entryRef.id }
+}
+
 export const confirmLicense = onCall(
   async (
     request: CallableRequest<ConfirmLicenseInput>,
@@ -208,112 +325,14 @@ export const confirmLicense = onCall(
     const user = userSnap.data() as UserData
     assertCanConfirmLicense(request, user)
 
-    const licenseRef = db().doc(`licenses/${licenseId}`)
-
     let alreadyActive = false
     let resolvedEntryId: string | null = null
 
     try {
       await db().runTransaction(async (tx) => {
-        // --- 1. Licence ---
-        const licenseSnap = await tx.get(licenseRef)
-        if (!licenseSnap.exists) {
-          throw new HttpsError('not-found', `[confirmLicense] license ${licenseId} not found`)
-        }
-        const license = licenseSnap.data() as LicenseData
-
-        // --- 2. Idempotence : déjà active → no-op ---
-        if (license.status === 'active') {
-          alreadyActive = true
-          return
-        }
-
-        // --- 3. Précondition de statut ---
-        if (license.status !== 'pending') {
-          throw new HttpsError(
-            'failed-precondition',
-            `[confirmLicense] cannot confirm license in status '${license.status}' — must be 'pending'`,
-          )
-        }
-
-        // --- 4. Membre ---
-        const memberRef = db().doc(`members/${license.memberId}`)
-        const memberSnap = await tx.get(memberRef)
-        if (!memberSnap.exists) {
-          throw new HttpsError(
-            'not-found',
-            `[confirmLicense] member ${license.memberId} not found`,
-          )
-        }
-        const member = memberSnap.data() as MemberData
-
-        // --- 5. Comptes comptables ---
-        // Lecture de tout le plan comptable dans la transaction (volume faible :
-        // quelques dizaines de comptes). Doit rester en amont des writes.
-        const accountsSnap = await tx.get(db().collection('accounts'))
-        const accounts: ResolvedAccount[] = accountsSnap.docs.map((d) => ({
-          id: d.id,
-          data: d.data() as AccountData,
-        }))
-        const expenseAccount = resolveExpenseAccount(accounts)
-        const treasuryAccount = resolveTreasuryAccount(accounts)
-
-        const now = Timestamp.now()
-
-        // --- 6. Écriture comptable (partie double équilibrée) ---
-        // Le club paie la fédération → charge. L'argent quitte la banque :
-        //  - débit du compte de charge "Licences fédérales" ;
-        //  - crédit du compte de trésorerie "Banque".
-        const amount = license.feeSnapshot
-        const lines: AccountingEntryLine[] = [
-          { accountId: expenseAccount.id, debit: amount, credit: 0 },
-          { accountId: treasuryAccount.id, debit: 0, credit: amount },
-        ]
-        validateEntryBalance(lines)
-
-        const entryRef = db().collection('accountingEntries').doc()
-        const entryData: AccountingEntryData = {
-          date: now,
-          label: `Licence ${license.licenseName} — ${member.firstName} ${member.lastName}`,
-          reference: null,
-          source: 'manual',
-          invoiceId: null,
-          lines,
-          reversed: false,
-          reversalOfEntryId: null,
-          createdBy: callerUid,
-          createdAt: now,
-        }
-        tx.set(entryRef, entryData)
-        resolvedEntryId = entryRef.id
-
-        // --- 7. Update licence ---
-        tx.update(licenseRef, {
-          status: 'active',
-          confirmedAt: now,
-          confirmedByUid: callerUid,
-          accountingEntryId: entryRef.id,
-        })
-
-        // --- 8. Denorm membre (official / coach uniquement) ---
-        if (license.role === 'official') {
-          tx.update(memberRef, {
-            officialLicense: {
-              licenseId,
-              seasonId: license.seasonId,
-              level: license.level,
-            },
-          })
-        } else if (license.role === 'coach') {
-          tx.update(memberRef, {
-            coachLicense: {
-              licenseId,
-              seasonId: license.seasonId,
-              level: license.level,
-            },
-          })
-        }
-        // `player` / `referee` → pas de denorm membre (no-op).
+        const result = await confirmLicenseCore(tx, licenseId, callerUid)
+        alreadyActive = result.alreadyActive
+        resolvedEntryId = result.accountingEntryId
       })
     } catch (err) {
       if (err instanceof HttpsError) throw err

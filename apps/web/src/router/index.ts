@@ -25,6 +25,14 @@ const MEMBERS_ACCESS: readonly string[] = ['admin', 'coach', 'secretary']
  * de l'ajouter ici. L'admin standard est exclu (cf. docs/compta.md §1).
  */
 const TREASURER_ONLY: readonly string[] = ['treasurer']
+/**
+ * Accès aux licences (page `/licenses` — onglets demandes + émises). Élargi
+ * au-delà de l'admin pour permettre au trésorier (validation comptable) et
+ * au secrétaire (suivi administratif) d'utiliser la vue centralisée sans
+ * passer par les fiches membres une par une. Coach exclu : il a sa propre
+ * vue dans courtbase-app (cf. `project_licenses_coach_launch`).
+ */
+const LICENSES_ACCESS: readonly string[] = ['admin', 'treasurer', 'secretary']
 
 const routes: RouteRecordRaw[] = [
   {
@@ -114,8 +122,20 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'licenses',
         name: 'licenses',
-        component: placeholder,
-        meta: { title: 'License requests', allowedRoles: ADMIN_ONLY },
+        component: () => import('@/views/Licenses.vue'),
+        meta: { title: 'Licences', allowedRoles: LICENSES_ACCESS },
+      },
+      {
+        path: 'license-requests',
+        name: 'license-requests',
+        component: () => import('@/views/licenses/LicenseRequests.vue'),
+        meta: { title: 'Demandes de licence', allowedRoles: LICENSES_ACCESS },
+      },
+      {
+        path: 'license-requests/:id',
+        name: 'license-request-detail',
+        component: () => import('@/views/licenses/LicenseRequestReview.vue'),
+        meta: { title: 'Review demande de licence', allowedRoles: LICENSES_ACCESS },
       },
       {
         path: 'exceptions',
@@ -212,6 +232,12 @@ const routes: RouteRecordRaw[] = [
             name: 'settings-dues',
             component: () => import('@/views/settings/Dues.vue'),
             meta: { title: 'Dues config', allowedRoles: ADMIN_ONLY },
+          },
+          {
+            path: 'integrations/basketplan',
+            name: 'settings-integrations-basketplan',
+            component: () => import('@/views/settings/IntegrationsBasketplan.vue'),
+            meta: { title: 'Basketplan', allowedRoles: ADMIN_ONLY },
           },
         ],
       },

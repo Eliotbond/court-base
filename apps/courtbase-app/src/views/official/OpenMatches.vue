@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertTriangle,
@@ -13,93 +13,187 @@ import CbMatchCard from '@/components/ui/CbMatchCard.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
 import CbSkel from '@/components/ui/CbSkel.vue'
+import { useActiveSeason } from '@/composables/useSeason'
 import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
-import {
-  countUnread,
-  getMember,
-  listAssignmentsForMatch,
-  listOpenMatches,
-  logMockAction,
-  type MockMatch,
-} from '@/repositories/mock'
 import { useAuthStore } from '@/stores/auth'
+import { useBookingsStore } from '@/stores/bookings'
+import { useOfficialsStore, type OpportunityEntry } from '@/stores/officials'
+import { useTeamsStore } from '@/stores/teams'
+import type { MockTeam } from '@/types/mock'
+import type { Match, MatchType, Timestamp } from '@club-app/shared-types'
+import { Timestamp as FsTimestamp } from 'firebase/firestore'
 
 /**
  * O1 — Matchs à pourvoir (officiel).
  *
- * Transcription quasi-littérale du JSX `O1Mobile` (cf.
- * `screens/official.jsx` lignes 3-37). Mobile = `CbMobileShell`. Desktop
- * (≥1024px) reprend le pattern `CbDesktopShell` + `CbPageHead` + grille
- * auto-fill 300px de `CbMatchCard`.
+ * Wiring Firestore réel via `useOfficialsStore` + `useBookingsStore` (cf.
+ * `apps/courtbase-app/CLAUDE.md` § hybride mock+réel). La structure visuelle
+ * (cards / banner / chips / shells) reste la transcription littérale du JSX
+ * `O1Mobile` — seuls les bindings data ont été branchés.
  *
- * 3 variants côté JSX (toggle dev via const ci-dessous) :
- * - `MOCK_NO_LICENSE` : bannière amber "Pas de licence officiel active"
- * - `MOCK_EMPTY` : empty state
- * - `MOCK_LOADING` : skeleton
+ * Filtre par défaut = opportunités ouvertes (HOME où il manque un slot du
+ * niveau du caller OU AWAY non staffé OU HOME sans salle) via
+ * `openOpportunitiesForLevel(level)`. Toggle "Tous" via la chip `all` :
+ * inclut tous les matchs FUTURS, même complets.
  */
-const MOCK_NO_LICENSE = false
-const MOCK_EMPTY = false
-const MOCK_LOADING = false
 
 const router = useRouter()
 const auth = useAuthStore()
+const bookingsStore = useBookingsStore()
+const officialsStore = useOfficialsStore()
+const teamsStore = useTeamsStore()
+const seasonStore = useActiveSeason()
 const { isDesktop } = useViewport()
-const { officialTabs, officialNav } = useShellNav()
+const { tabs, nav, primaryRoleLabel } = useShellNav()
+
+// ─── Mount : hydrate bookings + officials context ─────────────
+const localLoading = ref(true)
+
+onMounted(async () => {
+  try {
+    await bookingsStore.loadActiveContext()
+    // `useActiveSeason().load()` est cached + déduplique via `inFlight`.
+    const resolvedSeasonId = (await seasonStore.load()) ?? 'mock-season'
+    await officialsStore.loadOfficialContext(resolvedSeasonId)
+  } catch (err) {
+    // Erreurs déjà loggées + stockées côté stores ; ne pas propager.
+    console.error('[OpenMatches] mount failed', err)
+  } finally {
+    localLoading.value = false
+  }
+})
 
 // ─── Licence officiel (gate auto-inscription) ────────────────
-const showNoLicenseBanner = computed(
-  () => MOCK_NO_LICENSE || !auth.hasActiveOfficialLicense,
-)
+const showNoLicenseBanner = computed(() => !auth.hasActiveOfficialLicense)
 
 // ─── Filtres chips ────────────────────────────────────────────
-type FilterKind = 'all' | 'home' | 'away' | 'week'
+// 4 modes : Tous (= toutes opportunités OPEN, défaut), Domicile (HOME OPEN),
+// Extérieur (AWAY OPEN), "Tous matchs" inclut aussi les complets futurs.
+type FilterKind = 'all' | 'home' | 'away' | 'allMatches'
 const filters: ReadonlyArray<{ id: FilterKind; label: string }> = [
-  { id: 'all', label: 'Tous' },
+  { id: 'all', label: 'Ouverts' },
   { id: 'home', label: 'Domicile' },
   { id: 'away', label: 'Extérieur' },
-  { id: 'week', label: 'Cette semaine' },
+  { id: 'allMatches', label: 'Tous' },
 ]
 const activeFilter = ref<FilterKind>('all')
 
 function setFilter(id: FilterKind): void {
   if (activeFilter.value === id) return
   activeFilter.value = id
-  logMockAction('open-matches.filter-changed', { filter: id })
 }
 
-// ─── Liste filtrée ───────────────────────────────────────────
-function isWithinNextSevenDays(isoDate: string): boolean {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const horizon = new Date(today)
-  horizon.setDate(horizon.getDate() + 7)
-  const parts = isoDate.split('-')
-  const y = Number(parts[0] ?? '1970')
-  const m = Number(parts[1] ?? '1')
-  const d = Number(parts[2] ?? '1')
-  const target = new Date(y, m - 1, d)
-  return target >= today && target <= horizon
+// ─── Liste affichée ───────────────────────────────────────────
+
+/** Helpers pour normaliser un Timestamp → epoch ms. */
+function tsToMs(ts: Timestamp | null | undefined): number {
+  if (!ts) return 0
+  const t = ts as { seconds?: number; toMillis?: () => number }
+  if (typeof t.toMillis === 'function') return t.toMillis()
+  if (typeof t.seconds === 'number') return t.seconds * 1000
+  return 0
 }
 
-const openMatches = computed<ReadonlyArray<MockMatch>>(() => {
-  if (MOCK_EMPTY) return []
-  const base = listOpenMatches(auth.officialLevel)
-  return [...base]
-    .filter((m) => {
-      switch (activeFilter.value) {
-        case 'home':
-          return m.kind === 'home'
-        case 'away':
-          return m.kind === 'away'
-        case 'week':
-          return isWithinNextSevenDays(m.date)
-        default:
-          return true
-      }
-    })
-    .sort((a, b) => a.date.localeCompare(b.date))
+const officialLevel = computed<number>(() => auth.officialLevel ?? 1)
+
+/** Opportunités ouvertes pour le niveau du caller (filtre par défaut). */
+const openOpportunities = computed<ReadonlyArray<OpportunityEntry>>(() => {
+  return officialsStore.openOpportunitiesForLevel(officialLevel.value)
 })
+
+/**
+ * Liste "Tous matchs futurs" — inclut les matchs déjà complets et ceux sans
+ * slot pour le niveau du caller. Agrégation directe (HOME via bookings store +
+ * AWAY via officials store) pour rester sur le même type `OpportunityEntry`
+ * que la liste par défaut, avec `openSlots: 0` pour les complets.
+ */
+const allFutureMatches = computed<ReadonlyArray<OpportunityEntry>>(() => {
+  const now = Date.now()
+  const teamById = new Map<string, MockTeam>()
+  for (const t of teamsStore.teams) teamById.set(t.id, t)
+
+  const out: OpportunityEntry[] = []
+
+  // HOME : tous les bookings `match_home` futurs.
+  for (const booking of bookingsStore.allBookings) {
+    if (booking.slotType !== 'match_home') continue
+    if (booking.startMs < now) continue
+    const mt: MatchType | null = booking.matchTypeId
+      ? (officialsStore.matchTypesById.get(booking.matchTypeId) ?? null)
+      : null
+    const requirements = mt?.homeOfficialRequirements ?? []
+    const req = requirements.find((r) => r.level === officialLevel.value)
+    const assigns = officialsStore.homeAssignmentsByBookingId.get(booking.id) ?? []
+    const takenAtLevel = assigns.filter(
+      (a) => a.officialLevel === officialLevel.value && a.status !== 'declined',
+    ).length
+    const openSlots = req ? Math.max(0, req.count - takenAtLevel) : 0
+    const location =
+      booking.venueName && booking.courtName
+        ? `${booking.venueName} · ${booking.courtName}`
+        : 'Salle non attribuée'
+    out.push({
+      kind: 'home',
+      parentId: booking.id,
+      matchType: mt,
+      team: booking.teamId ? (teamById.get(booking.teamId) ?? null) : null,
+      date: FsTimestamp.fromMillis(booking.startMs),
+      startTime: booking.startTime,
+      endTime: booking.endTime,
+      opponentName: booking.opponentName,
+      location,
+      openSlots,
+    })
+  }
+
+  // AWAY : tous les matchs `kind === 'away'` futurs.
+  for (const match of officialsStore.awayMatches as ReadonlyArray<Match>) {
+    if (tsToMs(match.date) < now) continue
+    const mt: MatchType | null =
+      officialsStore.matchTypesById.get(match.matchTypeId) ?? null
+    const required = mt?.awayOfficialCount ?? 0
+    const assigns = officialsStore.awayAssignmentsByMatchId.get(match.id) ?? []
+    const taken = assigns.filter((a) => a.status !== 'declined').length
+    const openSlots = Math.max(0, required - taken)
+    out.push({
+      kind: 'away',
+      parentId: match.id,
+      matchType: mt,
+      team: teamById.get(match.teamId) ?? null,
+      date: match.date,
+      startTime: match.startTime,
+      endTime: match.endTime,
+      opponentName: match.opponentName,
+      location: match.awayAddress,
+      openSlots,
+    })
+  }
+
+  out.sort((a, b) => tsToMs(a.date) - tsToMs(b.date))
+  return out
+})
+
+/** Liste finale après application du filtre actif. */
+const displayedList = computed<ReadonlyArray<OpportunityEntry>>(() => {
+  const base =
+    activeFilter.value === 'allMatches' ? allFutureMatches.value : openOpportunities.value
+  if (activeFilter.value === 'home') {
+    return base.filter((o) => o.kind === 'home')
+  }
+  if (activeFilter.value === 'away') {
+    return base.filter((o) => o.kind === 'away')
+  }
+  return base
+})
+
+// ─── Loading / empty flags ────────────────────────────────────
+const isLoading = computed(
+  () =>
+    localLoading.value ||
+    officialsStore.loading ||
+    bookingsStore.loading,
+)
 
 // ─── Formatage date FR ───────────────────────────────────────
 const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
@@ -108,50 +202,75 @@ const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
   month: 'short',
 })
 
-function formatDate(isoDate: string): string {
-  const parts = isoDate.split('-')
-  const y = Number(parts[0] ?? '1970')
-  const m = Number(parts[1] ?? '1')
-  const d = Number(parts[2] ?? '1')
-  const raw = dateFormatter.format(new Date(y, m - 1, d))
+function formatDate(ts: Timestamp): string {
+  const ms = tsToMs(ts)
+  if (!ms) return ''
+  const raw = dateFormatter.format(new Date(ms))
   return raw.charAt(0).toUpperCase() + raw.slice(1)
 }
 
-// ─── Officiels déjà inscrits (initiales 2 lettres, max 4) ────
-function initialsForMember(memberId: string): string {
-  const member = getMember(memberId)
-  if (!member) {
-    return (
-      memberId
-        .replace(/^m-/, '')
-        .split('-')
-        .map((p) => p.charAt(0).toUpperCase())
-        .join('')
-        .slice(0, 2) || '??'
-    )
-  }
-  const first = member.firstName.charAt(0).toUpperCase()
-  const last = member.lastName.charAt(0).toUpperCase()
-  return `${first}${last}`
+// ─── Helpers card binding ────────────────────────────────────
+
+function opponentLabel(entry: OpportunityEntry): string {
+  return entry.opponentName ?? 'Adversaire à confirmer'
 }
 
-function officialsForMatch(matchId: string): string[] {
-  return listAssignmentsForMatch(matchId)
+function venueLabel(entry: OpportunityEntry): string {
+  return entry.location ?? (entry.kind === 'away' ? 'Adresse à confirmer' : 'Salle non attribuée')
+}
+
+function matchTypeLabel(entry: OpportunityEntry): string {
+  return entry.matchType?.name ?? '—'
+}
+
+/** Initiales (2 lettres) des officiels déjà inscrits — max 4 affichés. */
+function initialsFromMemberId(memberId: string): string {
+  return (
+    memberId
+      .replace(/^m-/, '')
+      .split('-')
+      .map((p) => p.charAt(0).toUpperCase())
+      .join('')
+      .slice(0, 2) || '??'
+  )
+}
+
+function officialsForEntry(entry: OpportunityEntry): string[] {
+  const assigns =
+    entry.kind === 'home'
+      ? officialsStore.homeAssignmentsByBookingId.get(entry.parentId)
+      : officialsStore.awayAssignmentsByMatchId.get(entry.parentId)
+  if (!assigns) return []
+  return assigns
+    .filter((a) => a.status !== 'declined')
     .slice(0, 4)
-    .map((a) => initialsForMember(a.memberId))
+    .map((a) => initialsFromMemberId(a.memberId))
 }
 
-function filledAtLevel(match: MockMatch): number {
-  return listAssignmentsForMatch(match.id).length
+/** Staffing pour la pill — total + filled selon HOME (level uniquement) ou AWAY. */
+function staffingForEntry(
+  entry: OpportunityEntry,
+): { filled: number; total: number; complete: boolean } {
+  if (entry.kind === 'home') {
+    const req = entry.matchType?.homeOfficialRequirements?.find(
+      (r) => r.level === officialLevel.value,
+    )
+    const total = req?.count ?? 0
+    const filled = total - entry.openSlots
+    return { filled: Math.max(0, filled), total, complete: entry.openSlots === 0 && total > 0 }
+  }
+  const total = entry.matchType?.awayOfficialCount ?? 0
+  const filled = total - entry.openSlots
+  return { filled: Math.max(0, filled), total, complete: entry.openSlots === 0 && total > 0 }
 }
 
 // ─── Navigation ──────────────────────────────────────────────
-function openMatchDetail(matchId: string): void {
-  router.push({ name: 'match-detail', params: { id: matchId } })
+function openMatchDetail(parentId: string): void {
+  router.push({ name: 'match-detail', params: { id: parentId } })
 }
 
 // ─── Shells ──────────────────────────────────────────────────
-const notifBadgeCount = computed(() => countUnread())
+const notifBadgeCount = computed(() => 0) // notifs non encore branchées (Phase 5)
 
 function onTabSelect(index: number): void {
   if (index === 0) return // on est déjà ici
@@ -175,18 +294,17 @@ function onNotifClick(): void {
   <!-- Desktop shell (≥1024px) ────────────────────────────────── -->
   <CbDesktopShell
     v-if="isDesktop"
-    :items="officialNav"
-    :active="1"
+    :items="nav"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
     :user-name="auth.displayName"
-    user-role="Officiel"
+    :user-role="primaryRoleLabel"
     @nav-select="onNavSelect"
   >
     <CbPageHead
       title="Matchs à pourvoir"
-      :subtitle="`${openMatches.length} match${openMatches.length > 1 ? 's' : ''} disponible${openMatches.length > 1 ? 's' : ''} à votre niveau`"
+      :subtitle="`${displayedList.length} match${displayedList.length > 1 ? 's' : ''} disponible${displayedList.length > 1 ? 's' : ''} à votre niveau`"
     />
 
     <CbBanner v-if="showNoLicenseBanner" tone="amber" title="Pas de licence officiel active">
@@ -207,26 +325,32 @@ function onNotifClick(): void {
       </button>
     </div>
 
-    <div class="om-desktop-grid">
+    <div v-if="isLoading" class="om-desktop-grid">
+      <CbSkel :h="140" />
+      <CbSkel :h="140" />
+      <CbSkel :h="140" />
+    </div>
+
+    <div v-else class="om-desktop-grid">
       <CbEmptyState
-        v-if="!MOCK_LOADING && openMatches.length === 0"
+        v-if="displayedList.length === 0"
         :icon="BellRing"
         title="Aucun match à pourvoir"
         body="Les prochains matchs apparaîtront ici dès que le club les publiera."
       />
       <CbMatchCard
-        v-for="m in openMatches"
-        :key="m.id"
-        :date="formatDate(m.date)"
-        :time="m.startTime"
-        :type="m.matchType"
-        :opponent="m.opponent"
-        :venue="m.venueLabel"
-        :away="m.kind === 'away'"
-        :staffing="{ filled: filledAtLevel(m), total: m.requiredOfficialsTotal }"
-        :officials="officialsForMatch(m.id)"
+        v-for="entry in displayedList"
+        :key="`${entry.kind}-${entry.parentId}`"
+        :date="formatDate(entry.date)"
+        :time="entry.startTime"
+        :type="matchTypeLabel(entry)"
+        :opponent="opponentLabel(entry)"
+        :venue="venueLabel(entry)"
+        :away="entry.kind === 'away'"
+        :staffing="staffingForEntry(entry)"
+        :officials="officialsForEntry(entry)"
         style="cursor: pointer"
-        @click="openMatchDetail(m.id)"
+        @click="openMatchDetail(entry.parentId)"
       />
     </div>
   </CbDesktopShell>
@@ -237,8 +361,7 @@ function onNotifClick(): void {
     title="Matchs à pourvoir"
     club="BCA"
     :notif-badge="notifBadgeCount > 0"
-    :tabs="officialTabs"
-    :active-tab="0"
+    :tabs="tabs"
     @notif-click="onNotifClick"
     @tab-select="onTabSelect"
   >
@@ -262,7 +385,7 @@ function onNotifClick(): void {
       </div>
 
       <div
-        v-if="MOCK_LOADING"
+        v-if="isLoading"
         style="padding: 12px 16px; display: flex; flex-direction: column; gap: 10px"
       >
         <CbSkel :h="120" />
@@ -271,29 +394,29 @@ function onNotifClick(): void {
       </div>
 
       <CbEmptyState
-        v-if="!MOCK_LOADING && openMatches.length === 0"
+        v-if="!isLoading && displayedList.length === 0"
         :icon="BellRing"
         title="Aucun match à pourvoir"
         body="Les prochains matchs apparaîtront ici dès que le club les publiera."
       />
 
       <div
-        v-if="!MOCK_LOADING && openMatches.length > 0"
+        v-if="!isLoading && displayedList.length > 0"
         style="padding: 12px 16px; display: flex; flex-direction: column; gap: 12px"
       >
         <CbMatchCard
-          v-for="m in openMatches"
-          :key="m.id"
-          :date="formatDate(m.date)"
-          :time="m.startTime"
-          :type="m.matchType"
-          :opponent="m.opponent"
-          :venue="m.venueLabel"
-          :away="m.kind === 'away'"
-          :staffing="{ filled: filledAtLevel(m), total: m.requiredOfficialsTotal }"
-          :officials="officialsForMatch(m.id)"
+          v-for="entry in displayedList"
+          :key="`${entry.kind}-${entry.parentId}`"
+          :date="formatDate(entry.date)"
+          :time="entry.startTime"
+          :type="matchTypeLabel(entry)"
+          :opponent="opponentLabel(entry)"
+          :venue="venueLabel(entry)"
+          :away="entry.kind === 'away'"
+          :staffing="staffingForEntry(entry)"
+          :officials="officialsForEntry(entry)"
           style="cursor: pointer"
-          @click="openMatchDetail(m.id)"
+          @click="openMatchDetail(entry.parentId)"
         />
       </div>
     </div>

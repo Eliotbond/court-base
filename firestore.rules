@@ -54,8 +54,15 @@ service cloud.firestore {
     // (UID listé dans /members/{memberId}.guardianUserIds).
     // Étend la lecture du doc parent + de /private/contact aux tuteurs.
     function isGuardianOf(memberId) {
+      // `.data.get('guardianUserIds', [])` plutôt que `.data.guardianUserIds`
+      // pour rester safe face aux members legacy qui n'ont jamais eu ce champ
+      // posé : un access `.foo` sur un champ absent throw côté Firestore Rules
+      // engine, et ce throw refuse la LIST query ENTIÈRE (pas juste le doc
+      // évalué). Incident vécu 2026-05-23 sur /dues : un seul member sans
+      // `guardianUserIds` rendait `where registeredByUid == uid` impossible
+      // pour tous les utilisateurs.
       return isSignedIn() && request.auth.uid in
-        get(/databases/$(database)/documents/members/$(memberId)).data.guardianUserIds;
+        get(/databases/$(database)/documents/members/$(memberId)).data.get('guardianUserIds', []);
     }
     // Le membre lié au caller a une licence d'officiel ACTIVE confirmée
     // (`member.officialLicense != null`). Sert à gater l'auto-inscription
@@ -347,12 +354,16 @@ service cloud.firestore {
            request.resource.data.status == 'pending' &&
            request.resource.data.memberId == userDoc().memberId);
         allow update: if isRootAdmin() || isAdmin() ||
-          // L'official peut update status + respondedAt sur SA propre assignation.
+          // L'official peut update status + respondedAt sur SA propre assignation
+          // (réponse pending → confirmed/declined), et poser/clear
+          // `replacementRequestedAt` + `replacementRequestedByUid` pour signaler
+          // une demande de remplacement (tab Officiels — métrique tracking).
           // Bloqué pour un membre inactif.
           (!callerSuspended() &&
            resource.data.memberId == userDoc().memberId &&
            request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status', 'respondedAt']));
+             .hasOnly(['status', 'respondedAt',
+                       'replacementRequestedAt', 'replacementRequestedByUid']));
         allow delete: if isRootAdmin() || isAdmin();
       }
 
@@ -395,12 +406,15 @@ service cloud.firestore {
            request.resource.data.status == 'pending' &&
            request.resource.data.memberId == userDoc().memberId);
         allow update: if isRootAdmin() || isAdmin() ||
-          // L'official update status + respondedAt sur SA propre assignation.
-          // Bloqué pour un membre inactif.
+          // L'official update status + respondedAt sur SA propre assignation,
+          // et peut poser/clear `replacementRequestedAt` +
+          // `replacementRequestedByUid` (métrique tab Officiels). Bloqué pour
+          // un membre inactif.
           (!callerSuspended() &&
            resource.data.memberId == userDoc().memberId &&
            request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status', 'respondedAt']));
+             .hasOnly(['status', 'respondedAt',
+                       'replacementRequestedAt', 'replacementRequestedByUid']));
         allow delete: if isRootAdmin() || isAdmin();
       }
     }
@@ -476,7 +490,7 @@ service cloud.firestore {
         // directement le linkedUserId.
         (isSignedIn() &&
          get(/databases/$(database)/documents/members/$(resource.data.memberId))
-           .data.linkedUserId == request.auth.uid) ||
+           .data.get('linkedUserId', null) == request.auth.uid) ||
         // Compte ayant soumis l'inscription à l'origine de la cotisation.
         // Check direct sur le doc — aucun get() supplémentaire.
         (isSignedIn() &&
@@ -526,14 +540,175 @@ service cloud.firestore {
     // ========================================================================
     // /licenseRequests
     // ========================================================================
+    // Update parent (linked member ou guardian) : autorisé UNIQUEMENT pour
+    // compléter le dossier — champs scopés (`uploadedDocs`,
+    // `foreignPlayerContext`, `parentSubmittedAvs`, `parentCompletedAt`,
+    // `status`) et transition de status verrouillée à
+    // `pending_parent_docs → parent_docs_submitted` (ou conservation du status
+    // courant pendant le remplissage incrémental). Le re-upload d'un doc
+    // (sous-clé `uploadedDocs.<kind>`) entraîne automatiquement le reset des
+    // sous-champs `coachReview` / `treasurerReview` à `null` côté client —
+    // ces écritures restent couvertes par la whitelist `uploadedDocs`.
+    //
+    // Le coach review (PR2 : `parent_docs_submitted → coach_validated`) et la
+    // décision trésorier (PR3 : `coach_validated → approved|rejected`) passent
+    // désormais par 3 callables Admin SDK (livrées 2026-05-24) :
+    //   - `coachReviewLicenseDoc({requestId, kind, decision, refusalReason?})`
+    //     → coach scope (teamId ∈ user.teamIds) ;
+    //   - `treasurerReviewLicenseDoc({requestId, kind, decision, refusalReason?})`
+    //     → admin/treasurer/secretary/rootAdmin ;
+    //   - `validateLicenseRequest({requestId, decision: 'approve'|'reject', comment?})`
+    //     → admin/treasurer/secretary/rootAdmin, crée `/licenses` (pending) sur approve.
+    //
+    // Ces callables bypassent les rules (Admin SDK) et re-vérifient le scope
+    // côté serveur — la rule parent ici ne laisse JAMAIS écrire `approved` /
+    // `rejected` / `coach_validated`.
     match /licenseRequests/{id} {
+      // Lecture parent (linked member ou guardian) : on s'appuie sur l'ANCRE
+      // STATIQUE `parentUserIds` plutôt que sur `isGuardianOf(memberId)` /
+      // `isLinkedMember(memberId)`. Raison : `isGuardianOf` fait un `get()`
+      // dynamique cross-doc qui peut faire refuser une LIST query côté
+      // Firestore (cf. mémoire `firestore-list-query-dynamic-rule` + cas vécu
+      // sur `/dues` 2026-05-23). Le coach pose `parentUserIds` à la création
+      // (= `member.linkedUserId` ∪ `member.guardianUserIds`).
+      //
+      // `isLinkedMember(memberId)` est conservé (statique : utilise `userDoc()`
+      // qui est un get self) pour rétro-compat sur les docs sans
+      // `parentUserIds`, mais le chemin LIST passe désormais par la clause
+      // `array-contains` côté query (`where parentUserIds array-contains uid`).
       allow read: if isRootAdmin() || isAdmin()
         || (isCoach() && resource.data.teamId in userDoc().teamIds)
+        || (isSignedIn()
+            && request.auth.uid in resource.data.get('parentUserIds', []))
         || isLinkedMember(resource.data.memberId)
         || isGuardianOf(resource.data.memberId);
       allow create: if isRootAdmin() || isAdmin() ||
         (isCoach() && request.resource.data.teamId in userDoc().teamIds);
-      allow update, delete: if isRootAdmin() || isAdmin();
+      allow update: if isRootAdmin() || isAdmin()
+        // Parent self-update — linked member, guardian, OU UID ancré dans
+        // `parentUserIds` (snapshot coach). Champs scopés, status verrouillé
+        // sur la transition légitime parent.
+        || (
+          (
+            (isSignedIn()
+              && request.auth.uid in resource.data.get('parentUserIds', []))
+            || isLinkedMember(resource.data.memberId)
+            || isGuardianOf(resource.data.memberId)
+          )
+          && resource.data.status == 'pending_parent_docs'
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['uploadedDocs', 'foreignPlayerContext',
+                         'parentSubmittedAvs', 'parentCompletedAt', 'status'])
+          && request.resource.data.status in
+               ['pending_parent_docs', 'parent_docs_submitted']
+        )
+        // ===================================================================
+        // Phase trésorier — transitions client-direct
+        // ===================================================================
+        // Treasurer phase = `rootAdmin` (claim) OU rôle `admin | treasurer |
+        // secretary` côté /users. Aligné sur l'accès à la page
+        // `/license-requests` (admin/treasurer/secretary + rootAdmin bypass)
+        // et sur les callables `treasurerReviewLicenseDoc` /
+        // `validateLicenseRequest` / `confirmLicense`. Toutes les
+        // affectedKeys utilisent `hasOnly` pour bloquer toute écriture
+        // hors scope. La transition de `status` est elle-même whitelistée
+        // pour éviter qu'un caller saute des étapes.
+        //
+        // Note : la création de la `/licenses/{id}` à `sent_paid` et la
+        // confirmation finale (`approved`) avec dénorm membre + écriture
+        // comptable passent par des **callables Admin SDK** qui bypassent
+        // ces rules (`treasurerMarkSentAndPaid`, `treasurerFinalizeLicense`).
+        // Les rules ci-dessous sont des filets de sécurité pour un éventuel
+        // write client direct.
+        //
+        // Pourquoi `.data.get('signableDocStoragePath', null)` partout : les
+        // demandes legacy en `coach_validated` n'ont pas ces champs ; un
+        // accès direct `.data.field` throw côté Rules engine et refuse la
+        // LIST query en bloc (cf. mémoire `firestore-rules-safe-field-access`).
+        // L'accès safe ici est défensif, même si en pratique on lit dans
+        // `request.resource.data` (toujours non-null car affectedKeys whitelist).
+        || (
+          (isRootAdmin() || isAdmin() || isTreasurer() || isSecretary())
+          && (
+            // coach_validated → awaiting_parent_signature
+            (
+              resource.data.status == 'coach_validated'
+              && request.resource.data.status == 'awaiting_parent_signature'
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['status',
+                             'signableDocStoragePath',
+                             'signableDocUploadedAt',
+                             'signableDocUploadedByUid'])
+            )
+            // parent_signed → form_confirmed
+            || (
+              resource.data.status == 'parent_signed'
+              && request.resource.data.status == 'form_confirmed'
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['status',
+                             'formConfirmedAt',
+                             'formConfirmedByUid',
+                             'treasurerNotes'])
+            )
+            // form_confirmed → sent_paid (canal callable normalement —
+            // filet de sécurité ici, sans création /licenses côté client).
+            || (
+              resource.data.status == 'form_confirmed'
+              && request.resource.data.status == 'sent_paid'
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['status',
+                             'sentToFederationAt',
+                             'paidAt',
+                             'paymentProofStoragePath',
+                             'paymentProofUploadedAt',
+                             'linkedLicenseId',
+                             'treasurerNotes'])
+            )
+            // Re-upload paymentProof à status sent_paid (workflow asynchrone)
+            || (
+              resource.data.status == 'sent_paid'
+              && request.resource.data.status == 'sent_paid'
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['paymentProofStoragePath',
+                             'paymentProofUploadedAt'])
+            )
+            // sent_paid → approved (canal callable normalement — filet
+            // de sécurité ici, sans confirmation /licenses côté client).
+            || (
+              resource.data.status == 'sent_paid'
+              && request.resource.data.status == 'approved'
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['status',
+                             'licenseNumber',
+                             'licenseFinalizedAt',
+                             'licenseFinalizedByUid',
+                             'treasurerNotes'])
+            )
+          )
+        )
+        // ===================================================================
+        // Parent re-upload signed doc — awaiting_parent_signature → parent_signed
+        // ===================================================================
+        // Le parent re-uploade le doc signé. Transition côté parent (pas
+        // de callable — l'UI register est différée hors PR3, mais la rule
+        // est posée pour que la fonctionnalité soit débloquable sans
+        // re-deploy quand l'UI atterrira).
+        || (
+          (
+            (isSignedIn()
+              && request.auth.uid in resource.data.get('parentUserIds', []))
+            || isLinkedMember(resource.data.memberId)
+            || isGuardianOf(resource.data.memberId)
+          )
+          && resource.data.status == 'awaiting_parent_signature'
+          && request.resource.data.status == 'parent_signed'
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status',
+                         'signedDocStoragePath',
+                         'signedDocUploadedAt',
+                         'signedDocUploadedByUid'])
+        );
+      allow delete: if isRootAdmin() || isAdmin();
     }
 
     // ========================================================================

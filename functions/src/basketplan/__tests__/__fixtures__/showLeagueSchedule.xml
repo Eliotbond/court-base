@@ -1,0 +1,632 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<basketplan version="2.0" remarks="Data Securtiy changes. If you lack some data please contact contact@orcasys.ch">
+<gameForm>
+  <GameForm/>
+</gameForm>
+<gameList>
+  <Array>
+    <game considerOnRanking="true" date="2025-10-01" dateTime="2025-10-01 21:00" final="true" gameNumber="25-08231" guestTeamLabel="F.Olympic - Sarine 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Villars Basket 2LM" homeTeamWinner="false" id="353192" referee1Id="74428" referee1Name="Caillet Sacha Léo Kaimana" referee2Id="122501" referee2Name="Cordier Simon Ernest Raymond" runde="1" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic F.Olympic - Sarine 2LM" mobile="076 424 28 21 " name="F.Olympic - Sarine 2LM" nameWithClub="F.Olympic F.Olympic - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Villars-sur-Glâne" id="314" label="Villars-sur-Glâne / CS Platy 3" line1="rue du Centre sportif 1" name="CS Platy 3" shortName="CS Platy 3" zip="1752"/>
+      <result guestTeamPoints="2" guestTeamScore="73" guestTeamScoreLeg1="18" guestTeamScoreLeg2="20" guestTeamScoreLeg3="17" guestTeamScoreLeg4="18" homeTeamPoints="1" homeTeamScore="43" homeTeamScoreLeg1="8" homeTeamScoreLeg2="15" homeTeamScoreLeg3="10" homeTeamScoreLeg4="10"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-10-02" dateTime="2025-10-02 20:30" final="true" gameNumber="25-08238" guestTeamLabel="Bulle Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Isotop 2LM" homeTeamWinner="false" id="353199" referee1Id="4335" referee1Name="Schaub Martin" referee2Id="34483" referee2Name="Dick Pierre-Yves" runde="1" time="20:30" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location city="Fribourg" id="292" label="Fribourg / Vignettaz" line1="rte de la Gruyère 9" name="Vignettaz" shortName="Vignettaz" zip="1700"/>
+      <result guestTeamPoints="2" guestTeamScore="84" guestTeamScoreLeg1="22" guestTeamScoreLeg2="21" guestTeamScoreLeg3="18" guestTeamScoreLeg4="23" homeTeamPoints="1" homeTeamScore="78" homeTeamScoreLeg1="17" homeTeamScoreLeg2="33" homeTeamScoreLeg3="16" homeTeamScoreLeg4="12"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-10-09" dateTime="2025-10-09 20:00" final="true" gameNumber="25-08235" guestTeamLabel="F.Olympic - Sarine 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Isotop 2LM" homeTeamWinner="false" id="353196" referee1Id="66964" referee1Name="Kutnar Valentin" referee2Id="65503" referee2Name="Maradan Martin" runde="1" time="20:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic F.Olympic - Sarine 2LM" mobile="076 424 28 21 " name="F.Olympic - Sarine 2LM" nameWithClub="F.Olympic F.Olympic - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location city="Fribourg" id="292" label="Fribourg / Vignettaz" line1="rte de la Gruyère 9" name="Vignettaz" shortName="Vignettaz" zip="1700"/>
+      <result guestTeamPoints="2" guestTeamScore="61" guestTeamScoreLeg1="14" guestTeamScoreLeg2="15" guestTeamScoreLeg3="18" guestTeamScoreLeg4="14" homeTeamPoints="1" homeTeamScore="52" homeTeamScoreLeg1="19" homeTeamScoreLeg2="10" homeTeamScoreLeg3="11" homeTeamScoreLeg4="12"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-10-09" dateTime="2025-10-09 20:45" final="true" gameNumber="25-08230" guestTeamLabel="Marly Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Bulle Basket 2LM" homeTeamWinner="false" id="353191" referee1Id="25300" referee1Name="Emery Alexandre" referee2Id="73883" referee2Name="Demierre Nicolas" runde="1" time="20:45" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Bulle" id="275" label="Bulle / Condémine" line1="Chemin de Bouleyres 11" name="Condémine" shortName="Condémine" zip="1630"/>
+      <result guestTeamPoints="1" guestTeamScore="42" guestTeamScoreLeg1="10" guestTeamScoreLeg2="8" guestTeamScoreLeg3="13" guestTeamScoreLeg4="11" homeTeamPoints="2" homeTeamScore="85" homeTeamScoreLeg1="13" homeTeamScoreLeg2="18" homeTeamScoreLeg3="32" homeTeamScoreLeg4="22"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-10-29" dateTime="2025-10-29 21:00" final="true" gameNumber="25-08236" guestTeamLabel="Isotop 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Villars Basket 2LM" homeTeamWinner="false" id="353197" referee1Id="59051" referee1Name="Theytaz Chloé" referee2Id="55320" referee2Name="Minder Gilles Benoit" runde="1" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Villars-sur-Glâne" id="314" label="Villars-sur-Glâne / CS Platy 3" line1="rue du Centre sportif 1" name="CS Platy 3" shortName="CS Platy 3" zip="1752"/>
+      <result guestTeamPoints="2" guestTeamScore="54" guestTeamScoreLeg1="20" guestTeamScoreLeg2="13" guestTeamScoreLeg3="8" guestTeamScoreLeg4="13" homeTeamPoints="1" homeTeamScore="52" homeTeamScoreLeg1="16" homeTeamScoreLeg2="15" homeTeamScoreLeg3="8" homeTeamScoreLeg4="13"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-10-31" dateTime="2025-10-31 20:00" final="true" gameNumber="25-08233" guestTeamLabel="Isotop 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Marly Basket 2LM" homeTeamWinner="false" id="353194" referee1Id="25300" referee1Name="Emery Alexandre" referee2Id="122501" referee2Name="Cordier Simon Ernest Raymond" runde="1" time="20:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Marly" id="712" label="Marly / Grand-Pré 3" line1="Rte des Ecoles 18 " name="Grand-Pré 3" shortName="Grand-Pré 3" zip="1723"/>
+      <result guestTeamPoints="2" guestTeamScore="89" guestTeamScoreLeg1="26" guestTeamScoreLeg2="19" guestTeamScoreLeg3="15" guestTeamScoreLeg4="29" homeTeamPoints="1" homeTeamScore="65" homeTeamScoreLeg1="24" homeTeamScoreLeg2="17" homeTeamScoreLeg3="17" homeTeamScoreLeg4="7"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-11-06" dateTime="2025-11-06 21:00" final="true" gameNumber="25-08232" guestTeamLabel="Bulle Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="F.Olympic - Sarine 2LM" homeTeamWinner="false" id="353193" referee1Id="52438" referee1Name="Nenadic Filip" referee2Id="34483" referee2Name="Dick Pierre-Yves" runde="1" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic F.Olympic - Sarine 2LM" mobile="076 424 28 21 " name="F.Olympic - Sarine 2LM" nameWithClub="F.Olympic F.Olympic - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Avry-sur-Matran" id="1379" label="Avry-sur-Matran / CO Avry" line1="Rte de Matran 24" name="CO Avry" shortName="CO Avry" zip="1754"/>
+      <result guestTeamPoints="2" guestTeamScore="71" guestTeamScoreLeg1="10" guestTeamScoreLeg2="17" guestTeamScoreLeg3="25" guestTeamScoreLeg4="19" homeTeamPoints="1" homeTeamScore="56" homeTeamScoreLeg1="12" homeTeamScoreLeg2="17" homeTeamScoreLeg3="16" homeTeamScoreLeg4="11"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-11-18" dateTime="2025-11-18 20:45" final="true" gameNumber="25-08234" guestTeamLabel="Villars Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Bulle Basket 2LM" homeTeamWinner="false" id="353195" referee1Id="25300" referee1Name="Emery Alexandre" referee2Id="74428" referee2Name="Caillet Sacha Léo Kaimana" runde="1" time="20:45" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Bulle" id="275" label="Bulle / Condémine" line1="Chemin de Bouleyres 11" name="Condémine" shortName="Condémine" zip="1630"/>
+      <result guestTeamPoints="1" guestTeamScore="52" guestTeamScoreLeg1="12" guestTeamScoreLeg2="13" guestTeamScoreLeg3="11" guestTeamScoreLeg4="16" homeTeamPoints="2" homeTeamScore="71" homeTeamScoreLeg1="21" homeTeamScoreLeg2="16" homeTeamScoreLeg3="24" homeTeamScoreLeg4="10"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-11-25" dateTime="2025-11-25 20:45" expertName="Musard David" expertid="15194" final="true" gameNumber="25-08248" guestTeamLabel="Isotop 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Bulle Basket 2LM" homeTeamWinner="false" id="353209" referee1Id="52438" referee1Name="Nenadic Filip" referee2Id="74428" referee2Name="Caillet Sacha Léo Kaimana" runde="2" time="20:45" withdrawn="false">
+      <expert familyName="Musard" firstName="David" id="15194" isActive="true" licenceNumber="004520" name="Musard David" preferredLanguage="F" salutation="1" sex="M"/>
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Bulle" id="275" label="Bulle / Condémine" line1="Chemin de Bouleyres 11" name="Condémine" shortName="Condémine" zip="1630"/>
+      <result guestTeamPoints="1" guestTeamScore="62" guestTeamScoreLeg1="10" guestTeamScoreLeg2="16" guestTeamScoreLeg3="18" guestTeamScoreLeg4="18" homeTeamPoints="2" homeTeamScore="65" homeTeamScoreLeg1="18" homeTeamScoreLeg2="6" homeTeamScoreLeg3="24" homeTeamScoreLeg4="17"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-11-27" dateTime="2025-11-27 21:00" final="true" gameNumber="25-08241" guestTeamLabel="Villars Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="F.Olympic - Sarine 2LM" homeTeamWinner="false" id="353202" referee1Id="34483" referee1Name="Dick Pierre-Yves" referee2Id="45192" referee2Name="Milacic Zlatko" runde="2" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic F.Olympic - Sarine 2LM" mobile="076 424 28 21 " name="F.Olympic - Sarine 2LM" nameWithClub="F.Olympic F.Olympic - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Avry-sur-Matran" id="1379" label="Avry-sur-Matran / CO Avry" line1="Rte de Matran 24" name="CO Avry" shortName="CO Avry" zip="1754"/>
+      <result guestTeamPoints="1" guestTeamScore="43" guestTeamScoreLeg1="11" guestTeamScoreLeg2="10" guestTeamScoreLeg3="14" guestTeamScoreLeg4="8" homeTeamPoints="2" homeTeamScore="54" homeTeamScoreLeg1="14" homeTeamScoreLeg2="12" homeTeamScoreLeg3="12" homeTeamScoreLeg4="16"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-11-28" dateTime="2025-11-28 20:30" expertName="Musard David" expertid="15194" final="true" gameNumber="25-08240" guestTeamLabel="Bulle Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Marly Basket 2LM" homeTeamWinner="false" id="353201" referee1Id="25330" referee1Name="Giot Patric" referee2Id="73883" referee2Name="Demierre Nicolas" runde="2" time="20:30" withdrawn="false">
+      <expert familyName="Musard" firstName="David" id="15194" isActive="true" licenceNumber="004520" name="Musard David" preferredLanguage="F" salutation="1" sex="M"/>
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Marly" id="712" label="Marly / Grand-Pré 3" line1="Rte des Ecoles 18 " name="Grand-Pré 3" shortName="Grand-Pré 3" zip="1723"/>
+      <result guestTeamPoints="2" guestTeamScore="85" guestTeamScoreLeg1="17" guestTeamScoreLeg2="27" guestTeamScoreLeg3="29" guestTeamScoreLeg4="12" homeTeamPoints="1" homeTeamScore="63" homeTeamScoreLeg1="18" homeTeamScoreLeg2="17" homeTeamScoreLeg3="14" homeTeamScoreLeg4="14"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-12-01" dateTime="2025-12-01 20:00" expertName="Schaub Martin" expertid="4335" final="true" gameNumber="25-08246" guestTeamLabel="Villars Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Isotop 2LM" homeTeamWinner="false" id="353207" referee1Id="45192" referee1Name="Milacic Zlatko" referee2Id="65503" referee2Name="Maradan Martin" runde="2" time="20:00" withdrawn="false">
+      <expert familyName="Schaub" firstName="Martin" id="4335" isActive="true" licenceNumber="054316" name="Schaub Martin" preferredLanguage="F" salutation="1" sex="M"/>
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location city="Fribourg" id="292" label="Fribourg / Vignettaz" line1="rte de la Gruyère 9" name="Vignettaz" shortName="Vignettaz" zip="1700"/>
+      <result guestTeamPoints="1" guestTeamScore="62" guestTeamScoreLeg1="13" guestTeamScoreLeg2="16" guestTeamScoreLeg3="13" guestTeamScoreLeg4="20" homeTeamPoints="2" homeTeamScore="67" homeTeamScoreLeg1="13" homeTeamScoreLeg2="26" homeTeamScoreLeg3="14" homeTeamScoreLeg4="14"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-12-05" dateTime="2025-12-05 20:00" final="true" gameNumber="25-08247" guestTeamLabel="Académie FO - Sarine 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Marly Basket 2LM" homeTeamWinner="false" id="353208" referee1Id="25300" referee1Name="Emery Alexandre" referee2Id="73883" referee2Name="Demierre Nicolas" runde="2" time="20:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic Académie FO - Sarine 2LM" mobile="076 424 28 21 " name="Académie FO - Sarine 2LM" nameWithClub="F.Olympic Académie FO - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Marly" id="712" label="Marly / Grand-Pré 3" line1="Rte des Ecoles 18 " name="Grand-Pré 3" shortName="Grand-Pré 3" zip="1723"/>
+      <result guestTeamPoints="2" guestTeamScore="92" guestTeamScoreLeg1="23" guestTeamScoreLeg2="28" guestTeamScoreLeg3="23" guestTeamScoreLeg4="18" homeTeamPoints="1" homeTeamScore="48" homeTeamScoreLeg1="12" homeTeamScoreLeg2="8" homeTeamScoreLeg3="17" homeTeamScoreLeg4="11"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-12-11" dateTime="2025-12-11 20:00" final="true" gameNumber="25-08243" guestTeamLabel="Marly Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Isotop 2LM" homeTeamWinner="false" id="353204" referee1Id="1322" referee1Name="Horvat Danijel" referee2Id="1569" referee2Name="Dessonnaz Alexandre" runde="2" time="20:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location city="Fribourg" id="292" label="Fribourg / Vignettaz" line1="rte de la Gruyère 9" name="Vignettaz" shortName="Vignettaz" zip="1700"/>
+      <result guestTeamPoints="1" guestTeamScore="52" guestTeamScoreLeg1="10" guestTeamScoreLeg2="9" guestTeamScoreLeg3="18" guestTeamScoreLeg4="15" homeTeamPoints="2" homeTeamScore="67" homeTeamScoreLeg1="15" homeTeamScoreLeg2="18" homeTeamScoreLeg3="14" homeTeamScoreLeg4="20"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-12-11" dateTime="2025-12-11 20:45" final="true" gameNumber="25-08242" guestTeamLabel="Académie FO - Sarine 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Bulle Basket 2LM" homeTeamWinner="false" id="353203" referee1Id="122501" referee1Name="Cordier Simon Ernest Raymond" referee2Id="65503" referee2Name="Maradan Martin" runde="2" time="20:45" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic Académie FO - Sarine 2LM" mobile="076 424 28 21 " name="Académie FO - Sarine 2LM" nameWithClub="F.Olympic Académie FO - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Bulle" id="275" label="Bulle / Condémine" line1="Chemin de Bouleyres 11" name="Condémine" shortName="Condémine" zip="1630"/>
+      <result guestTeamPoints="1" guestTeamScore="69" guestTeamScoreLeg1="11" guestTeamScoreLeg2="25" guestTeamScoreLeg3="16" guestTeamScoreLeg4="17" homeTeamPoints="2" homeTeamScore="70" homeTeamScoreLeg1="20" homeTeamScoreLeg2="22" homeTeamScoreLeg3="14" homeTeamScoreLeg4="14"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-12-17" dateTime="2025-12-17 21:00" final="true" gameNumber="25-08249" guestTeamLabel="Marly Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Villars Basket 2LM" homeTeamWinner="false" id="353210" referee1Id="55413" referee1Name="Brodard Maxime" referee2Id="65503" referee2Name="Maradan Martin" runde="2" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Villars-sur-Glâne" id="314" label="Villars-sur-Glâne / CS Platy 3" line1="rue du Centre sportif 1" name="CS Platy 3" shortName="CS Platy 3" zip="1752"/>
+      <result guestTeamPoints="1" guestTeamScore="50" guestTeamScoreLeg1="7" guestTeamScoreLeg2="22" guestTeamScoreLeg3="12" guestTeamScoreLeg4="9" homeTeamPoints="2" homeTeamScore="63" homeTeamScoreLeg1="8" homeTeamScoreLeg2="17" homeTeamScoreLeg3="23" homeTeamScoreLeg4="15"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2025-12-18" dateTime="2025-12-18 21:00" expertName="Musard David" expertid="15194" final="true" gameNumber="25-08245" guestTeamLabel="Isotop 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Académie FO - Sarine 2LM" homeTeamWinner="false" id="353206" referee1Id="122501" referee1Name="Cordier Simon Ernest Raymond" referee2Id="45192" referee2Name="Milacic Zlatko" runde="2" time="21:00" withdrawn="false">
+      <expert familyName="Musard" firstName="David" id="15194" isActive="true" licenceNumber="004520" name="Musard David" preferredLanguage="F" salutation="1" sex="M"/>
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic Académie FO - Sarine 2LM" mobile="076 424 28 21 " name="Académie FO - Sarine 2LM" nameWithClub="F.Olympic Académie FO - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Avry-sur-Matran" id="1379" label="Avry-sur-Matran / CO Avry" line1="Rte de Matran 24" name="CO Avry" shortName="CO Avry" zip="1754"/>
+      <result guestTeamPoints="1" guestTeamScore="52" guestTeamScoreLeg1="15" guestTeamScoreLeg2="11" guestTeamScoreLeg3="10" guestTeamScoreLeg4="16" homeTeamPoints="2" homeTeamScore="87" homeTeamScoreLeg1="15" homeTeamScoreLeg2="22" homeTeamScoreLeg3="28" homeTeamScoreLeg4="22"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-01-09" dateTime="2026-01-09 20:00" final="true" gameNumber="25-08239" guestTeamLabel="Villars Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Marly Basket 2LM" homeTeamWinner="false" id="353200" referee1Id="55320" referee1Name="Minder Gilles Benoit" referee2Id="73883" referee2Name="Demierre Nicolas" runde="1" time="20:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Marly" id="712" label="Marly / Grand-Pré 3" line1="Rte des Ecoles 18 " name="Grand-Pré 3" shortName="Grand-Pré 3" zip="1723"/>
+      <result guestTeamPoints="1" guestTeamScore="56" guestTeamScoreLeg1="6" guestTeamScoreLeg2="9" guestTeamScoreLeg3="23" guestTeamScoreLeg4="18" homeTeamPoints="2" homeTeamScore="57" homeTeamScoreLeg1="8" homeTeamScoreLeg2="13" homeTeamScoreLeg3="22" homeTeamScoreLeg4="14"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-01-22" dateTime="2026-01-22 20:45" final="true" gameNumber="25-08251" guestTeamLabel="Villars Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Bulle Basket 2LM" homeTeamWinner="false" id="353212" referee1Id="3401" referee1Name="Demierre Martin" referee2Id="45192" referee2Name="Milacic Zlatko" runde="3" time="20:45" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Bulle" id="275" label="Bulle / Condémine" line1="Chemin de Bouleyres 11" name="Condémine" shortName="Condémine" zip="1630"/>
+      <result guestTeamPoints="1" guestTeamScore="45" guestTeamScoreLeg1="11" guestTeamScoreLeg2="8" guestTeamScoreLeg3="11" guestTeamScoreLeg4="15" homeTeamPoints="2" homeTeamScore="70" homeTeamScoreLeg1="18" homeTeamScoreLeg2="18" homeTeamScoreLeg3="18" homeTeamScoreLeg4="16"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-01-22" dateTime="2026-01-22 21:00" expertName="Musard David" expertid="15194" final="true" gameNumber="25-08237" guestTeamLabel="Marly Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Académie FO - Sarine 2LM" homeTeamWinner="false" id="353198" referee1Id="2982" referee1Name="Bürki Olivier" referee2Id="73883" referee2Name="Demierre Nicolas" runde="1" time="21:00" withdrawn="false">
+      <expert familyName="Musard" firstName="David" id="15194" isActive="true" licenceNumber="004520" name="Musard David" preferredLanguage="F" salutation="1" sex="M"/>
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic Académie FO - Sarine 2LM" mobile="076 424 28 21 " name="Académie FO - Sarine 2LM" nameWithClub="F.Olympic Académie FO - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Avry-sur-Matran" id="1379" label="Avry-sur-Matran / CO Avry" line1="Rte de Matran 24" name="CO Avry" shortName="CO Avry" zip="1754"/>
+      <result guestTeamPoints="1" guestTeamScore="52" guestTeamScoreLeg1="17" guestTeamScoreLeg2="11" guestTeamScoreLeg3="15" guestTeamScoreLeg4="9" homeTeamPoints="2" homeTeamScore="65" homeTeamScoreLeg1="19" homeTeamScoreLeg2="10" homeTeamScoreLeg3="16" homeTeamScoreLeg4="20"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-01-28" dateTime="2026-01-28 21:00" final="true" gameNumber="25-08244" guestTeamLabel="Bulle Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Villars Basket 2LM" homeTeamWinner="false" id="353205" referee1Id="55320" referee1Name="Minder Gilles Benoit" referee2Id="122501" referee2Name="Cordier Simon Ernest Raymond" runde="2" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Villars-sur-Glâne" id="314" label="Villars-sur-Glâne / CS Platy 3" line1="rue du Centre sportif 1" name="CS Platy 3" shortName="CS Platy 3" zip="1752"/>
+      <result guestTeamPoints="2" guestTeamScore="72" guestTeamScoreLeg1="20" guestTeamScoreLeg2="18" guestTeamScoreLeg3="21" guestTeamScoreLeg4="13" homeTeamPoints="1" homeTeamScore="56" homeTeamScoreLeg1="8" homeTeamScoreLeg2="11" homeTeamScoreLeg3="13" homeTeamScoreLeg4="24"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-01-29" dateTime="2026-01-29 21:15" final="true" gameNumber="25-08250" guestTeamLabel="Isotop 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Académie FO - Sarine 2LM" homeTeamWinner="false" id="353211" referee1Id="122501" referee1Name="Cordier Simon Ernest Raymond" referee2Id="65503" referee2Name="Maradan Martin" runde="3" time="21:15" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic Académie FO - Sarine 2LM" mobile="076 424 28 21 " name="Académie FO - Sarine 2LM" nameWithClub="F.Olympic Académie FO - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Avry-sur-Matran" id="1379" label="Avry-sur-Matran / CO Avry" line1="Rte de Matran 24" name="CO Avry" shortName="CO Avry" zip="1754"/>
+      <result guestTeamPoints="1" guestTeamScore="44" guestTeamScoreLeg1="13" guestTeamScoreLeg2="8" guestTeamScoreLeg3="15" guestTeamScoreLeg4="8" homeTeamPoints="2" homeTeamScore="69" homeTeamScoreLeg1="19" homeTeamScoreLeg2="17" homeTeamScoreLeg3="21" homeTeamScoreLeg4="12"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-01-30" dateTime="2026-01-30 20:00" final="true" gameNumber="25-08255" guestTeamLabel="Villars Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Marly Basket 2LM" homeTeamWinner="false" id="353216" referee1Id="45192" referee1Name="Milacic Zlatko" referee2Id="76523" referee2Name="Neves Costa  Tomas" runde="3" time="20:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Marly" id="712" label="Marly / Grand-Pré 3" line1="Rte des Ecoles 18 " name="Grand-Pré 3" shortName="Grand-Pré 3" zip="1723"/>
+      <result guestTeamPoints="1" guestTeamScore="61" guestTeamScoreLeg1="11" guestTeamScoreLeg2="18" guestTeamScoreLeg3="20" guestTeamScoreLeg4="12" homeTeamPoints="2" homeTeamScore="62" homeTeamScoreLeg1="26" homeTeamScoreLeg2="9" homeTeamScoreLeg3="14" homeTeamScoreLeg4="13"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-02-11" dateTime="2026-02-11 21:00" final="true" gameNumber="25-08252" guestTeamLabel="Académie FO - Sarine 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Villars Basket 2LM" homeTeamWinner="false" id="353213" referee1Id="55413" referee1Name="Brodard Maxime" referee2Id="73883" referee2Name="Demierre Nicolas" runde="3" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic Académie FO - Sarine 2LM" mobile="076 424 28 21 " name="Académie FO - Sarine 2LM" nameWithClub="F.Olympic Académie FO - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Villars-sur-Glâne" id="314" label="Villars-sur-Glâne / CS Platy 3" line1="rue du Centre sportif 1" name="CS Platy 3" shortName="CS Platy 3" zip="1752"/>
+      <result guestTeamPoints="2" guestTeamScore="75" guestTeamScoreLeg1="24" guestTeamScoreLeg2="13" guestTeamScoreLeg3="13" guestTeamScoreLeg4="25" homeTeamPoints="1" homeTeamScore="52" homeTeamScoreLeg1="15" homeTeamScoreLeg2="10" homeTeamScoreLeg3="17" homeTeamScoreLeg4="10"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-02-12" dateTime="2026-02-12 20:00" final="true" gameNumber="25-08253" guestTeamLabel="Marly Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Isotop 2LM" homeTeamWinner="false" id="353214" referee1Id="90940" referee1Name="Hernandez Cardenas Juan" referee2Id="122501" referee2Name="Cordier Simon Ernest Raymond" runde="3" time="20:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location city="Fribourg" id="292" label="Fribourg / Vignettaz" line1="rte de la Gruyère 9" name="Vignettaz" shortName="Vignettaz" zip="1700"/>
+      <result guestTeamPoints="1" guestTeamScore="69" guestTeamScoreLeg1="15" guestTeamScoreLeg2="21" guestTeamScoreLeg3="13" guestTeamScoreLeg4="20" homeTeamPoints="2" homeTeamScore="93" homeTeamScoreLeg1="26" homeTeamScoreLeg2="24" homeTeamScoreLeg3="17" homeTeamScoreLeg4="26"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-02-25" dateTime="2026-02-25 21:00" final="true" gameNumber="25-08257" guestTeamLabel="Isotop 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Villars Basket 2LM" homeTeamWinner="false" id="353218" referee1Id="52438" referee1Name="Nenadic Filip" referee2Id="65503" referee2Name="Maradan Martin" runde="3" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="13" clubName="Villars-sur-Glâne BBC " clubShortName="Villars Basket" id="217" label="Villars Basket Villars Basket 2LM" name="Villars Basket 2LM" nameWithClub="Villars Basket Villars Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="bleu" shirtColor2="Blanc">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Villars-sur-Glâne" id="314" label="Villars-sur-Glâne / CS Platy 3" line1="rue du Centre sportif 1" name="CS Platy 3" shortName="CS Platy 3" zip="1752"/>
+      <result guestTeamPoints="2" guestTeamScore="67" guestTeamScoreLeg1="23" guestTeamScoreLeg2="18" guestTeamScoreLeg3="12" guestTeamScoreLeg4="14" homeTeamPoints="1" homeTeamScore="55" homeTeamScoreLeg1="11" homeTeamScoreLeg2="10" homeTeamScoreLeg3="18" homeTeamScoreLeg4="16"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-02-26" dateTime="2026-02-26 20:45" final="true" gameNumber="25-08256" guestTeamLabel="Marly Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Bulle Basket 2LM" homeTeamWinner="false" id="353217" referee1Id="1322" referee1Name="Horvat Danijel" referee2Id="74428" referee2Name="Caillet Sacha Léo Kaimana" runde="3" time="20:45" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Bulle" id="275" label="Bulle / Condémine" line1="Chemin de Bouleyres 11" name="Condémine" shortName="Condémine" zip="1630"/>
+      <result guestTeamPoints="1" guestTeamScore="73" guestTeamScoreLeg1="11" guestTeamScoreLeg2="21" guestTeamScoreLeg3="17" guestTeamScoreLeg4="24" homeTeamPoints="2" homeTeamScore="87" homeTeamScoreLeg1="25" homeTeamScoreLeg2="19" homeTeamScoreLeg3="26" homeTeamScoreLeg4="17"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-03-05" dateTime="2026-03-05 20:30" final="true" gameNumber="25-08259" guestTeamLabel="Bulle Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Isotop 2LM" homeTeamWinner="false" id="353220" referee1Id="66964" referee1Name="Kutnar Valentin" referee2Id="45192" referee2Name="Milacic Zlatko" runde="3" time="20:30" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="193" clubName="Isotop BBC" clubShortName="Isotop" id="192" label="Isotop Isotop 2LM" name="Isotop 2LM" nameWithClub="Isotop Isotop 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Blanc" shirtColor2="Gris anthracite">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location city="Fribourg" id="292" label="Fribourg / Vignettaz" line1="rte de la Gruyère 9" name="Vignettaz" shortName="Vignettaz" zip="1700"/>
+      <result guestTeamPoints="2" guestTeamScore="75" guestTeamScoreLeg1="14" guestTeamScoreLeg2="25" guestTeamScoreLeg3="17" guestTeamScoreLeg4="19" homeTeamPoints="1" homeTeamScore="61" homeTeamScoreLeg1="11" homeTeamScoreLeg2="16" homeTeamScoreLeg3="20" homeTeamScoreLeg4="14"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-03-06" dateTime="2026-03-06 20:00" final="true" gameNumber="25-08258" guestTeamLabel="Académie FO - Sarine 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Marly Basket 2LM" homeTeamWinner="false" id="353219" referee1Id="4335" referee1Name="Schaub Martin" referee2Id="76523" referee2Name="Neves Costa  Tomas" runde="3" time="20:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic Académie FO - Sarine 2LM" mobile="076 424 28 21 " name="Académie FO - Sarine 2LM" nameWithClub="F.Olympic Académie FO - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="60" clubName="Marly Basket" clubShortName="Marly" id="6570" label="Marly Marly Basket 2LM" name="Marly Basket 2LM" nameWithClub="Marly Marly Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Noir">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Marly" id="712" label="Marly / Grand-Pré 3" line1="Rte des Ecoles 18 " name="Grand-Pré 3" shortName="Grand-Pré 3" zip="1723"/>
+      <result guestTeamPoints="2" guestTeamScore="63" guestTeamScoreLeg1="11" guestTeamScoreLeg2="17" guestTeamScoreLeg3="19" guestTeamScoreLeg4="16" homeTeamPoints="1" homeTeamScore="48" homeTeamScoreLeg1="10" homeTeamScoreLeg2="12" homeTeamScoreLeg3="11" homeTeamScoreLeg4="15"/>
+      <state id="70" name="homologé"/>
+    </game>
+    <game considerOnRanking="true" date="2026-03-12" dateTime="2026-03-12 21:00" final="true" gameNumber="25-08254" guestTeamLabel="Bulle Basket 2LM" guestTeamWinner="false" hasRefereesToDisplay="true" homeTeamLabel="Académie FO - Sarine 2LM" homeTeamWinner="false" id="353215" referee1Id="90940" referee1Name="Hernandez Cardenas Juan" referee2Id="74428" referee2Name="Caillet Sacha Léo Kaimana" runde="3" time="21:00" withdrawn="false">
+      <guestTeam activeLabel="Oui" clubFederationId="9" clubId="101" clubName="Bulle Basket" clubShortName="Bulle" id="6584" label="Bulle Bulle Basket 2LM" name="Bulle Basket 2LM" nameWithClub="Bulle Bulle Basket 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="Rouge" shirtColor2="Blanc" uniqueTeamCode="BUL">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </guestTeam>
+      <homeTeam activeLabel="Oui" clubFederationId="9" clubId="14" clubName="Fribourg Olympic Basket" clubShortName="F.Olympic" id="1270" label="F.Olympic Académie FO - Sarine 2LM" mobile="076 424 28 21 " name="Académie FO - Sarine 2LM" nameWithClub="F.Olympic Académie FO - Sarine 2LM" nationalLabel="Non" sexLabel="Masculin" shirtColor1="blanc" shirtColor2="Bleu ">
+        <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+      </homeTeam>
+      <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+        <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+        <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+          <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+          <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+          <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+        </league>
+        <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+      </leagueHolding>
+      <location accessOnlyMotorized="false" city="Avry-sur-Matran" id="1379" label="Avry-sur-Matran / CO Avry" line1="Rte de Matran 24" name="CO Avry" shortName="CO Avry" zip="1754"/>
+      <result guestTeamPoints="2" guestTeamScore="65" guestTeamScoreLeg1="20" guestTeamScoreLeg2="17" guestTeamScoreLeg3="21" guestTeamScoreLeg4="7" homeTeamPoints="1" homeTeamScore="49" homeTeamScoreLeg1="16" homeTeamScoreLeg2="20" homeTeamScoreLeg3="11" homeTeamScoreLeg4="2"/>
+      <state id="70" name="homologé"/>
+    </game>
+  </Array>
+</gameList>
+<leagueHolding>
+  <leagueHolding additionalTime="5" from="2025-09-30" fullName="2LM 2LM - Saison 25/26 - Phase préliminaire" id="10584" ignoreDirectEncounter="false" legs="4" name="2LM - Saison 25/26 - Phase préliminaire" numberOfPromotionPlaces="0" numberOfRelegationPlaces="2" playPeriodsMinutes="10" startRankingWith="1" to="2026-03-08">
+    <category id="MAIN_ROUND" label="Phase principale/intermédiaire"/>
+    <league active="true" additionalTime="5" considerDirectEncounterOfPreliminaryRoundDefault="false" id="99" legs="4" numberOfPromotionPlaces="0" numberOfReferees="2" numberOfRelegationPlaces="2" playPeriodsMinutes="10" sex="M" shortName="2LM" showRanking="true" sortOrderOnline="19">
+      <federation id="9" languageDependentName="Association Fribourgeoise de Basketball" mainCanton="FR" mainMail="secretariat@afbb.ch; president@afbb.ch" name="AFBB" refereeAssignmentVisibleUntil="2026-06-30 00:00" shortName="AFBB"/>
+      <leagueLevel id="3" languageDependentName="2ème ligue cantonale" shortName="2" sortOrder="6"/>
+      <playerCategory id="1" name="Senior" shortLabel="SEN" shortName="SEN" underYear="100"/>
+    </league>
+    <season from="2025-07-01 00:00" fromYMD="2025-07-01" id="30" name="2025/2026" shortName="25/26" to="2026-06-30 23:59" toYMD="2026-06-30"/>
+  </leagueHolding>
+</leagueHolding>
+<title>
+  <String>Aperçu du match 2LM 2LM - Saison 25/26 - Phase préliminaire (30.09.25-08.03.26)</String>
+</title>
+<videoLink>
+  <String/>
+</videoLink>
+</basketplan>

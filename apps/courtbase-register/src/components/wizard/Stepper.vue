@@ -7,7 +7,7 @@ const props = withDefaults(
     title: string
     total?: number
   }>(),
-  { total: 8 },
+  { total: 7 },
 )
 
 const dots = computed(() => {

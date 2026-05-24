@@ -40,6 +40,18 @@ export interface MockMember {
   status: MemberStatus
   /** AVS, masqué dans l'UI sauf toggle "Voir". */
   avs?: string
+  /**
+   * Chemin Storage de la photo licence (cf. `docs/members/license-photo.md`).
+   * `null` ou absent tant qu'aucune photo n'a été uploadée.
+   * Pattern : `members/{memberId}/license-photo.{ext}`.
+   */
+  photoStoragePath?: string | null
+  /**
+   * Timestamp du dernier upload (sert d'audit + cache-buster). Sérialisé en
+   * `{ seconds, nanoseconds }` côté lecteur — on n'expose ici que les
+   * `seconds` qui suffisent pour le cache-bust `?v=<seconds>`.
+   */
+  photoUpdatedAt?: { seconds: number } | null
 }
 
 export interface MockTeam {
@@ -120,10 +132,18 @@ export type RegistrationStatus =
   | 'submitted'
   | 'open_pending_trial'
   | 'conditional_pending_review'
+  | 'conditional_pending_trial'
   | 'trial_in_progress'
   | 'confirmed_pending_dues'
   | 'active'
   | 'refused'
+  | 'cancelled'
+
+/**
+ * Bucket sémantique pour l'UI coach — sépare visuellement "demande à
+ * décider" vs "essai en cours" vs terminal. Calculé via `bucketFor(status)`.
+ */
+export type RegistrationBucket = 'demande' | 'essai' | 'confirmed' | 'terminal'
 
 export interface MockRegistration {
   id: string

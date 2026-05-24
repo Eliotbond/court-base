@@ -7,9 +7,9 @@ import {
   getDoc,
   getDocs,
   limit,
-  orderBy,
   query,
   where,
+  type Timestamp as FirestoreTimestamp,
 } from 'firebase/firestore'
 import type { ClubConfig, Member, MemberData } from '@club-app/shared-types'
 import { db } from '@/services/firebase'
@@ -287,12 +287,19 @@ export async function listOfficialsWithLoad(
 ): Promise<OfficialRow[]> {
   // 1) Lire la liste des officials. `roles` est un `string[]` côté schéma —
   //    Firestore expose `array-contains` pour ce cas.
+  //
+  //    NB : on N'utilise PAS `orderBy('lastName')` côté Firestore. Raison :
+  //    Firestore exclut silencieusement les documents où le champ trié est
+  //    absent / null — un member créé via bootstrap script (admin rootAdmin
+  //    p.ex.) ou via une callable qui n'aurait pas renseigné `lastName`
+  //    disparaîtrait de la liste sans erreur ni log. Cohérent avec
+  //    CLAUDE.md racine §10 (« simple query + tri JS, pas d'index composite »)
+  //    : le volume officiel par club reste très faible (< 100 docs).
   let officialDocs: Array<{ id: string; data: MemberData }>
   try {
     const q = query(
       collection(db, MEMBERS),
       where('roles', 'array-contains', 'official'),
-      orderBy('lastName'),
     )
     const snap = await getDocs(q)
     officialDocs = snap.docs.map((d) => ({
@@ -306,6 +313,27 @@ export async function listOfficialsWithLoad(
     throw err
   }
   if (officialDocs.length === 0) return []
+
+  // Diagnostic défensif : on signale les members avec `'official'` dans
+  // `roles` mais sans `lastName` — ils auraient été silencieusement exclus
+  // par un `orderBy('lastName')` côté Firestore. Permet de remonter le cas à
+  // l'admin pour qu'il complète la fiche (pas de migration automatique).
+  for (const od of officialDocs) {
+    if (!od.data.lastName || od.data.lastName.trim() === '') {
+      console.warn(
+        `[officials.repo] member ${od.id} has role 'official' but missing/empty lastName — fiche à compléter (firstName="${od.data.firstName ?? ''}")`,
+      )
+    }
+  }
+
+  // Tri JS-side. `localeCompare(_, 'fr')` gère correctement les accents (é,
+  // è, à, …). Les docs sans lastName remontent en début de liste (string
+  // vide) — pratique pour qu'ils sautent aux yeux.
+  officialDocs.sort((a, b) =>
+    (a.data.lastName ?? '').localeCompare(b.data.lastName ?? '', 'fr', {
+      sensitivity: 'base',
+    }),
+  )
 
   // 2) Charger les seuils + les counts en parallèle.
   const [thresholds, countsByMember] = await Promise.all([
@@ -333,4 +361,346 @@ export async function listOfficialsWithLoad(
       loadStatus,
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// Métriques de tracking — tab "Officiels" (livré 2026-05-24)
+// ---------------------------------------------------------------------------
+
+/**
+ * Seuil au-delà duquel une assignation est considérée comme « prise à la
+ * dernière minute » : si le delta `match.date+startTime - assignedAt` est
+ * inférieur à cette valeur (en heures), on incrémente `lastMinuteClaims`.
+ *
+ * Valeur par défaut 48 h, configurable par `/config/club.officialsConfig
+ * .lastMinuteThresholdHours` (champ optionnel — `48` quand absent).
+ */
+const DEFAULT_LAST_MINUTE_THRESHOLD_HOURS = 48
+
+/**
+ * Compteurs étendus par officiel sur une saison. Reprend `confirmed` / `pending`
+ * / `declined` (déjà calculés par `buildCountsBySeason`) et ajoute les deux
+ * métriques de tracking exposées dans le tab "Officiels" :
+ *  - `lastMinuteClaims` : assignations confirmed dont le delta
+ *    `(match.date+startTime) - assignment.assignedAt` est inférieur à
+ *    `lastMinuteThresholdHours` (heuristique « pris à la dernière minute »).
+ *  - `replacementsRequested` : assignations où `replacementRequestedAt != null`
+ *    (un remplacement a été demandé, indépendamment du statut courant).
+ *
+ * Ces métriques sont best-effort : un échec de lecture sur le booking parent
+ * (rule denied / index manquant) dégrade silencieusement la valeur à `0` pour
+ * l'officiel concerné — la vue reste exploitable.
+ */
+export interface OfficialMetrics {
+  confirmed: number
+  pending: number
+  declined: number
+  lastMinuteClaims: number
+  replacementsRequested: number
+}
+
+const EMPTY_METRICS: OfficialMetrics = {
+  confirmed: 0,
+  pending: 0,
+  declined: 0,
+  lastMinuteClaims: 0,
+  replacementsRequested: 0,
+}
+
+/** Combine date Firestore (00:00 local) + "HH:MM" → Date ; null si invalide. */
+function combineBookingDateAndTime(
+  date: FirestoreTimestamp | null | undefined,
+  startTime: string | null | undefined,
+): Date | null {
+  if (!date || typeof date.seconds !== 'number') return null
+  if (!startTime || !/^\d{2}:\d{2}$/.test(startTime)) return null
+  const base = new Date(date.seconds * 1000)
+  const [hStr, mStr] = startTime.split(':')
+  const h = Number(hStr)
+  const m = Number(mStr)
+  if (Number.isNaN(h) || Number.isNaN(m)) return null
+  base.setHours(h, m, 0, 0)
+  return base
+}
+
+/** Lit `lastMinuteThresholdHours` depuis `/config/club.officialsConfig` (default 48). */
+export async function fetchLastMinuteThresholdHours(): Promise<number> {
+  try {
+    const snap = await getDoc(doc(db, CONFIG_COLL, CONFIG_DOC))
+    if (!snap.exists()) return DEFAULT_LAST_MINUTE_THRESHOLD_HOURS
+    const data = snap.data() as Partial<ClubConfig> & {
+      officialsConfig?: { lastMinuteThresholdHours?: number }
+    }
+    const cfg = data.officialsConfig
+    const value = cfg?.lastMinuteThresholdHours
+    if (typeof value === 'number' && value > 0) return value
+    return DEFAULT_LAST_MINUTE_THRESHOLD_HOURS
+  } catch (err: unknown) {
+    if (err instanceof FirebaseError && err.code === 'permission-denied') {
+      return DEFAULT_LAST_MINUTE_THRESHOLD_HOURS
+    }
+    throw err
+  }
+}
+
+/**
+ * Variante enrichie de `buildCountsBySeason` qui ajoute `lastMinuteClaims` et
+ * `replacementsRequested`.
+ *
+ * Stratégie :
+ *  1. collectionGroup('officialAssignments') — lit tous les docs (memberId,
+ *     status, assignedAt, replacementRequestedAt, bookingId).
+ *  2. Batch-load des bookings parents (`/bookings` par chunks de 10 sur
+ *     `documentId() in`) pour récupérer `seasonId` + `date` + `startTime`.
+ *  3. Pour chaque assignation appartenant à la saison cible :
+ *     - `status === 'confirmed'` : incrémente `confirmed` ; si
+ *       `(match.date+startTime - assignedAt) < thresholdHours` → incrémente
+ *       `lastMinuteClaims`.
+ *     - `status === 'pending' | 'declined'` : incrémente compteur dédié.
+ *     - `replacementRequestedAt != null` (quel que soit le statut) :
+ *       incrémente `replacementsRequested`.
+ *
+ * Pas de double-comptage : les compteurs `confirmed` / `pending` / `declined`
+ * restent mutuellement exclusifs (status), `lastMinuteClaims` est un
+ * sous-ensemble de `confirmed`, `replacementsRequested` est orthogonal.
+ *
+ * Note : les `/matches/{id}/officialAssignments` (matchs AWAY) sont **inclus**
+ * via le collectionGroup, mais leur parent n'est pas un `/bookings/{id}` —
+ * pour la saison courante ils sont donc filtrés out (la `seasonId` vit sur le
+ * booking, pas sur le match away). Acceptable pour le MVP — à raffiner si
+ * besoin (lire `/matches/{id}.date` quand parent path commence par `matches/`).
+ */
+export async function buildOfficialMetricsBySeason(
+  seasonId: string,
+  thresholdHours: number = DEFAULT_LAST_MINUTE_THRESHOLD_HOURS,
+): Promise<Map<string, OfficialMetrics>> {
+  const map = new Map<string, OfficialMetrics>()
+
+  interface SnapDoc {
+    memberId: string
+    status: string
+    bookingId: string
+    parentKind: 'booking' | 'match'
+    assignedAt: FirestoreTimestamp | null
+    replacementRequestedAt: FirestoreTimestamp | null
+  }
+
+  const snapDocs: SnapDoc[] = []
+  try {
+    const cgSnap = await getDocs(collectionGroup(db, 'officialAssignments'))
+    for (const d of cgSnap.docs) {
+      const parent = d.ref.parent.parent
+      if (!parent) continue
+      const data = d.data() as {
+        memberId: string
+        status: string
+        assignedAt?: FirestoreTimestamp | null
+        replacementRequestedAt?: FirestoreTimestamp | null
+      }
+      // Parent peut être `/bookings/{id}` ou `/matches/{id}` (cf. away).
+      const parentPath = parent.parent?.id ?? null
+      const parentKind: 'booking' | 'match' =
+        parentPath === 'matches' ? 'match' : 'booking'
+      snapDocs.push({
+        memberId: data.memberId,
+        status: data.status,
+        bookingId: parent.id,
+        parentKind,
+        assignedAt: data.assignedAt ?? null,
+        replacementRequestedAt: data.replacementRequestedAt ?? null,
+      })
+    }
+  } catch (err: unknown) {
+    if (
+      err instanceof FirebaseError &&
+      (err.code === 'permission-denied' || err.code === 'failed-precondition')
+    ) {
+      return map
+    }
+    throw err
+  }
+  if (snapDocs.length === 0) return map
+
+  // Batch-load des bookings parents (kind='booking' uniquement — les matchs
+  // AWAY n'ont pas de seasonId dénormalisée côté `/matches`).
+  const bookingIds = Array.from(
+    new Set(
+      snapDocs
+        .filter((s) => s.parentKind === 'booking')
+        .map((s) => s.bookingId),
+    ),
+  )
+  const bookings = new Map<
+    string,
+    { seasonId: string; date: FirestoreTimestamp | null; startTime: string | null }
+  >()
+  for (let i = 0; i < bookingIds.length; i += 10) {
+    const chunk = bookingIds.slice(i, i + 10)
+    try {
+      const bq = query(
+        collection(db, BOOKINGS),
+        where(documentId(), 'in', chunk),
+      )
+      const bs = await getDocs(bq)
+      for (const bd of bs.docs) {
+        const data = bd.data() as {
+          seasonId?: string
+          date?: FirestoreTimestamp | null
+          startTime?: string | null
+        }
+        if (data.seasonId) {
+          bookings.set(bd.id, {
+            seasonId: data.seasonId,
+            date: data.date ?? null,
+            startTime: data.startTime ?? null,
+          })
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof FirebaseError && err.code === 'permission-denied') {
+        continue
+      }
+      throw err
+    }
+  }
+
+  const MS_PER_HOUR = 60 * 60 * 1000
+
+  for (const row of snapDocs) {
+    // Filtre saison : on ne garde que les assignments sur un booking de la
+    // saison cible. (Matchs away ignorés cf. note du JSDoc.)
+    if (row.parentKind !== 'booking') continue
+    const booking = bookings.get(row.bookingId)
+    if (!booking || booking.seasonId !== seasonId) continue
+
+    const cur: OfficialMetrics = map.get(row.memberId) ?? { ...EMPTY_METRICS }
+
+    if (row.status === 'confirmed') {
+      cur.confirmed += 1
+      // Last-minute : delta `(match.date+startTime) - assignedAt` en heures.
+      const matchStart = combineBookingDateAndTime(booking.date, booking.startTime)
+      const assignedAtMs = row.assignedAt?.seconds
+        ? row.assignedAt.seconds * 1000
+        : null
+      if (matchStart !== null && assignedAtMs !== null) {
+        const deltaHours = (matchStart.getTime() - assignedAtMs) / MS_PER_HOUR
+        // On exclut les deltas négatifs (assignation après le début du match —
+        // anomalie) du bucket « last-minute » : ce sont des cas spéciaux, pas
+        // une dérive normale.
+        if (deltaHours >= 0 && deltaHours < thresholdHours) {
+          cur.lastMinuteClaims += 1
+        }
+      }
+    } else if (row.status === 'pending') {
+      cur.pending += 1
+    } else if (row.status === 'declined') {
+      cur.declined += 1
+    }
+
+    if (row.replacementRequestedAt !== null) {
+      cur.replacementsRequested += 1
+    }
+
+    map.set(row.memberId, cur)
+  }
+  return map
+}
+
+/**
+ * Ligne enrichie pour le tab "Officiels" — étend `OfficialRow` avec les
+ * métriques de tracking + un flag de licence active saison.
+ */
+export interface OfficialMetricsRow extends OfficialRow {
+  /** Nb de matchs pris « last-minute » (delta confirmé < threshold). */
+  lastMinuteThisSeason: number
+  /** Nb de remplacements demandés sur la saison (assignations marquées). */
+  replacementsRequestedThisSeason: number
+  /**
+   * `true` si le membre a une licence officiel active pour la saison courante
+   * (`member.officialLicense.seasonId === seasonId`). Faux sinon, y compris
+   * quand `officialLicense` est `null` (qualifié mais pas actif).
+   */
+  hasActiveOfficialLicenseThisSeason: boolean
+}
+
+/**
+ * Liste les officials avec leurs métriques enrichies pour le tab "Officiels".
+ * Compose `listOfficialsWithLoad` (load + thresholds + counts standards) et
+ * `buildOfficialMetricsBySeason` (last-minute + remplacements).
+ *
+ * Si `seasonId` est `null` : aucune métrique calculée (toutes à 0), licence
+ * jamais active. La vue affiche un état "aucune saison active" via le
+ * banner existant.
+ */
+export async function listOfficialsWithMetrics(
+  seasonId: string | null,
+): Promise<OfficialMetricsRow[]> {
+  // 1) Liste de base avec load/counts standards (réutilise l'existant).
+  const baseRows = await listOfficialsWithLoad(seasonId)
+  if (baseRows.length === 0 || seasonId === null) {
+    return baseRows.map((r) => ({
+      ...r,
+      lastMinuteThisSeason: 0,
+      replacementsRequestedThisSeason: 0,
+      hasActiveOfficialLicenseThisSeason: false,
+    }))
+  }
+
+  // 2) Métriques enrichies en parallèle (threshold lu côté config).
+  const threshold = await fetchLastMinuteThresholdHours()
+  const metricsByMember = await buildOfficialMetricsBySeason(
+    seasonId,
+    threshold,
+  )
+
+  // 3) Compose.
+  return baseRows.map((r) => {
+    const m = metricsByMember.get(r.id) ?? EMPTY_METRICS
+    const hasActive =
+      r.officialLicense !== null && r.officialLicense.seasonId === seasonId
+    return {
+      ...r,
+      lastMinuteThisSeason: m.lastMinuteClaims,
+      replacementsRequestedThisSeason: m.replacementsRequested,
+      hasActiveOfficialLicenseThisSeason: hasActive,
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Demande de remplacement — pose `replacementRequestedAt` sur l'assignation
+// ---------------------------------------------------------------------------
+
+/**
+ * Marque une assignation comme « remplacement demandé ».
+ *
+ * Write client-direct : les rules sur `/bookings/{id}/officialAssignments` et
+ * `/matches/{id}/officialAssignments` autorisent l'officiel à muter le sous-
+ * ensemble `[status, respondedAt, replacementRequestedAt, replacementRequestedByUid]`
+ * sur sa propre assignation (cf. `firestore.rules` — PR Tab Officiels). L'admin
+ * peut aussi muter (les rules `isAdmin() || isRootAdmin()` couvrent).
+ *
+ * `parentKind` discrimine le path Firestore (booking vs match away).
+ */
+export async function requestReplacement(input: {
+  parentKind: 'booking' | 'match'
+  parentId: string
+  assignmentId: string
+  requestedByUid: string
+}): Promise<void> {
+  const root = input.parentKind === 'booking' ? BOOKINGS : 'matches'
+  const { updateDoc, serverTimestamp } = await import('firebase/firestore')
+  try {
+    await updateDoc(
+      doc(db, root, input.parentId, 'officialAssignments', input.assignmentId),
+      {
+        replacementRequestedAt: serverTimestamp(),
+        replacementRequestedByUid: input.requestedByUid,
+      },
+    )
+  } catch (err: unknown) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`requestReplacement failed [${code}]`, err)
+    throw err
+  }
 }

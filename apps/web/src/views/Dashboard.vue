@@ -18,6 +18,7 @@ import {
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useSeasonsStore } from '@/stores/seasons'
 import type {
   WeekBookingRow,
   WeekBookingStatus,
@@ -27,9 +28,14 @@ import MiniBar from '@/components/ui/MiniBar.vue'
 import Pill from '@/components/ui/Pill.vue'
 
 const store = useDashboardStore()
+const seasonsStore = useSeasonsStore()
 
 onMounted(() => {
   void store.load()
+  // Saison active utilisée pour la sous-ligne du heading ("Saison 2025-26").
+  // Le store seasons est partagé : on évite un re-fetch s'il est déjà chargé
+  // (ex. user navigue depuis /seasons → /).
+  if (seasonsStore.seasons.length === 0) void seasonsStore.load()
 })
 
 const alerts = computed(() => store.alerts)
@@ -63,8 +69,10 @@ const heading = computed(() => {
   const now = new Date()
   const longDate = longDateFormatter.format(now)
   const week = isoWeekNumber(now)
-  // TODO(firestore): read from /seasons where status == 'active'.
-  const seasonLabel = '2025-26'
+  // Saison active dérivée du store seasons (cf. /seasons where status ==
+  // 'active'). Fallback '—' tant que le store n'est pas chargé / s'il n'y a
+  // pas de saison active configurée.
+  const seasonLabel = seasonsStore.activeSeason?.name ?? '—'
   // Capitalize first letter (Intl returns lowercase weekday in fr).
   const pretty = longDate.charAt(0).toUpperCase() + longDate.slice(1)
   return `${pretty} · Semaine ${week} · Saison ${seasonLabel}`

@@ -133,7 +133,22 @@ export const useDuesStore = defineStore('dues', () => {
     } catch (err) {
       const code = err instanceof FirebaseError ? err.code : 'unknown'
       console.error(`[stores/dues] loadMyDues failed [${code}]`, err)
-      error.value = err instanceof Error ? err.message : String(err)
+      // Filet de sécurité au plus haut niveau : un `permission-denied` est
+      // une rule trop restrictive (typique des LIST queries avec `get()`
+      // dynamique côté serveur), pas une vraie panne. On dégrade en listes
+      // vides + on ne setter PAS `error` — sinon le bandeau "Impossible de
+      // charger vos factures" s'affiche alors que c'est juste qu'aucune
+      // query n'a pu remonter de docs. Le warn console reste pour diagnostic.
+      // Le repo dégrade déjà par-query (cf. `tryQuery`), ce catch couvre les
+      // throws qui esquiveraient ce filet (race, throw asynchrone via
+      // snapshot listener interne, etc.).
+      if (code === 'permission-denied') {
+        myActiveDues.value = []
+        myPaidDues.value = []
+        myPastDues.value = []
+      } else {
+        error.value = err instanceof Error ? err.message : String(err)
+      }
     } finally {
       loading.value = false
     }
