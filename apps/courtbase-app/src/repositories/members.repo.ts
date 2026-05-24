@@ -269,6 +269,80 @@ export async function listMembersByIds(
   }
 }
 
+// ─── Officials du club (pour le picker "demander un remplacement") ──
+
+/**
+ * Forme légère renvoyée par `listClubOfficials` — enrichit `MockMember` avec
+ * `linkedUserId` (utile à la détection de conflits coaching) et expose les
+ * `teamIds` denorm si présents côté doc (relation inverse historiquement
+ * portée par `team.playerIds`, mais certains backfills écrivent aussi
+ * `member.teamIds` — on les expose tel quel sans garantie).
+ *
+ * Choix d'un type ad-hoc plutôt qu'étendre `MockMember` : usage isolé au
+ * picker de remplacement, pas de besoin global.
+ */
+export interface OfficialLite extends MockMember {
+  /** uid Auth lié au member. `null` tant qu'aucun compte n'a été lié. */
+  linkedUserId: string | null
+}
+
+/**
+ * Charge tous les membres du club qui ont une **licence officiel active**
+ * pour la saison donnée, **moins** le membre demandeur (`excludeMemberId`).
+ *
+ * Stratégie : query `where('officialLicense.seasonId', '==', seasonId)`
+ * (champ dénormalisé posé par `confirmLicense`). Filtre `id !==
+ * excludeMemberId` côté JS. Tri par lastName / firstName FR.
+ *
+ * Retourne `[]` si :
+ *  - `seasonId` vide ;
+ *  - erreur Firestore (loguée — pas thrown, l'UI montre un empty state).
+ *
+ * NB : pas d'index composite — le champ `officialLicense.seasonId` génère
+ * un single-field index automatique côté Firestore. Volumétrie attendue
+ * faible (quelques dizaines d'officiels max par saison), tri JS-side.
+ */
+export async function listClubOfficials(
+  seasonId: string,
+  excludeMemberId: string,
+): Promise<OfficialLite[]> {
+  if (!seasonId) return []
+  try {
+    const snap = await getDocs(
+      query(
+        collection(db, MEMBERS),
+        where('officialLicense.seasonId', '==', seasonId),
+      ),
+    )
+    if (snap.empty) return []
+    const out: OfficialLite[] = []
+    for (const d of snap.docs) {
+      if (d.id === excludeMemberId) continue
+      const base = snapToMockMember(d)
+      const raw = d.data() as DocumentData
+      const linkedUserId =
+        typeof raw['linkedUserId'] === 'string' && raw['linkedUserId'].length > 0
+          ? (raw['linkedUserId'] as string)
+          : null
+      const teamIds = Array.isArray(raw['teamIds'])
+        ? (raw['teamIds'] as unknown[]).filter(
+            (x): x is string => typeof x === 'string' && x.length > 0,
+          )
+        : []
+      out.push({ ...base, teamIds, linkedUserId })
+    }
+    return out.sort((a, b) => {
+      const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
+      if (byLast !== 0) return byLast
+      return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
+    })
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`[members.repo] listClubOfficials failed [${code}]`, err)
+    return []
+  }
+}
+
 // ─── Photo licence (cf. docs/members/license-photo.md) ──────────────
 
 /** MIME types tolérés côté UI + côté Storage rule. */

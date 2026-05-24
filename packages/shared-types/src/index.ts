@@ -25,6 +25,7 @@ export * from './license'
 export * from './license-extended'
 export * from './license-treasurer'
 export * from './registration'
+export * from './replacementRequest'
 export * from './meta'
 export * from './mock-fixtures'
 

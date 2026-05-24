@@ -119,6 +119,9 @@ const allFutureMatches = computed<ReadonlyArray<OpportunityEntry>>(() => {
   for (const booking of bookingsStore.allBookings) {
     if (booking.slotType !== 'match_home') continue
     if (booking.startMs < now) continue
+    // Règle produit (2026-05-24) : ne jamais lister les matchs sans
+    // adversaire confirmé — même dans la vue "Tous matchs".
+    if (!booking.opponentName || booking.opponentName.trim() === '') continue
     const mt: MatchType | null = booking.matchTypeId
       ? (officialsStore.matchTypesById.get(booking.matchTypeId) ?? null)
       : null
@@ -150,6 +153,7 @@ const allFutureMatches = computed<ReadonlyArray<OpportunityEntry>>(() => {
   // AWAY : tous les matchs `kind === 'away'` futurs.
   for (const match of officialsStore.awayMatches as ReadonlyArray<Match>) {
     if (tsToMs(match.date) < now) continue
+    if (!match.opponentName || match.opponentName.trim() === '') continue
     const mt: MatchType | null =
       officialsStore.matchTypesById.get(match.matchTypeId) ?? null
     const required = mt?.awayOfficialCount ?? 0

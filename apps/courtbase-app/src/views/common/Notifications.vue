@@ -10,13 +10,9 @@ import CbNotifItem from '@/components/ui/CbNotifItem.vue'
 import CbPageHead from '@/components/ui/CbPageHead.vue'
 import { useShellNav } from '@/composables/useShellNav'
 import { useViewport } from '@/composables/useViewport'
-import {
-  countUnread,
-  listNotifications,
-  logMockAction,
-  type MockNotification,
-} from '@/repositories/mock'
+import { logMockAction, type MockNotification } from '@/repositories/mock'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
 
 /**
  * C4 — Liste des notifications (vue commune à tous les rôles).
@@ -35,8 +31,13 @@ import { useAuthStore } from '@/stores/auth'
  */
 const router = useRouter()
 const auth = useAuthStore()
+const notifications = useNotificationsStore()
 const { isDesktop } = useViewport()
-const { tabs, nav, primaryRoleLabel } = useShellNav()
+const { tabs, nav, notifItem, notifBadge, primaryRoleLabel } = useShellNav()
+
+function goToNotifications(): void {
+  void router.push({ name: 'notifications' })
+}
 
 // ─── Filtres ─────────────────────────────────────────────────────
 type FilterKind = 'all' | 'unread' | 'match' | 'requests' | 'urgent'
@@ -69,7 +70,12 @@ function setFilter(id: FilterKind): void {
 }
 
 // ─── Données + filtrage ─────────────────────────────────────────
-const allNotifs = ref<ReadonlyArray<MockNotification>>(listNotifications())
+/**
+ * Source : `useNotificationsStore.notifs` (réactif). `computed` plutôt que
+ * `ref` pour propager les markRead/markAllRead du store dans la liste sans
+ * avoir à resynchroniser manuellement.
+ */
+const allNotifs = computed<ReadonlyArray<MockNotification>>(() => notifications.notifs)
 
 function matchesFilter(n: MockNotification, kind: FilterKind): boolean {
   switch (kind) {
@@ -94,7 +100,7 @@ const filteredNotifs = computed<ReadonlyArray<MockNotification>>(() =>
   allNotifs.value.filter((n) => matchesFilter(n, activeFilter.value)),
 )
 
-const unreadCount = computed(() => countUnread())
+const unreadCount = computed(() => notifications.unreadCount)
 
 function filterLabel(f: FilterDef): string {
   if (!f.countSource) return f.label
@@ -104,14 +110,12 @@ function filterLabel(f: FilterDef): string {
 
 // ─── Refresh (mock) ─────────────────────────────────────────────
 function onRefresh(): void {
-  logMockAction('c4.refresh')
-  // Pas de mutation : les mocks sont read-only. On rafraîchit juste la ref
-  // pour montrer qu'on relit la source — utile quand le repo passera async.
-  allNotifs.value = listNotifications()
+  notifications.refresh()
 }
 
-// ─── Tap notif → deep-link ──────────────────────────────────────
+// ─── Tap notif → deep-link (+ markRead) ─────────────────────────
 function onNotifClick(n: MockNotification): void {
+  notifications.markRead(n.id)
   logMockAction('c4.mark-read', { notifId: n.id })
   if (!n.deepLink) return
   router.push({ name: n.deepLink.name, params: n.deepLink.params ?? {} }).catch((err) => {
@@ -131,6 +135,7 @@ function onBack(): void {
   <CbDesktopShell
     v-if="isDesktop"
     :items="nav"
+    :notif-item="notifItem"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
@@ -201,9 +206,10 @@ function onBack(): void {
     v-else
     title="Notifications"
     show-back
-    :notif-badge="unreadCount > 0"
+    :notif-badge="notifBadge ?? false"
     :tabs="tabs"
     @back="onBack"
+    @notif-click="goToNotifications"
   >
     <div class="cb-chiprow">
       <button

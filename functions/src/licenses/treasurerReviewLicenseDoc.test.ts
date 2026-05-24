@@ -5,7 +5,10 @@
  *  - auth refusée (caller sans rôle treasurer/admin/secretary) ;
  *  - happy path accept tous → status reste `coach_validated` + allAccepted=true ;
  *  - refuse → reset complet (status `pending_parent_docs`, coachValidatedAt/ByUid=null) ;
- *  - pré-condition : refus si status !== `coach_validated`.
+ *  - bypass coach : accept autorisé en `parent_docs_submitted` et
+ *    `pending_parent_docs` (status inchangé) ;
+ *  - pré-conditions : refus si status hors set autorisé (accept et refuse
+ *    ont des sets distincts).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -249,13 +252,95 @@ describe('treasurerReviewLicenseDoc refuse flow', () => {
 })
 
 describe('treasurerReviewLicenseDoc preconditions', () => {
-  it('throws failed-precondition when status is not coach_validated', async () => {
-    wire({ request: buildRequest({ status: 'parent_docs_submitted' }) })
+  it('accept: BYPASS COACH — accepté en parent_docs_submitted (sans validation coach)', async () => {
+    // Cas d'usage : le trésorier valide un doc avant que le coach n'ait
+    // fait sa review (coach absent, doc évident, urgence). Le status doit
+    // rester `parent_docs_submitted` (pas de transition automatique).
+    const w = wire({ request: buildRequest({ status: 'parent_docs_submitted' }) })
+    const out = (await buildHandler().run({
+      auth: { uid: 'tre-uid' },
+      data: { requestId: 'r-1', kind: 'id_front', decision: 'accept' },
+    })) as { newStatus: string; allTreasurerAccepted: boolean }
+    expect(out.newStatus).toBe('parent_docs_submitted')
+    expect(w.capturedUpdate?.status).toBeUndefined()
+    const review = w.capturedUpdate?.[
+      'uploadedDocs.id_front.treasurerReview'
+    ] as { decision: string } | undefined
+    expect(review?.decision).toBe('accepted')
+  })
+
+  it('accept: BYPASS COACH — accepté en pending_parent_docs (autres docs OK après un refus précédent)', async () => {
+    // Cas d'usage : un refus antérieur a fait basculer en
+    // `pending_parent_docs` mais d'autres docs uploadés peuvent rester
+    // valides. Le trésorier doit pouvoir les valider dans la même session.
+    const w = wire({
+      request: buildRequest({
+        status: 'pending_parent_docs',
+        coachValidatedAt: null,
+        coachValidatedByUid: null,
+      }),
+    })
+    const out = (await buildHandler().run({
+      auth: { uid: 'tre-uid' },
+      data: { requestId: 'r-1', kind: 'id_front', decision: 'accept' },
+    })) as { newStatus: string }
+    expect(out.newStatus).toBe('pending_parent_docs')
+    expect(w.capturedUpdate?.status).toBeUndefined()
+  })
+
+  it('accept: throws failed-precondition for statuses outside the allowed set', async () => {
+    // `awaiting_parent_signature` est une étape trésorier interne — pas une
+    // étape de review per-doc. La callable doit refuser.
+    wire({ request: buildRequest({ status: 'awaiting_parent_signature' }) })
     await expect(
       buildHandler().run({
         auth: { uid: 'tre-uid' },
         data: { requestId: 'r-1', kind: 'id_front', decision: 'accept' },
       }),
-    ).rejects.toThrow(/must be 'coach_validated'/)
+    ).rejects.toThrow(/cannot accept in status 'awaiting_parent_signature'/)
+  })
+
+  it('refuse: ENCHAÎNEMENT — accepté aussi en pending_parent_docs (refus consécutifs)', async () => {
+    // Cas d'usage : le trésorier refuse `id_front`, status bascule en
+    // `pending_parent_docs`, puis il veut refuser aussi `id_back` dans la
+    // même session. La callable doit accepter ce 2e refus.
+    const w = wire({
+      request: buildRequest({
+        status: 'pending_parent_docs',
+        coachValidatedAt: null,
+        coachValidatedByUid: null,
+      }),
+    })
+    const out = (await buildHandler().run({
+      auth: { uid: 'tre-uid' },
+      data: {
+        requestId: 'r-1',
+        kind: 'id_back',
+        decision: 'refuse',
+        refusalReason: 'Doc également invalide',
+      },
+    })) as { newStatus: string }
+    expect(out.newStatus).toBe('pending_parent_docs')
+    expect(w.capturedUpdate?.status).toBe('pending_parent_docs')
+    const review = w.capturedUpdate?.[
+      'uploadedDocs.id_back.treasurerReview'
+    ] as { decision: string; refusalReason: string } | undefined
+    expect(review?.decision).toBe('refused')
+    expect(review?.refusalReason).toBe('Doc également invalide')
+  })
+
+  it('refuse: throws failed-precondition for statuses outside {coach_validated, pending_parent_docs}', async () => {
+    wire({ request: buildRequest({ status: 'parent_docs_submitted' }) })
+    await expect(
+      buildHandler().run({
+        auth: { uid: 'tre-uid' },
+        data: {
+          requestId: 'r-1',
+          kind: 'id_front',
+          decision: 'refuse',
+          refusalReason: 'Refus tardif',
+        },
+      }),
+    ).rejects.toThrow(/cannot refuse in status 'parent_docs_submitted'/)
   })
 })

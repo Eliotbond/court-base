@@ -14,7 +14,6 @@ import { useAuthStore } from '@/stores/auth'
  *  - **Desktop split-screen** : panneau gauche gradient slate avec hero
  *    marketing, panneau droit fond blanc avec form (cf. JSX bundle).
  *  - **Boutons OAuth** : icône à gauche, label centré (pas centré bête).
- *  - **Apple button** : fond `--slate-900`, texte blanc (pas outline).
  *
  * Auth : utilise le **vrai store Firebase Auth** (deny-orphan +
  * acceptInvitation). En cas de compte non autorisé → toast rose.
@@ -72,15 +71,6 @@ async function onGoogle(): Promise<void> {
     if (auth.isSignedIn) await navigatePostSignIn()
   } catch {
     // L'erreur est déjà capturée dans `auth.lastError`.
-  }
-}
-
-async function onApple(): Promise<void> {
-  try {
-    await auth.signInWithApple()
-    if (auth.isSignedIn) await navigatePostSignIn()
-  } catch {
-    /* lastError set */
   }
 }
 
@@ -225,19 +215,6 @@ function toggleSignup(): void {
               </svg>
             </span>
             <span class="signin-oauth-label">Continuer avec Google</span>
-          </button>
-          <button
-            type="button"
-            class="cb-btn lg block signin-oauth signin-apple"
-            :disabled="loading"
-            @click="onApple"
-          >
-            <span class="signin-oauth-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                <path d="M16.37 12.7c-.03-3.07 2.5-4.55 2.62-4.62-1.43-2.09-3.66-2.38-4.45-2.41-1.9-.19-3.7 1.12-4.66 1.12-.98 0-2.45-1.09-4.03-1.06-2.07.03-3.98 1.2-5.04 3.05-2.15 3.73-.55 9.24 1.55 12.27 1.03 1.48 2.25 3.15 3.86 3.09 1.55-.06 2.14-1 4.02-1 1.86 0 2.4 1 4.04.97 1.66-.03 2.72-1.51 3.74-3 .68-1 1.21-2.08 1.61-3.22-1.8-.69-3.25-2.45-3.26-4.19ZM13.4 4.42c.85-1.03 1.42-2.47 1.26-3.9-1.22.05-2.7.81-3.58 1.84-.79.91-1.47 2.36-1.29 3.77 1.36.1 2.75-.69 3.61-1.71Z"/>
-              </svg>
-            </span>
-            <span class="signin-oauth-label">Continuer avec Apple</span>
           </button>
           <button
             type="button"
@@ -395,19 +372,6 @@ function toggleSignup(): void {
           </button>
           <button
             type="button"
-            class="cb-btn lg block signin-oauth signin-apple"
-            :disabled="loading"
-            @click="onApple"
-          >
-            <span class="signin-oauth-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                <path d="M16.37 12.7c-.03-3.07 2.5-4.55 2.62-4.62-1.43-2.09-3.66-2.38-4.45-2.41-1.9-.19-3.7 1.12-4.66 1.12-.98 0-2.45-1.09-4.03-1.06-2.07.03-3.98 1.2-5.04 3.05-2.15 3.73-.55 9.24 1.55 12.27 1.03 1.48 2.25 3.15 3.86 3.09 1.55-.06 2.14-1 4.02-1 1.86 0 2.4 1 4.04.97 1.66-.03 2.72-1.51 3.74-3 .68-1 1.21-2.08 1.61-3.22-1.8-.69-3.25-2.45-3.26-4.19ZM13.4 4.42c.85-1.03 1.42-2.47 1.26-3.9-1.22.05-2.7.81-3.58 1.84-.79.91-1.47 2.36-1.29 3.77 1.36.1 2.75-.69 3.61-1.71Z"/>
-              </svg>
-            </span>
-            <span class="signin-oauth-label">Continuer avec Apple</span>
-          </button>
-          <button
-            type="button"
             class="cb-btn outline lg block signin-oauth"
             :disabled="loading"
             @click="goEmailMode"
@@ -543,16 +507,6 @@ function toggleSignup(): void {
   flex: 1;
   text-align: center;
   padding-right: 24px;
-}
-
-/* Bouton Apple — fond slate-900, texte blanc (pas outline). */
-.signin-apple {
-  background: var(--slate-900);
-  color: #fff;
-  border-color: var(--slate-900);
-}
-.signin-apple:hover {
-  background: var(--slate-800);
 }
 
 /* Liens textuels (forgot password, toggle signup). */

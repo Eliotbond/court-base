@@ -2,6 +2,7 @@ import { computed } from 'vue'
 import {
   Bell,
   BellRing,
+  CalendarCheck,
   CalendarDays,
   Clipboard,
   ClipboardList,
@@ -15,10 +16,12 @@ import {
   Users,
 } from 'lucide-vue-next'
 
-import { countUnread, listRegistrationsToTreat, listRequests } from '@/repositories/mock'
+import { listRequests } from '@/repositories/mock'
 import { useAuthStore } from '@/stores/auth'
 import { useLicenseRequestsStore } from '@/stores/licenseRequests'
+import { useNotificationsStore } from '@/stores/notifications'
 import { useOfficialsStore } from '@/stores/officials'
+import { useRegistrationsStore } from '@/stores/registrations'
 import type { CbNavItem, CbNavItemGroup } from '@/components/ui/CbSidebar.vue'
 import type { CbTab } from '@/components/ui/CbTabBar.vue'
 import type { AppRole } from '@/types/roles'
@@ -55,10 +58,30 @@ import type { AppRole } from '@/types/roles'
 export function useShellNav() {
   const authStore = useAuthStore()
   const licenseRequestsStore = useLicenseRequestsStore()
+  const notificationsStore = useNotificationsStore()
   const officialsStore = useOfficialsStore()
+  const registrationsStore = useRegistrationsStore()
 
-  const notifBadge = computed(() => countUnread() || null)
-  const coachRegistrationsBadge = computed(() => listRegistrationsToTreat().length || null)
+  /**
+   * Badge "non lues" — lit `useNotificationsStore.unreadCount` (refactor
+   * 2026-05-24). Avant : `countUnread()` (fonction pure) → le computed Vue
+   * n'était jamais invalidé, le badge restait figé y compris après
+   * `markRead`. Maintenant : ref Pinia réactif, propagé jusqu'au shell.
+   */
+  const notifBadge = computed(() => notificationsStore.unreadCount || null)
+  /**
+   * Badge "Inscriptions" coach — uniquement les inscriptions **actionables**
+   * (bucket `demande` + `essai`, cf. `bucketFor`). Source : store réel
+   * `useRegistrationsStore.counts.actionable`. Avant : `listRegistrationsToTreat()`
+   * mock comptait toutes les statuts pré-décision indépendamment du club →
+   * affichait par ex. "4" alors que toutes étaient en bucket `confirmé`.
+   * Le store est alimenté par `HomeCoachSection` et `coach/Registrations.vue` ;
+   * sur les autres vues coach le badge sera à 0 tant que le store n'a pas
+   * été chargé (acceptable — meilleur que faux positif).
+   */
+  const coachRegistrationsBadge = computed(
+    () => registrationsStore.counts.actionable || null,
+  )
   const adminRequestsBadge = computed(() => listRequests({ status: 'pending' }).length || null)
   /**
    * Matchs "à pourvoir" pour l'officiel — somme des matchs incomplets.
@@ -125,6 +148,7 @@ export function useShellNav() {
 
   const coachNav = computed<CbNavItem[]>(() => [
     { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
+    { icon: CalendarCheck, label: 'Mon calendrier', routeName: 'my-calendar' },
     { icon: Users, label: 'Mes équipes', routeName: 'team', activeRoutes: ['team-roster', 'member', 'member-edit', 'member-new', 'planning', 'training-attendance', 'away-match-create'] },
     { icon: CalendarDays, label: 'Agenda', routeName: 'agenda' },
     { icon: Clipboard, label: 'Inscriptions', routeName: 'registrations', activeRoutes: ['registration-detail'], badge: coachRegistrationsBadge.value },
@@ -134,6 +158,7 @@ export function useShellNav() {
 
   const officialNav = computed<CbNavItem[]>(() => [
     { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
+    { icon: CalendarCheck, label: 'Mon calendrier', routeName: 'my-calendar' },
     { icon: BellRing, label: 'Matchs à pourvoir', routeName: 'matches-open', activeRoutes: ['match-detail'], badge: officialOpenMatchesBadge.value },
     { icon: CalendarDays, label: 'Mes assignations', routeName: 'my-assignments' },
     { icon: Bell, label: 'Notifications', routeName: 'notifications', badge: notifBadge.value },
@@ -141,6 +166,7 @@ export function useShellNav() {
 
   const adminNav = computed<CbNavItem[]>(() => [
     { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
+    { icon: CalendarCheck, label: 'Mon calendrier', routeName: 'my-calendar' },
     { icon: BellRing, label: 'Staffing', routeName: 'staffing', activeRoutes: ['staffing-detail'] },
     { icon: Inbox, label: 'Demandes', routeName: 'requests', activeRoutes: ['request-detail'], badge: adminRequestsBadge.value },
     { icon: FileCheck, label: 'Demandes licence', routeName: 'license-requests' },
@@ -151,7 +177,7 @@ export function useShellNav() {
 
   const playerNav = computed<CbNavItem[]>(() => [
     { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
-    { icon: CalendarDays, label: 'Mon agenda', routeName: 'agenda' },
+    { icon: CalendarCheck, label: 'Mon calendrier', routeName: 'my-calendar' },
     { icon: Bell, label: 'Notifications', routeName: 'notifications', badge: notifBadge.value },
     { icon: UserIcon, label: 'Mon profil', routeName: 'profile-settings' },
   ])
@@ -226,11 +252,12 @@ export function useShellNav() {
           activeRoutes: ['staffing-detail'],
         }
       case 'player':
-        // Pas de route `player-matches` dédiée — fallback `agenda` (brief).
+        // Le joueur arrive directement sur "Mon calendrier" (plus pertinent
+        // que l'agenda club-wide qui ne lui est pas destiné).
         return {
-          icon: CalendarDays,
-          label: 'Agenda',
-          routeName: 'agenda',
+          icon: CalendarCheck,
+          label: 'Mon calendrier',
+          routeName: 'my-calendar',
         }
     }
   }
@@ -273,7 +300,7 @@ export function useShellNav() {
       case 'coach':
         return [
           { icon: Users, label: 'Mes équipes', routeName: 'team', activeRoutes: ['team-roster', 'member', 'member-edit', 'member-new', 'planning', 'training-attendance', 'away-match-create'] },
-          { icon: CalendarDays, label: 'Agenda', routeName: 'agenda' },
+          { icon: CalendarDays, label: 'Agenda club', routeName: 'agenda' },
           { icon: Clipboard, label: 'Inscriptions', routeName: 'registrations', activeRoutes: ['registration-detail'], badge: coachRegistrationsBadge.value },
           { icon: FileCheck, label: 'Licences', routeName: 'license-reviews', activeRoutes: ['license-request-review'], badge: coachLicenseReviewsBadge.value },
         ]
@@ -287,10 +314,13 @@ export function useShellNav() {
           { icon: BellRing, label: 'Staffing', routeName: 'staffing', activeRoutes: ['staffing-detail'] },
           { icon: Inbox, label: 'Demandes', routeName: 'requests', activeRoutes: ['request-detail'], badge: adminRequestsBadge.value },
           { icon: FileCheck, label: 'Demandes licence', routeName: 'license-requests' },
+          { icon: CalendarDays, label: 'Agenda club', routeName: 'agenda' },
           { icon: Megaphone, label: 'Diffuser', routeName: 'broadcast' },
         ]
       case 'player':
-        return [{ icon: CalendarDays, label: 'Mon agenda', routeName: 'agenda' }]
+        // Pour le joueur, le nav "rôle" est minimal — Mon calendrier est
+        // déjà exposé en tête de la sidebar (group "home").
+        return []
     }
   }
 
@@ -316,13 +346,25 @@ export function useShellNav() {
    * "top-level" séparé qui aurait imposé un cas spécial dans le shell.
    *
    * Groups suivants : un par rôle actif (Coach > Officiel > Admin > Joueur)
-   * avec son label uppercase. Notifications + Profil sont gérés par le
-   * footer existant de la sidebar (userchip + à venir bouton Notifs) —
-   * **pas** dans les groups par rôle.
+   * avec son label uppercase. L'item **Notifications** est lui exposé
+   * séparément via `notifItem` et rendu dans le footer de la sidebar
+   * (au-dessus du userchip) — pour qu'il reste visible quel que soit le
+   * scroll des groups et conserver un emplacement persistant pour le
+   * badge non-lues.
    */
   const nav = computed<CbNavItemGroup[]>(() => {
+    // Group "home" — Accueil + Mon calendrier (visibles pour tous les rôles
+    // sans label, en tête de sidebar). Mon calendrier est la vue personnelle
+    // multi-rôle (entraînements/matchs des équipes du caller + assignations
+    // officiel) ; elle complète l'Agenda club-wide réservé aux coachs/admin.
     const groups: CbNavItemGroup[] = [
-      { label: '', items: [{ icon: HomeIcon, label: 'Accueil', routeName: 'home' }] },
+      {
+        label: '',
+        items: [
+          { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
+          { icon: CalendarCheck, label: 'Mon calendrier', routeName: 'my-calendar' },
+        ],
+      },
     ]
     for (const role of activeRoles.value) {
       const items = navItemsForRole(role)
@@ -332,6 +374,19 @@ export function useShellNav() {
     }
     return groups
   })
+
+  /**
+   * Item Notifications dédié au footer sidebar (au-dessus du userchip).
+   * Porte le `notifBadge` réactif — c'est le **seul** endroit où l'utilisateur
+   * desktop voit le compteur non-lues depuis la nav principale (le bell du
+   * header existe seulement en mobile).
+   */
+  const notifItem = computed<CbNavItem>(() => ({
+    icon: Bell,
+    label: 'Notifications',
+    routeName: 'notifications',
+    badge: notifBadge.value,
+  }))
 
   /**
    * Label de rôle principal pour l'avatar du shell. Priorité dédiée
@@ -353,6 +408,7 @@ export function useShellNav() {
     // ─── Nouvelle API (PR-M-A) ──
     tabs,
     nav,
+    notifItem,
     primaryRoleLabel,
     // ─── Badges (exposés pour les vues qui les composent) ──
     notifBadge,

@@ -1,49 +1,57 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { FirebaseError } from 'firebase/app'
 import {
   AlertTriangle,
-  BellRing,
+  CalendarDays,
   ChevronRight,
   Clipboard,
   FileCheck,
+  MapPin,
 } from 'lucide-vue-next'
 
 import CbPill from '@/components/ui/CbPill.vue'
 import CbSectionHeader from '@/components/ui/CbSectionHeader.vue'
-import {
-  listMembersByTeam,
-  listRegistrationsToTreat,
-  type MockTeam,
-} from '@/repositories/mock'
+import { listMembersByTeam, type MockTeam } from '@/repositories/mock'
 import { useAuthStore } from '@/stores/auth'
+import { useBookingsStore, type BookingRow } from '@/stores/bookings'
 import { useLicenseRequestsStore } from '@/stores/licenseRequests'
+import { useRegistrationsStore } from '@/stores/registrations'
 import { useTeamsStore } from '@/stores/teams'
+import { bucketFor } from '@/utils/registrationBuckets'
 
 /**
- * Section Home — bloc coach.
+ * Section Home — bloc coach (réécrite 2026-05-24, branchée Firestore).
  *
- * Rendue uniquement si `auth.isCoach` (gate dans `Home.vue` — PR-M-C). On
- * peut donc charger sans double-check.
+ * Rendue uniquement si `auth.isCoach` (gate dans `Home.vue` — PR-M-C).
  *
- * Source data (cohérent avec l'état hybride de l'app — cf. mémoire
+ * Source data (hybride mock + Firestore réel — cf. mémoire
  * `courtbase_app_firestore_wiring`) :
  *  - `teamsStore.loadForCoach(...)` : **Firestore réel** quand le user a
  *    `userDoc.memberId`, fallback **mock** sinon.
+ *  - `registrationsStore.load(teamIds)` : **Firestore réel** quand des teams
+ *    sont chargées, fallback **mock**. Compte le bucket `actionable` (demande
+ *    + essai en cours) pour l'action "à valider".
  *  - `licenseRequestsStore.loadPendingReviewForCoach()` : idem hybride
  *    (Firestore avec scope teamIds réels, sinon `MOCK_LICENSE_REQUESTS`).
- *  - `listRegistrationsToTreat()` + `listMembersByTeam(team.id)` :
- *    **mock-only** (pas encore branché Firestore — sera fait dans une PR
- *    dédiée registrations / members).
+ *  - `bookingsStore.loadActiveContext()` : Firestore réel — alimente le
+ *    "prochain rendez-vous" par équipe.
+ *  - `listMembersByTeam(team.id)` (excluded count) : **mock-only** — pas
+ *    encore de fetch `/cotisations` côté coach app. La pill "exclus" s'affiche
+ *    uniquement en mode mock (count 0 en prod tant que non branché).
  *
- * Navigation interne via `router.push({ name })`. Pas d'event vers le parent.
+ * Affichage :
+ *  1. Cards par équipe (nom + catégorie + prochain rendez-vous Firestore).
+ *  2. "À traiter" : inscriptions actionables + licences à valider + exclus.
  */
 
 const router = useRouter()
 const auth = useAuthStore()
+const bookingsStore = useBookingsStore()
 const teamsStore = useTeamsStore()
 const licenseRequestsStore = useLicenseRequestsStore()
+const registrationsStore = useRegistrationsStore()
 
 // ─── Data fetch (idempotent) ─────────────────────────────────────
 onMounted(async () => {
@@ -51,7 +59,13 @@ onMounted(async () => {
     if (teamsStore.teams.length === 0) {
       await teamsStore.loadForCoach(auth.userDoc?.memberId ?? null, auth.uid)
     }
-    await licenseRequestsStore.loadPendingReviewForCoach()
+    const teamIds = teamsStore.teams.map((t) => t.id)
+    // Lance les trois fetchs en parallèle — ils sont indépendants.
+    await Promise.all([
+      bookingsStore.loadActiveContext(),
+      registrationsStore.load(teamIds),
+      licenseRequestsStore.loadPendingReviewForCoach(),
+    ])
   } catch (err) {
     const code = err instanceof FirebaseError ? err.code : 'unknown'
     console.error(`[home.coach] load failed [${code}]`, err)
@@ -61,9 +75,19 @@ onMounted(async () => {
 // ─── Derived ─────────────────────────────────────────────────────
 const coachTeams = computed<ReadonlyArray<MockTeam>>(() => teamsStore.teams)
 
-const registrationsToTreatCount = computed(() => listRegistrationsToTreat().length)
+/** Compte des registrations "actionables" (demandes + essais en cours). */
+const registrationsToTreatCount = computed(
+  () => registrationsStore.counts.actionable,
+)
 
+/**
+ * Compte des exclusions cotisation — **mock-only** tant que `/cotisations`
+ * n'est pas branché côté coach app. En mode firestore réel, `duesStatus` est
+ * defaulté à `'paid'` côté `members.repo` ; ce count restera donc à 0 jusqu'à
+ * la PR cotisations.
+ */
 const excludedMembersCount = computed(() => {
+  if (teamsStore.source !== 'mock') return 0
   const seen = new Set<string>()
   for (const team of coachTeams.value) {
     for (const m of listMembersByTeam(team.id)) {
@@ -76,7 +100,66 @@ const excludedMembersCount = computed(() => {
 const licenseReviewsCount = computed(() => licenseRequestsStore.pendingReviewList.length)
 
 function countExcludedInTeam(teamId: string): number {
+  if (teamsStore.source !== 'mock') return 0
   return listMembersByTeam(teamId).filter((m) => m.duesStatus === 'excluded').length
+}
+
+// ─── Prochain rendez-vous par équipe (Firestore réel) ────────────
+
+/** Prochain booking (training | match_home | match_away) à venir pour une équipe. */
+function nextBookingForTeam(teamId: string): BookingRow | null {
+  const now = Date.now()
+  // bookingsForTeam filtre déjà par teamId — pas besoin de re-filtrer.
+  const upcoming = bookingsStore
+    .bookingsForTeam(teamId)
+    .filter((b) => b.startMs >= now && b.status !== 'cancelled')
+    .sort((a, b) => a.startMs - b.startMs)
+  return upcoming[0] ?? null
+}
+
+const DATE_FMT = new Intl.DateTimeFormat('fr-CH', {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+})
+
+function fmtNextLabel(b: BookingRow | null): string {
+  if (!b) return ''
+  const raw = DATE_FMT.format(new Date(b.startMs))
+  const label = raw.charAt(0).toUpperCase() + raw.slice(1)
+  return `${label} · ${b.startTime}`
+}
+
+function nextKindLabel(b: BookingRow | null): string {
+  if (!b) return ''
+  switch (b.slotType) {
+    case 'training':
+      return 'Entraînement'
+    case 'match_home':
+      return 'Match domicile'
+    case 'match_away':
+      return 'Match extérieur'
+    case 'reserve':
+      return 'Réserve'
+    case 'custom':
+      return 'Autre'
+    default:
+      return ''
+  }
+}
+
+function nextPillTone(b: BookingRow | null): 'sky' | 'emerald' | 'violet' | 'slate' {
+  if (!b) return 'slate'
+  switch (b.slotType) {
+    case 'training':
+      return 'sky'
+    case 'match_home':
+      return 'emerald'
+    case 'match_away':
+      return 'violet'
+    default:
+      return 'slate'
+  }
 }
 
 // ─── Navigation ──────────────────────────────────────────────────
@@ -95,9 +178,6 @@ function openExcluded(): void {
 }
 function openLicenseReviews(): void {
   router.push({ name: 'license-reviews' })
-}
-function openMyAssignments(): void {
-  router.push({ name: 'my-assignments' })
 }
 </script>
 
@@ -131,12 +211,35 @@ function openMyAssignments(): void {
             </CbPill>
           </div>
           <div class="cb-sub home-section__team-sub">
-            {{ t.playerIds.length }} joueurs<span v-if="t.nextTraining">
-              · prochain training {{ t.nextTraining }}</span>
+            {{ t.playerIds.length }} joueurs
           </div>
           <div v-if="t.categoryName" class="home-section__team-cat">
             <CbPill tone="violet">{{ t.categoryName }}</CbPill>
           </div>
+
+          <!-- Prochain rendez-vous (Firestore) ─────────────────── -->
+          <template v-if="nextBookingForTeam(t.id)">
+            <div class="home-section__team-next">
+              <CbPill :tone="nextPillTone(nextBookingForTeam(t.id))" dot>
+                {{ nextKindLabel(nextBookingForTeam(t.id)) }}
+              </CbPill>
+              <div class="home-section__team-next-when mono">
+                {{ fmtNextLabel(nextBookingForTeam(t.id)) }}
+              </div>
+              <div
+                v-if="nextBookingForTeam(t.id)?.opponentName"
+                class="home-section__team-next-opp"
+              >
+                vs {{ nextBookingForTeam(t.id)?.opponentName }}
+              </div>
+              <div
+                v-if="nextBookingForTeam(t.id)?.venueName"
+                class="cb-sub home-section__team-next-venue"
+              >
+                <MapPin :size="12" /> {{ nextBookingForTeam(t.id)?.venueName }}
+              </div>
+            </div>
+          </template>
         </div>
       </button>
     </div>
@@ -155,9 +258,9 @@ function openMyAssignments(): void {
         </span>
         <span class="home-section__action-body">
           <span class="home-section__action-title">
-            {{ registrationsToTreatCount }} inscriptions à valider
+            {{ registrationsToTreatCount }} inscription{{ registrationsToTreatCount > 1 ? 's' : '' }} à valider
           </span>
-          <span class="home-section__action-sub">à traiter</span>
+          <span class="home-section__action-sub">demandes + essais en cours</span>
         </span>
         <ChevronRight :size="18" />
       </button>
@@ -173,9 +276,12 @@ function openMyAssignments(): void {
         </span>
         <span class="home-section__action-body">
           <span class="home-section__action-title">
-            {{ excludedMembersCount }} exclusions à gérer
+            {{ excludedMembersCount }} exclusion{{ excludedMembersCount > 1 ? 's' : '' }} à gérer
           </span>
-          <span class="home-section__action-sub">à traiter</span>
+          <span class="home-section__action-sub">
+            <CbPill tone="amber" solid>MOCK</CbPill>
+            cotisation non branchée
+          </span>
         </span>
         <ChevronRight :size="18" />
       </button>
@@ -199,21 +305,14 @@ function openMyAssignments(): void {
         <ChevronRight :size="18" />
       </button>
 
-      <button
-        v-if="auth.isOfficial"
-        type="button"
-        class="home-section__action-btn home-section__action-btn--violet"
-        @click="openMyAssignments"
+      <!-- Empty state inline si aucune action ──────────────────── -->
+      <div
+        v-if="registrationsToTreatCount === 0 && excludedMembersCount === 0 && licenseReviewsCount === 0"
+        class="home-section__empty-inline"
       >
-        <span class="home-section__action-icon home-section__action-icon--violet">
-          <BellRing :size="18" />
-        </span>
-        <span class="home-section__action-body">
-          <span class="home-section__action-title">Mes assignations</span>
-          <span class="home-section__action-sub">à confirmer</span>
-        </span>
-        <ChevronRight :size="18" />
-      </button>
+        <CalendarDays :size="14" />
+        Aucune action en attente pour vos équipes.
+      </div>
     </div>
   </section>
 </template>
@@ -272,6 +371,28 @@ function openMyAssignments(): void {
 .home-section__team-cat {
   margin-top: 8px;
 }
+.home-section__team-next {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.home-section__team-next-when {
+  font-weight: 700;
+  font-size: 13px;
+}
+.home-section__team-next-opp {
+  font-weight: 600;
+  font-size: 13px;
+}
+.home-section__team-next-venue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .home-section__actions {
   display: flex;
   flex-direction: column;
@@ -327,6 +448,7 @@ function openMyAssignments(): void {
   line-height: 1.2;
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 .home-section__action-title {
   font-weight: 600;
@@ -336,5 +458,19 @@ function openMyAssignments(): void {
   font-size: 12px;
   opacity: 0.75;
   margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.home-section__empty-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  font-size: 13px;
+  color: var(--text-subtle);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
 }
 </style>

@@ -1,39 +1,69 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { FirebaseError } from 'firebase/app'
 import {
   Award,
   Calendar,
   ChevronRight,
   Info,
+  MapPin,
+  Megaphone,
+  ShieldAlert,
 } from 'lucide-vue-next'
 
-import CbMatchCard from '@/components/ui/CbMatchCard.vue'
+import CbEmptyState from '@/components/ui/CbEmptyState.vue'
+import CbMatchTypeChip from '@/components/ui/CbMatchTypeChip.vue'
+import CbPill from '@/components/ui/CbPill.vue'
 import CbSectionHeader from '@/components/ui/CbSectionHeader.vue'
-import {
-  listAssignmentsForMatch,
-  listOpenMatches,
-  listRequests,
-  type MockMatch,
-} from '@/repositories/mock'
+import { useActiveSeason } from '@/composables/useSeason'
+import { useBookingsStore } from '@/stores/bookings'
+import { useOfficialsStore, type OpportunityEntry } from '@/stores/officials'
+import { listRequests } from '@/repositories/mock'
 
 /**
- * Section Home — bloc admin.
+ * Section Home — bloc admin (réécrite 2026-05-24, branchée Firestore partielle).
  *
  * Rendue uniquement si `auth.isAdmin` (gate dans `Home.vue` — PR-M-C).
  *
- * Source data : **mock-only** pour MVP (`listRequests`, `listOpenMatches`).
- * À brancher Firestore dans une PR dédiée (cf. brief `menu-refactor.md`
- * § Data loading scope — `requestsStore.loadPending` +
- * `staffingStore.loadUpcoming`).
+ * Source data :
+ *  - **`useOfficialsStore`** (Firestore réel) : `incompleteMatchesCount` —
+ *    matchs HOME ou AWAY non staffés à venir (utilisé comme KPI + carte
+ *    d'accès Staffing). Et `openOpportunitiesForLevel(1).filter(< 7j)` —
+ *    matchs à pourvoir cette semaine (top 5).
+ *  - **MOCK** (`listRequests`) : tous les types de "Demandes à traiter"
+ *    (licence, payment_exception, match_move). Les workflows admin requests
+ *    vivent côté `apps/web` pour MVP — pas de fetch côté courtbase-app.
  *
- * Pas d'`onMounted` (la couche mock est synchrone). Quand on branchera
- * Firestore, ajouter un `onMounted` avec try/catch FirebaseError.
+ * Affichage :
+ *  1. KPI staffing court-terme + CTA staffing.
+ *  2. Demandes à traiter (MOCK) — encore non branchées Firestore.
+ *  3. Matchs à pourvoir cette semaine (Firestore via `useOfficialsStore`).
+ *  4. CTA broadcast.
  */
 
 const router = useRouter()
+const bookingsStore = useBookingsStore()
+const officialsStore = useOfficialsStore()
+const seasonStore = useActiveSeason()
 
-// ─── Derived ─────────────────────────────────────────────────────
+const loading = ref(true)
+
+// ─── Mount : hydrate bookings + officials ────────────────────────
+onMounted(async () => {
+  try {
+    await bookingsStore.loadActiveContext()
+    const resolvedSeasonId = (await seasonStore.load()) ?? 'mock-season'
+    await officialsStore.loadOfficialContext(resolvedSeasonId)
+  } catch (err) {
+    const code = err instanceof FirebaseError ? err.code : 'unknown'
+    console.error(`[home.admin] load failed [${code}]`, err)
+  } finally {
+    loading.value = false
+  }
+})
+
+// ─── Derived — Demandes (MOCK) ───────────────────────────────────
 const licenseRequestsCount = computed(
   () => listRequests({ kind: 'license', status: 'pending' }).length,
 )
@@ -44,59 +74,74 @@ const matchMoveRequestsCount = computed(
   () => listRequests({ kind: 'match_move', status: 'pending' }).length,
 )
 
-function isWithinNextSevenDays(isoDate: string): boolean {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const horizon = new Date(today)
-  horizon.setDate(horizon.getDate() + 7)
-  const parts = isoDate.split('-')
-  const y = Number(parts[0] ?? '1970')
-  const m = Number(parts[1] ?? '1')
-  const d = Number(parts[2] ?? '1')
-  const target = new Date(y, m - 1, d)
-  return target >= today && target <= horizon
+// ─── Derived — Staffing (Firestore) ──────────────────────────────
+
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+
+const incompleteMatchesCount = computed(() => officialsStore.incompleteMatchesCount)
+
+function opportunityStartMs(o: OpportunityEntry): number {
+  const ts = o.date as { seconds?: number; toMillis?: () => number }
+  if (typeof ts.toMillis === 'function') return ts.toMillis()
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000
+  return 0
 }
 
-const adminOpenHomeMatches = computed<ReadonlyArray<MockMatch>>(() =>
-  listOpenMatches()
-    .filter((m) => m.kind === 'home')
-    .filter((m) => isWithinNextSevenDays(m.date))
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, 5),
-)
+/**
+ * Pour l'admin, on agrège les opportunités sur **tous les niveaux** (1-3 pour
+ * HOME et global pour AWAY). Le niveau n'a pas le même sens qu'un officiel
+ * individuel — un admin veut voir TOUT ce qui manque, pas seulement son
+ * niveau. On boucle de level=1 à level=5 (couvre les niveaux du club) et on
+ * dédoublonne par `kind:parentId`.
+ */
+const allOpenOpportunities = computed<ReadonlyArray<OpportunityEntry>>(() => {
+  const seen = new Set<string>()
+  const out: OpportunityEntry[] = []
+  for (const level of [1, 2, 3, 4, 5]) {
+    for (const o of officialsStore.openOpportunitiesForLevel(level)) {
+      const key = `${o.kind}:${o.parentId}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(o)
+    }
+  }
+  return out.sort((a, b) => opportunityStartMs(a) - opportunityStartMs(b))
+})
+
+const upcomingWeekMatches = computed<ReadonlyArray<OpportunityEntry>>(() => {
+  const start = Date.now()
+  const cutoff = start + SEVEN_DAYS_MS
+  return allOpenOpportunities.value
+    .filter((o) => {
+      const ms = opportunityStartMs(o)
+      return ms >= start && ms <= cutoff
+    })
+    .slice(0, 5)
+})
 
 // ─── Formatage ───────────────────────────────────────────────────
-const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
+const DATE_FMT = new Intl.DateTimeFormat('fr-CH', {
   weekday: 'short',
   day: 'numeric',
   month: 'short',
 })
 
-function formatDate(isoDate: string): string {
-  const parts = isoDate.split('-')
-  const y = Number(parts[0] ?? '1970')
-  const m = Number(parts[1] ?? '1')
-  const d = Number(parts[2] ?? '1')
-  const raw = dateFormatter.format(new Date(y, m - 1, d))
+function fmtDate(ms: number): string {
+  if (!ms) return '—'
+  const raw = DATE_FMT.format(new Date(ms))
   return raw.charAt(0).toUpperCase() + raw.slice(1)
 }
 
-function initialsForMember(memberId: string): string {
-  const fallback = memberId
-    .replace(/^m-/, '')
-    .split('-')
-    .map((p) => p.charAt(0).toUpperCase())
-    .join('')
-    .slice(0, 2)
-  return fallback || '??'
+function oppOpponent(o: OpportunityEntry): string {
+  return o.opponentName ?? 'Adversaire à confirmer'
 }
 
-function officialsForMatch(matchId: string): string[] {
-  return listAssignmentsForMatch(matchId).slice(0, 4).map((a) => initialsForMember(a.memberId))
+function oppVenue(o: OpportunityEntry): string {
+  return o.location ?? (o.kind === 'home' ? 'Salle non attribuée' : 'Adresse à confirmer')
 }
 
-function filledForMatch(match: MockMatch): number {
-  return listAssignmentsForMatch(match.id).length
+function oppSlotsLabel(o: OpportunityEntry): string {
+  return o.openSlots > 1 ? `${o.openSlots} slots` : '1 slot'
 }
 
 // ─── Navigation ──────────────────────────────────────────────────
@@ -109,8 +154,8 @@ function openStaffing(): void {
 function openBroadcast(): void {
   router.push({ name: 'broadcast' })
 }
-function openMatchDetail(matchId: string): void {
-  router.push({ name: 'match-detail', params: { id: matchId } })
+function openMatchDetail(parentId: string): void {
+  router.push({ name: 'match-detail', params: { id: parentId } })
 }
 </script>
 
@@ -118,7 +163,32 @@ function openMatchDetail(matchId: string): void {
   <section class="home-section">
     <CbSectionHeader title="Admin" />
 
-    <CbSectionHeader title="Demandes à traiter" />
+    <!-- ─── KPI : Staffing court-terme (Firestore) ─────────────── -->
+    <button
+      v-if="incompleteMatchesCount > 0"
+      type="button"
+      class="home-section__action-btn home-section__action-btn--rose"
+      @click="openStaffing"
+    >
+      <span class="home-section__action-icon home-section__action-icon--rose">
+        <ShieldAlert :size="18" />
+      </span>
+      <span class="home-section__action-body">
+        <span class="home-section__action-title">
+          {{ incompleteMatchesCount }} match{{ incompleteMatchesCount > 1 ? 's' : '' }} à staffer
+        </span>
+        <span class="home-section__action-sub">officiels manquants ou salle non attribuée</span>
+      </span>
+      <ChevronRight :size="18" />
+    </button>
+
+    <!-- ─── Demandes à traiter (MOCK) ──────────────────────────── -->
+    <CbSectionHeader title="Demandes à traiter">
+      <template #action>
+        <CbPill tone="amber" solid>MOCK</CbPill>
+      </template>
+    </CbSectionHeader>
+
     <div class="home-section__actions">
       <button
         type="button"
@@ -130,7 +200,7 @@ function openMatchDetail(matchId: string): void {
         </span>
         <span class="home-section__action-body">
           <span class="home-section__action-title">
-            {{ licenseRequestsCount }} demandes de licence
+            {{ licenseRequestsCount }} demande{{ licenseRequestsCount > 1 ? 's' : '' }} de licence
           </span>
           <span class="home-section__action-sub">à traiter</span>
         </span>
@@ -147,7 +217,7 @@ function openMatchDetail(matchId: string): void {
         </span>
         <span class="home-section__action-body">
           <span class="home-section__action-title">
-            {{ paymentExceptionRequestsCount }} exceptions cotisation
+            {{ paymentExceptionRequestsCount }} exception{{ paymentExceptionRequestsCount > 1 ? 's' : '' }} cotisation
           </span>
           <span class="home-section__action-sub">à traiter</span>
         </span>
@@ -164,7 +234,7 @@ function openMatchDetail(matchId: string): void {
         </span>
         <span class="home-section__action-body">
           <span class="home-section__action-title">
-            {{ matchMoveRequestsCount }} déplacement de match
+            {{ matchMoveRequestsCount }} déplacement{{ matchMoveRequestsCount > 1 ? 's' : '' }} de match
           </span>
           <span class="home-section__action-sub">à traiter</span>
         </span>
@@ -172,30 +242,57 @@ function openMatchDetail(matchId: string): void {
       </button>
     </div>
 
+    <!-- ─── Matchs à pourvoir cette semaine (Firestore) ────────── -->
     <CbSectionHeader title="Matchs à pourvoir (semaine)">
       <template #action>
         <a class="home-section__link" @click="openStaffing">Staffing</a>
       </template>
     </CbSectionHeader>
 
-    <div class="home-section__matches">
-      <CbMatchCard
-        v-for="m in adminOpenHomeMatches"
-        :key="m.id"
-        :date="formatDate(m.date)"
-        :time="m.startTime"
-        :type="m.matchType"
-        :opponent="m.opponent"
-        :venue="m.venueLabel"
-        :staffing="{ filled: filledForMatch(m), total: m.requiredOfficialsTotal }"
-        :officials="officialsForMatch(m.id)"
-        class="home-section__match-card"
-        @click="openMatchDetail(m.id)"
-      />
+    <CbEmptyState
+      v-if="!loading && upcomingWeekMatches.length === 0"
+      :icon="Calendar"
+      title="Aucun match à staffer cette semaine"
+      body="Tout est sous contrôle. Les prochains matchs apparaîtront ici dès qu'un slot s'ouvre."
+    />
+
+    <div v-else class="home-section__matches">
+      <button
+        v-for="o in upcomingWeekMatches"
+        :key="`adm-${o.kind}-${o.parentId}`"
+        type="button"
+        class="cb-card home-section__match-card"
+        @click="openMatchDetail(o.parentId)"
+      >
+        <div class="home-section__match-row">
+          <div class="home-section__match-main">
+            <div class="home-section__match-when mono">
+              {{ fmtDate(opportunityStartMs(o)) }} · {{ o.startTime }}
+            </div>
+            <div class="home-section__match-opp">vs {{ oppOpponent(o) }}</div>
+            <div v-if="o.team?.name" class="cb-sub">{{ o.team.name }}</div>
+            <div class="cb-sub home-section__match-venue">
+              <MapPin :size="12" /> {{ oppVenue(o) }}
+            </div>
+          </div>
+          <div class="home-section__match-pills">
+            <CbPill tone="rose" solid>{{ oppSlotsLabel(o) }}</CbPill>
+            <CbPill
+              :tone="o.kind === 'home' ? 'emerald' : 'sky'"
+              solid
+            >
+              {{ o.kind === 'home' ? 'Domicile' : 'Extérieur' }}
+            </CbPill>
+            <CbMatchTypeChip v-if="o.matchType" :type="o.matchType.name" />
+          </div>
+        </div>
+      </button>
     </div>
 
+    <!-- ─── CTA broadcast ──────────────────────────────────────── -->
     <div class="home-section__broadcast">
       <button class="cb-btn primary block" type="button" @click="openBroadcast">
+        <Megaphone :size="16" />
         Envoyer une notification
       </button>
     </div>
@@ -230,12 +327,52 @@ function openMatchDetail(matchId: string): void {
     gap: 14px;
   }
 }
+
 .home-section__match-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
   cursor: pointer;
+  padding: 12px;
+  border: 1px solid var(--border);
 }
+.home-section__match-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.home-section__match-main {
+  flex: 1;
+  min-width: 0;
+}
+.home-section__match-pills {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+.home-section__match-when {
+  font-weight: 700;
+  font-size: 13px;
+}
+.home-section__match-opp {
+  font-weight: 600;
+  margin-top: 2px;
+}
+.home-section__match-venue {
+  margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .home-section__broadcast {
   margin-top: 4px;
 }
+
 .home-section__action-btn {
   display: flex;
   align-items: center;
@@ -252,6 +389,11 @@ function openMatchDetail(matchId: string): void {
   background: var(--amber-50);
   color: var(--amber-700);
   box-shadow: inset 0 0 0 1px var(--amber-200);
+}
+.home-section__action-btn--rose {
+  background: var(--rose-50);
+  color: var(--rose-700);
+  box-shadow: inset 0 0 0 1px var(--rose-200);
 }
 .home-section__action-btn--violet {
   background: var(--violet-50);
@@ -274,6 +416,9 @@ function openMatchDetail(matchId: string): void {
 }
 .home-section__action-icon--amber {
   background: var(--amber-100);
+}
+.home-section__action-icon--rose {
+  background: var(--rose-100);
 }
 .home-section__action-icon--violet {
   background: var(--violet-100);

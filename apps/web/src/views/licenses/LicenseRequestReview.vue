@@ -404,7 +404,7 @@ async function submitRefuseDoc(): Promise<void> {
   })
   if (res) {
     bannerInfo.value =
-      "Document refusé. La demande est repassée en attente parent (le coach devra revalider après re-upload)."
+      "Document refusé. La demande est repassée en attente parent (le coach devra revalider après re-upload). Vous pouvez continuer à refuser d'autres documents avant de quitter cette page."
     refuseDocDialogOpen.value = false
     refuseDocKind.value = null
     refuseDocReason.value = ''
@@ -527,6 +527,31 @@ const isTerminal = computed<boolean>(() => {
 
 const isActionable = computed<boolean>(() => request.value?.status === 'coach_validated')
 
+// Valider un doc : court-circuit coach autorisé. Le trésorier peut valider
+// un doc dès qu'il est uploadé (`parent_docs_submitted`), sans attendre la
+// review coach (cas vécu : coach absent, doc évident, urgence saisonnière).
+// Reste possible aussi en `pending_parent_docs` (un refus antérieur a fait
+// basculer la demande mais d'autres docs uploadés restent valides). Backend
+// `treasurerReviewLicenseDoc` aligné sur ces 3 statuts pour `accept`.
+const canAcceptDoc = computed<boolean>(() => {
+  const s = request.value?.status
+  return (
+    s === 'parent_docs_submitted' ||
+    s === 'coach_validated' ||
+    s === 'pending_parent_docs'
+  )
+})
+
+// Refuser un doc reste possible aussi quand un refus antérieur a déjà fait
+// basculer la demande en `pending_parent_docs` — le trésorier doit pouvoir
+// enchaîner plusieurs refus sur des docs différents avant de quitter la
+// page (backend `treasurerReviewLicenseDoc` accepte les refus enchaînés
+// depuis le fix 2026-05-24).
+const canRefuseDoc = computed<boolean>(() => {
+  const s = request.value?.status
+  return s === 'coach_validated' || s === 'pending_parent_docs'
+})
+
 // Reject est plus souple qu'approve : le trésorier peut refuser dès que les
 // docs parent sont arrivés (`parent_docs_submitted`), sans attendre la
 // validation coach. Le coach reste un pré-filtre qui soulage le trésorier,
@@ -536,9 +561,20 @@ const canReject = computed<boolean>(() => {
   return s === 'parent_docs_submitted' || s === 'coach_validated'
 })
 
-const canApprove = computed<boolean>(
-  () => request.value?.status === 'coach_validated' && allTreasurerAccepted.value,
-)
+// Approve : bypass coach autorisé — visible dès qu'il y a quelque chose à
+// valider (`parent_docs_submitted | coach_validated | pending_parent_docs`)
+// ET que le trésorier a validé chaque doc. Le vrai gate est
+// `allTreasurerAccepted` ; le statut sert juste à exclure les terminaux et
+// les états de phase trésorier post-décision. Backend
+// `validateLicenseRequest.approve` aligné sur ce set.
+const canApprove = computed<boolean>(() => {
+  const s = request.value?.status
+  const statusOk =
+    s === 'parent_docs_submitted' ||
+    s === 'coach_validated' ||
+    s === 'pending_parent_docs'
+  return statusOk && allTreasurerAccepted.value
+})
 
 function goBack(): void {
   void router.push({ name: 'license-requests' })
@@ -877,11 +913,19 @@ function goBack(): void {
               </Pill>
             </div>
 
-            <!-- Treasurer action buttons (only when actionable + doc uploaded
-                 + not yet treasurer-reviewed) -->
+            <!-- Treasurer action buttons.
+                 - Valider : court-circuit coach autorisé — visible en
+                   `parent_docs_submitted | coach_validated |
+                   pending_parent_docs` (backend
+                   `treasurerReviewLicenseDoc.accept` aligné).
+                 - Refuser : visible en `coach_validated | pending_parent_docs`
+                   pour permettre d'enchaîner plusieurs refus dans la même
+                   session (backend accepte ces refus en cascade depuis
+                   2026-05-24). Pas exposé en `parent_docs_submitted` —
+                   pour refuser à ce stade, utiliser "Refuser la demande". -->
             <div
               v-if="
-                isActionable &&
+                canAcceptDoc &&
                   request.uploadedDocs[kind] &&
                   !request.uploadedDocs[kind]!.treasurerReview
               "
@@ -903,6 +947,7 @@ function goBack(): void {
                 <span class="ml-1">Valider</span>
               </Button>
               <Button
+                v-if="canRefuseDoc"
                 size="small"
                 severity="danger"
                 outlined
@@ -978,9 +1023,10 @@ function goBack(): void {
               Un refus motivé reste possible à tout moment.
             </span>
             <span v-else>
-              Vous pouvez refuser la demande directement (doc faux / info
-              erronée). L'approbation attend la validation coach et la revue
-              de chaque document.
+              Vous pouvez valider chaque document sans attendre le coach,
+              ou refuser la demande directement (doc faux / info erronée).
+              Une fois tous les documents validés trésorier, vous pouvez
+              approuver la demande sans attendre la validation coach.
             </span>
           </div>
 

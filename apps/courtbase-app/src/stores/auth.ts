@@ -6,7 +6,6 @@ import {
   NotAuthorizedError,
   getUserDoc,
   sendPasswordReset,
-  signInWithApple as repoSignInWithApple,
   signInWithEmail as repoSignInWithEmail,
   signInWithGoogle as repoSignInWithGoogle,
   signOutUser,
@@ -135,6 +134,26 @@ export const useAuthStore = defineStore('auth', () => {
   )
   const isAdmin = computed(() => roles.value.includes('admin'))
 
+  /**
+   * Rôles **effectifs** — union des `roles` stricts et des rôles dérivés
+   * d'une licence active (coach/officiel). Utilisé par le router guard pour
+   * que l'allowlist accepte les routes du sidebar UI (qui se base sur les
+   * flags inclusifs `isCoach`/`isOfficial`). Sans ça : la sidebar affiche
+   * la section "OFFICIEL" via licence active, mais cliquer un item refoulait
+   * vers home parce que `roles` strict n'incluait pas `'official'`.
+   *
+   * **Sécurité** : ce n'est qu'une porte UI. Les Firestore Rules restent
+   * strictes (un user sans rôle backend ne peut pas écrire/lire les docs
+   * réservés au rôle — c'est elles qui font autorité).
+   */
+  const effectiveRoles = computed<AppRole[]>(() => {
+    const set = new Set<AppRole>(roles.value)
+    if (isCoach.value) set.add('coach')
+    if (isOfficial.value) set.add('official')
+    if (isAdmin.value) set.add('admin')
+    return [...set]
+  })
+
   /** Session "façade" pour compat avec les vues qui lisent `auth.session.xxx`. */
   const session = computed(() => ({
     uid: uid.value,
@@ -246,15 +265,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function signInWithApple(): Promise<void> {
-    try {
-      await runSignIn(() => repoSignInWithApple())
-    } catch (err) {
-      lastError.value = mapFirebaseAuthError(err)
-      throw err
-    }
-  }
-
   async function requestPasswordReset(emailValue: string): Promise<void> {
     try {
       await sendPasswordReset(emailValue)
@@ -293,6 +303,7 @@ export const useAuthStore = defineStore('auth', () => {
     hasProfile,
     isMemberInactive,
     roles,
+    effectiveRoles,
     isCoach,
     isOfficial,
     isAdmin,
@@ -307,7 +318,6 @@ export const useAuthStore = defineStore('auth', () => {
     signInWithEmailPassword,
     signUpWithEmailPassword,
     signInWithGoogle,
-    signInWithApple,
     requestPasswordReset,
     signOut,
     dismissError,

@@ -19,8 +19,14 @@
  *  - **Accept** partiel    → `status` reste `'parent_docs_submitted'`.
  *
  * Pré-conditions :
- *  - `request.status === 'parent_docs_submitted'` — le coach ne review que
- *    les demandes prêtes (parent a soumis ses pièces).
+ *  - **Accept** : `status === 'parent_docs_submitted'` strict (un doc déjà
+ *    refusé a fait basculer la demande en `pending_parent_docs` — le coach
+ *    ne peut plus valider tant que le parent n'a pas re-uploadé).
+ *  - **Refuse** : `status ∈ {parent_docs_submitted, pending_parent_docs}`.
+ *    Permet d'enchaîner plusieurs refus dans la même session de review
+ *    (premier refus → status bascule en `pending_parent_docs`, mais le
+ *    coach peut continuer à refuser les autres docs avec leurs motifs
+ *    propres avant de quitter la page).
  *  - `kind ∈ request.requiredDocs` ET `uploadedDocs[kind]` existant.
  *
  * Auth : coach scope (`teamId ∈ user.teamIds`) ; bypass admin/rootAdmin
@@ -125,10 +131,22 @@ export const coachReviewLicenseDoc = onCall(
         )
 
         // --- Pré-conditions ---
-        if (lr.status !== 'parent_docs_submitted') {
+        // Accept : strictement `parent_docs_submitted` (un refus antérieur
+        // a fait basculer la demande en `pending_parent_docs` — invalide
+        // les validations partielles tant que le parent n'a pas re-uploadé).
+        // Refuse : autorisé aussi en `pending_parent_docs` pour permettre
+        // d'enchaîner plusieurs refus sur des docs différents dans la même
+        // session de review (cas typique : 2 docs problématiques, chacun
+        // avec son propre motif).
+        const allowedStatuses: LicenseRequestStatus[] =
+          decision === 'refuse'
+            ? ['parent_docs_submitted', 'pending_parent_docs']
+            : ['parent_docs_submitted']
+        if (!allowedStatuses.includes(lr.status)) {
+          const expected = allowedStatuses.map((s) => `'${s}'`).join(' | ')
           throw new HttpsError(
             'failed-precondition',
-            `[coachReviewLicenseDoc] cannot review in status '${lr.status}' — must be 'parent_docs_submitted'`,
+            `[coachReviewLicenseDoc] cannot ${decision} in status '${lr.status}' — must be ${expected}`,
           )
         }
         const docRef = assertReviewableKind(lr, kind)

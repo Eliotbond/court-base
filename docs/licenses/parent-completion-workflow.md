@@ -255,18 +255,20 @@ de callable).
 ### PR3 — Treasurer / secretary / admin — backend ✅ (partiel), UI à venir
 
 - **Schéma** : `UploadedDocRef.treasurerReview: DocReviewDecision | null`. `LicenseData` étendu avec `requestId: string | null` + `requestedByUid: string | null` (ref inverse vers la `/licenseRequests` source ; `null` pour les licences créées hors workflow).
-- **Callable `treasurerReviewLicenseDoc`** (`functions/src/licenses/treasurerReviewLicenseDoc.ts`) — symétrique à `coachReviewLicenseDoc` côté trésorier :
+- **Callable `treasurerReviewLicenseDoc`** (`functions/src/licenses/treasurerReviewLicenseDoc.ts`) — review per-doc côté trésorier, peut court-circuiter le coach :
   - Auth admin/treasurer/secretary/rootAdmin.
-  - Pré-condition `status === 'coach_validated'`.
+  - **Pré-conditions asymétriques** :
+    - **Accept** : `status ∈ {parent_docs_submitted, coach_validated, pending_parent_docs}`. Le trésorier peut valider un doc sans attendre la review coach (cas vécu : coach absent, doc évident, urgence saisonnière). Le coach reste libre de faire sa propre review en parallèle — les deux niveaux (`coachReview`, `treasurerReview`) sont indépendants.
+    - **Refuse** : `status ∈ {coach_validated, pending_parent_docs}`. Permet d'enchaîner plusieurs refus dans la même session (le premier refus bascule en `pending_parent_docs`, les suivants restent possibles).
   - Refuse → reset complet (`status → pending_parent_docs`, `coachValidatedAt/ByUid → null`). C'est strict mais sûr (un défaut détecté tardivement peut concerner le coach review).
-  - Accept tous → reste `coach_validated` (le trésorier doit ensuite appeler `validateLicenseRequest`).
+  - Accept → status inchangé. Le trésorier doit ensuite appeler `validateLicenseRequest` pour émettre la licence (qui supporte le même bypass coach — cf. callable suivante).
   - Output : `{ ok, requestId, newStatus, allTreasurerAccepted }`.
 - **Callable `validateLicenseRequest`** (`functions/src/licenses/validateLicenseRequest.ts`) — décision finale :
   - Input : `{ requestId, decision: 'approve' | 'reject', comment?: string }`.
   - Auth identique au trésorier.
-  - **Pré-conditions asymétriques** :
-    - **Approve** : `status === 'coach_validated'`. La validation coach + la revue per-doc trésorier sont obligatoires avant émission de la licence.
-    - **Reject** : `status ∈ {parent_docs_submitted, coach_validated}`. Le trésorier peut couper court dès que les documents parent sont arrivés (sans attendre la validation coach) en cas de défaut flagrant (doc faux, info erronée, fraude). La validation coach reste un pré-filtre qui soulage le trésorier dans le cas nominal, mais elle n'est pas bloquante pour un refus motivé. Les statuts terminaux et `pending_parent_docs` restent refusés dans tous les cas.
+  - **Pré-conditions asymétriques** (bypass coach end-to-end autorisé) :
+    - **Approve** : `status ∈ {parent_docs_submitted, coach_validated, pending_parent_docs}` ET `allTreasurerAccepted`. Le bypass coach est autorisé : le trésorier/secrétariat qui a validé chaque doc en per-doc (via `treasurerReviewLicenseDoc.accept`) peut émettre la licence sans attendre la review coach. L'invariant `allTreasurerAccepted` reste le vrai gate — le double regard coach devient optionnel, pas la revue per-doc trésorier.
+    - **Reject** : `status ∈ {parent_docs_submitted, coach_validated}`. Le trésorier peut couper court dès que les documents parent sont arrivés (sans attendre la validation coach) en cas de défaut flagrant (doc faux, info erronée, fraude). Les statuts terminaux et `pending_parent_docs` restent refusés pour `reject`.
   - Approve : exige `computeAllTreasurerAccepted(request)` (sinon `failed-precondition` "Tous les documents doivent être validés par le trésorier avant approbation"). Résout le 1er `/licenseTypes` joueur actif (sinon `failed-precondition` "Aucun /licenseTypes joueur actif"). Crée `/licenses/{auto-id}` `status:'pending'` avec snapshot `role`/`level`/`name`/`fee` + `requestId` + `requestedByUid`. Pose `request.status = 'approved'`.
   - Reject : pose `request.status = 'rejected'`. Pas de `/licenses` créée.
   - Output : `{ ok, requestId, newStatus, licenseId: string | null }`.

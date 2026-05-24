@@ -74,6 +74,13 @@ const props = defineProps<{
   clubInitials?: string
   userName?: string
   userRole?: string
+  /**
+   * Item Notifications affiché dans le footer de la sidebar (au-dessus du
+   * userchip). Optionnel — si absent, le footer ne contient que le
+   * userchip. Porte son propre `badge` (compteur non-lues) qui s'affiche
+   * comme une pastille rose `.nav-badge` à droite du label.
+   */
+  notifItem?: CbNavItem
 }>()
 
 const emit = defineEmits<{ select: [index: number] }>()
@@ -169,6 +176,25 @@ const userInitials = computed(() =>
 )
 
 const menuOpen = ref(false)
+
+/**
+ * Le footer Notifications est marqué actif quand on est sur la route
+ * `notifications` (ou un alias listé dans `activeRoutes`). Match indépendant
+ * de l'index global des groups — Notifications n'est PAS dans `flatItems`.
+ */
+const notifActive = computed<boolean>(() => {
+  if (!props.notifItem) return false
+  const name = typeof route.name === 'string' ? route.name : null
+  if (!name) return false
+  if (props.notifItem.routeName === name) return true
+  return props.notifItem.activeRoutes?.includes(name) ?? false
+})
+
+function onNotifClick(): void {
+  const item = props.notifItem
+  if (!item || !item.routeName) return
+  void router.push({ name: item.routeName, params: item.params })
+}
 </script>
 
 <template>
@@ -217,6 +243,21 @@ const menuOpen = ref(false)
     </div>
     <div class="cb-sidebar-bottom" style="position: relative">
       <button
+        v-if="notifItem"
+        type="button"
+        class="cb-navitem cb-navitem-footer"
+        :class="{ active: notifActive }"
+        @click="onNotifClick"
+      >
+        <component
+          :is="notifItem.icon"
+          :size="18"
+          :stroke-width="notifActive ? 2 : 1.7"
+        />
+        <span>{{ notifItem.label }}</span>
+        <span v-if="notifItem.badge" class="nav-badge">{{ notifItem.badge }}</span>
+      </button>
+      <button
         type="button"
         class="cb-userchip"
         style="width: 100%; border: 0; font-family: inherit; text-align: left"
@@ -257,5 +298,12 @@ const menuOpen = ref(false)
   text-transform: uppercase;
   color: var(--text-subtle);
   padding: 8px 10px 4px;
+}
+/* Notifications dans le footer : même apparence que les cb-navitem des
+   groups (hover/active emerald + nav-badge rose) mais largeur 100% du
+   footer et marge basse pour le séparer du userchip. */
+.cb-navitem-footer {
+  width: 100%;
+  margin-bottom: 8px;
 }
 </style>

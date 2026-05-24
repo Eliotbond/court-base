@@ -57,16 +57,6 @@ async function onGoogle() {
   }
 }
 
-async function onApple() {
-  error.value = null
-  try {
-    await auth.signInWithApple()
-    await redirectAfterAuth()
-  } catch (e) {
-    handleError(e)
-  }
-}
-
 function goSignIn() {
   router.push({ name: 'signin' })
 }
@@ -94,7 +84,7 @@ function goSignIn() {
           <div class="howto__num">1</div>
           <div class="howto__body">
             <div class="howto__title">Créez votre compte</div>
-            <div class="howto__desc">Email, Google ou Apple. 30 secondes.</div>
+            <div class="howto__desc">Email ou Google. 30 secondes.</div>
           </div>
         </div>
 
@@ -154,26 +144,6 @@ function goSignIn() {
             />
           </svg>
           Continuer avec Google
-        </button>
-
-        <button
-          type="button"
-          class="btn btn-secondary btn-block ctas__btn"
-          :disabled="auth.loading"
-          @click="onApple"
-        >
-          <svg
-            width="14"
-            height="16"
-            viewBox="0 0 14 16"
-            aria-hidden="true"
-          >
-            <path
-              fill="#000"
-              d="M11.5 8.5c0-2.2 1.8-3.3 1.9-3.3-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.6.8-3.3.8-.7 0-1.7-.8-2.8-.8C2.5 3.6.8 4.6 0 6.4c-1.2 2-.3 5 .9 6.7.6.8 1.3 1.7 2.2 1.7.9 0 1.2-.6 2.3-.6 1.1 0 1.4.6 2.3.6.9 0 1.5-.8 2.1-1.6.7-.9.9-1.9.9-1.9-.1 0-1.7-.7-1.7-2.8zm-2.2-5.3c.5-.6.8-1.4.7-2.2-.7 0-1.5.4-2 1-.4.5-.8 1.3-.7 2.1.8.1 1.6-.4 2-.9z"
-            />
-          </svg>
-          Continuer avec Apple
         </button>
 
         <button

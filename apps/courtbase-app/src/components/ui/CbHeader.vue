@@ -16,8 +16,14 @@ const props = defineProps<{
   /** Initiales 2-3 chars du club (ex. "BCA"). Fallback si store pas chargé. */
   club?: string
   showBack?: boolean
-  /** Affiche un point rose sur la cloche (notifs non lues). */
-  notifBadge?: boolean
+  /**
+   * Badge non-lues affiché sur la cloche.
+   * - `number > 0` → pastille rose avec le compteur (capé à "9+" au-delà).
+   * - `true` → dot rose simple (legacy — utilisé par les vues qui ne
+   *   connaissent pas le count exact).
+   * - `false` / `0` / `null` → cloche nue (pas de badge).
+   */
+  notifBadge?: boolean | number | null
 }>()
 
 defineEmits<{
@@ -33,6 +39,20 @@ const resolvedInitials = computed(() =>
 )
 const resolvedLogoUrl = computed(() => clubStore.logoUrl)
 const resolvedClubName = computed(() => clubStore.name ?? 'Club')
+
+/**
+ * Forme normalisée du badge : `{ kind: 'count', value: string }` quand on
+ * a un compteur numérique > 0, `{ kind: 'dot' }` pour le legacy `true`,
+ * `null` sinon. Capé à "9+" pour rester lisible (la pastille est ronde).
+ */
+const badge = computed<{ kind: 'count'; value: string } | { kind: 'dot' } | null>(() => {
+  const b = props.notifBadge
+  if (b === true) return { kind: 'dot' }
+  if (typeof b === 'number' && b > 0) {
+    return { kind: 'count', value: b > 9 ? '9+' : String(b) }
+  }
+  return null
+})
 </script>
 
 <template>
@@ -66,7 +86,8 @@ const resolvedClubName = computed(() => clubStore.name ?? 'Club')
         @click="$emit('notifClick')"
       >
         <Bell :size="20" />
-        <span v-if="notifBadge" class="dot" />
+        <span v-if="badge?.kind === 'count'" class="count-badge">{{ badge.value }}</span>
+        <span v-else-if="badge?.kind === 'dot'" class="dot" />
       </button>
       <slot name="right">
         <button

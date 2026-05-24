@@ -210,6 +210,17 @@ function isFutureBooking(b: BookingRow): boolean {
   return b.startMs >= Date.now()
 }
 
+/**
+ * True si l'adversaire est **confirmé** (non vide). Les matchs "à confirmer"
+ * (opponent null / undefined / string vide) ne sont jamais proposés aux
+ * officiels — ils ne savent pas contre qui ils joueraient et la fédération
+ * n'a pas encore validé le match. Règle produit (Eliot 2026-05-24) : "il ne
+ * faut lister que les /matches avec adversaire confirmé".
+ */
+function hasConfirmedOpponent(name: string | null | undefined): boolean {
+  return typeof name === 'string' && name.trim().length > 0
+}
+
 // ─── Store ───────────────────────────────────────────────────────────
 
 export const useOfficialsStore = defineStore('officials', () => {
@@ -542,6 +553,7 @@ export const useOfficialsStore = defineStore('officials', () => {
     for (const booking of bookingsStore.allBookings) {
       if (booking.slotType !== 'match_home') continue
       if (!isFutureBooking(booking)) continue
+      if (!hasConfirmedOpponent(booking.opponentName)) continue
       const mt = booking.matchTypeId
         ? matchTypesById.value.get(booking.matchTypeId)
         : null
@@ -555,6 +567,7 @@ export const useOfficialsStore = defineStore('officials', () => {
     }
     for (const match of awayMatches.value) {
       if (!isFuture(match.date)) continue
+      if (!hasConfirmedOpponent(match.opponentName)) continue
       const mt = matchTypesById.value.get(match.matchTypeId)
       const required = mt?.awayOfficialCount ?? 0
       const assigns = awayAssignmentsByMatchId.value.get(match.id) ?? []
@@ -586,6 +599,7 @@ export const useOfficialsStore = defineStore('officials', () => {
     for (const booking of bookingsStore.allBookings) {
       if (booking.slotType !== 'match_home') continue
       if (!isFutureBooking(booking)) continue
+      if (!hasConfirmedOpponent(booking.opponentName)) continue
       const mt = booking.matchTypeId
         ? (matchTypesById.value.get(booking.matchTypeId) ?? null)
         : null
@@ -614,6 +628,7 @@ export const useOfficialsStore = defineStore('officials', () => {
     // AWAY
     for (const match of awayMatches.value) {
       if (!isFuture(match.date)) continue
+      if (!hasConfirmedOpponent(match.opponentName)) continue
       const mt = matchTypesById.value.get(match.matchTypeId) ?? null
       const assigns = awayAssignmentsByMatchId.value.get(match.id) ?? []
       const openSlots = openAwaySlots(mt?.awayOfficialCount ?? 0, assigns)

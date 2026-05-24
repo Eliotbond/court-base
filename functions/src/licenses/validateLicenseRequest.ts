@@ -2,10 +2,16 @@
  * `validateLicenseRequest` — décision finale du trésorier/admin/secrétaire
  * sur une `/licenseRequests/{id}` (PR3 du workflow).
  *
- * Pré-conditions selon la décision :
- *  - `approve` : `status === 'coach_validated'` ET TOUS les `requiredDocs`
- *    ont `treasurerReview.accepted` (le trésorier doit avoir explicitement
- *    validé chaque doc via `treasurerReviewLicenseDoc` avant d'approuver).
+ * Pré-conditions selon la décision (le trésorier/secrétariat peut
+ * court-circuiter le coach end-to-end — voir aussi
+ * `treasurerReviewLicenseDoc.accept`) :
+ *  - `approve` : `status ∈ {parent_docs_submitted, coach_validated,
+ *    pending_parent_docs}` ET TOUS les `requiredDocs` ont
+ *    `treasurerReview.accepted`. Le bypass coach est autorisé : le trésorier
+ *    qui a validé chaque doc en per-doc peut émettre la licence sans
+ *    attendre la review coach (cas vécu : coach absent, urgence saisonnière).
+ *    L'invariant `allTreasurerAccepted` reste le vrai gate — c'est le double
+ *    regard qui devient optionnel, pas la revue per-doc.
  *  - `reject` : `status ∈ {parent_docs_submitted, coach_validated}` —
  *    plus souple, pour permettre au trésorier de refuser dès que les docs
  *    parent sont arrivés (sans attendre la validation coach) si un défaut
@@ -29,10 +35,10 @@
  * sur `confirmLicense` et `treasurerReviewLicenseDoc`.
  *
  * Idempotence : pas de retry sûr — un `approve` re-appelé après création de
- * `/licenses` produirait une 2ᵉ licence si le caller insiste (pré-condition
- * `status === 'coach_validated'` bloque cependant les retries naïfs, car le
- * premier appel pose `'approved'`). En cas de doute, lire la `/licenses` via
- * `request.requestId` côté UI avant retry.
+ * `/licenses` produirait une 2ᵉ licence si le caller insiste. Les
+ * pré-conditions ci-dessus bloquent cependant les retries naïfs, car le
+ * premier appel pose `'approved'` (terminal, hors set autorisé). En cas de
+ * doute, lire la `/licenses` via `request.requestId` côté UI avant retry.
  *
  * Region : europe-west6.
  *
@@ -170,15 +176,21 @@ export const validateLicenseRequest = onCall(
         }
         const lr = snap.data() as LicenseRequestData
 
-        // Approve : pré-condition stricte. Reject : assoupli pour permettre
-        // au trésorier de couper court dès `parent_docs_submitted` (cf.
-        // header). Les statuts terminaux et `pending_parent_docs` restent
-        // refusés dans tous les cas.
+        // Approve : autorisé en `parent_docs_submitted | coach_validated |
+        // pending_parent_docs` (bypass coach — l'invariant
+        // `allTreasurerAccepted` ci-dessous est le vrai gate). Reject :
+        // `parent_docs_submitted | coach_validated`. Les statuts terminaux,
+        // legacy `pending` et phase trésorier (`awaiting_parent_signature` ↦
+        // `sent_paid`) sont hors set dans tous les cas.
         if (decision === 'approve') {
-          if (lr.status !== 'coach_validated') {
+          const approveAllowed =
+            lr.status === 'parent_docs_submitted' ||
+            lr.status === 'coach_validated' ||
+            lr.status === 'pending_parent_docs'
+          if (!approveAllowed) {
             throw new HttpsError(
               'failed-precondition',
-              `[validateLicenseRequest] cannot approve in status '${lr.status}' — must be 'coach_validated'`,
+              `[validateLicenseRequest] cannot approve in status '${lr.status}' — must be 'parent_docs_submitted', 'coach_validated' or 'pending_parent_docs'`,
             )
           }
         } else {

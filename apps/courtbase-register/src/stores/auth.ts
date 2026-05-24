@@ -4,7 +4,6 @@ import type { User } from '@club-app/shared-types'
 import {
   getUserDoc,
   sendPasswordReset,
-  signInWithApple as repoSignInWithApple,
   signInWithEmail,
   signInWithGoogle as repoSignInWithGoogle,
   signOutUser,
@@ -145,10 +144,6 @@ export const useAuthStore = defineStore('auth', () => {
     await runSignIn(() => repoSignInWithGoogle())
   }
 
-  async function signInWithApple(): Promise<void> {
-    await runSignIn(() => repoSignInWithApple())
-  }
-
   async function signOut(): Promise<void> {
     await signOutUser()
     userDoc.value = null
@@ -183,7 +178,6 @@ export const useAuthStore = defineStore('auth', () => {
     signIn,
     signUp,
     signInWithGoogle,
-    signInWithApple,
     signOut,
     resetPassword,
     saveProfile,

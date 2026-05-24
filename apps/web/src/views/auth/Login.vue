@@ -86,16 +86,6 @@ async function onGoogle() {
     handleError(e)
   }
 }
-
-async function onApple() {
-  error.value = null
-  try {
-    await auth.signInWithApple()
-    await redirectAfterSignIn()
-  } catch (e) {
-    handleError(e)
-  }
-}
 </script>
 
 <template>
@@ -116,17 +106,6 @@ async function onApple() {
             :disabled="auth.loading"
             class="login__provider"
             @click="onGoogle"
-          />
-          <Button
-            type="button"
-            label="Continuer avec Apple"
-            icon="pi pi-apple"
-            severity="secondary"
-            outlined
-            :loading="auth.loading"
-            :disabled="auth.loading"
-            class="login__provider"
-            @click="onApple"
           />
         </div>
 

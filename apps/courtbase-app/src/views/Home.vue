@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 
 import CbDesktopShell from '@/components/ui/CbDesktopShell.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
@@ -32,8 +33,13 @@ import { useAuthStore } from '@/stores/auth'
  */
 
 const auth = useAuthStore()
+const router = useRouter()
 const { isDesktop } = useViewport()
-const { tabs, nav, primaryRoleLabel } = useShellNav()
+const { tabs, nav, notifItem, notifBadge, primaryRoleLabel } = useShellNav()
+
+function goToNotifications(): void {
+  void router.push({ name: 'notifications' })
+}
 
 const isPlayer = computed(() => auth.roles.includes('player'))
 const hasAnyRole = computed(
@@ -45,6 +51,7 @@ const hasAnyRole = computed(
   <CbDesktopShell
     v-if="isDesktop"
     :items="nav"
+    :notif-item="notifItem"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
@@ -62,7 +69,14 @@ const hasAnyRole = computed(
     </div>
   </CbDesktopShell>
 
-  <CbMobileShell v-else title="Accueil" club="BCA" :tabs="tabs">
+  <CbMobileShell
+    v-else
+    title="Accueil"
+    club="BCA"
+    :tabs="tabs"
+    :notif-badge="notifBadge ?? false"
+    @notif-click="goToNotifications"
+  >
     <div class="cb-home-main">
       <HomeEmpty v-if="!hasAnyRole" />
       <template v-else>

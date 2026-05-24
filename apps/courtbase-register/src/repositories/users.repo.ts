@@ -1,6 +1,5 @@
 import {
   GoogleAuthProvider,
-  OAuthProvider,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   sendPasswordResetEmail,
@@ -82,13 +81,6 @@ export function sendPasswordReset(email: string): Promise<void> {
 
 export async function signInWithGoogle(): Promise<void> {
   const provider = new GoogleAuthProvider()
-  await signInWithPopup(auth, provider)
-}
-
-export async function signInWithApple(): Promise<void> {
-  const provider = new OAuthProvider('apple.com')
-  provider.addScope('email')
-  provider.addScope('name')
   await signInWithPopup(auth, provider)
 }
 

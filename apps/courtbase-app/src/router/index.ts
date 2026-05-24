@@ -76,6 +76,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/common/ProfileSettings.vue'),
     meta: { publicWithinAuth: true },
   },
+  {
+    path: '/my-calendar',
+    name: 'my-calendar',
+    component: () => import('@/views/common/MyCalendar.vue'),
+  },
 
   // ─── Coach (CO1-CO10) ────────────────────────────────────────
   {
@@ -271,8 +276,12 @@ router.beforeEach(async (to) => {
   if (publicWithinAuth) return true
 
   const routeName = typeof to.name === 'string' ? to.name : ''
-  if (routeName && !isAllowed(routeName, auth.roles)) {
-    // Pas autorisé → home (où le shell role-aware affichera ce qu'il peut).
+  // Allowlist : on utilise les rôles **effectifs** (strict + dérivés des
+  // licences actives) — cohérent avec ce que la sidebar / tab bar affichent
+  // via `isCoach` / `isOfficial`. Sans ça : section officiel visible mais
+  // tous les liens refoulés vers home si `roles` strict ne contient pas
+  // `'official'`. Les Firestore Rules restent l'autorité sur les écritures.
+  if (routeName && !isAllowed(routeName, auth.effectiveRoles)) {
     return { name: 'home' }
   }
 

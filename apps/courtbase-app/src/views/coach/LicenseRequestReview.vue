@@ -199,10 +199,32 @@ const allAccepted = computed<boolean>(
   () => totalDocsCount.value > 0 && acceptedCount.value === totalDocsCount.value,
 )
 
+/**
+ * "Terminal" côté coach = la demande a quitté le périmètre du coach et ne
+ * peut plus être actionnée ici. `pending_parent_docs` n'est PAS terminal :
+ * c'est le statut après un (ou plusieurs) refus dans la même session — le
+ * coach doit pouvoir continuer à refuser d'autres documents avant de quitter
+ * la page (le backend `coachReviewLicenseDoc` accepte les refus enchaînés
+ * en `pending_parent_docs` depuis le fix 2026-05-24, mais pas les accepts).
+ */
 const isTerminal = computed<boolean>(() => {
   if (!request.value) return false
-  return request.value.status !== 'parent_docs_submitted'
+  const s = request.value.status
+  return s !== 'parent_docs_submitted' && s !== 'pending_parent_docs'
 })
+
+/**
+ * `true` lorsque la demande est déjà retournée au parent (au moins un refus
+ * a basculé le statut). Les boutons "Valider" sont alors désactivés (le
+ * serveur refusera l'accept), mais les "Refuser" restent actifs pour
+ * permettre d'enchaîner les refus sur les autres documents.
+ */
+const isReturnedToParent = computed<boolean>(() => {
+  return request.value?.status === 'pending_parent_docs'
+})
+
+const ACCEPT_DISABLED_RETURNED_TOOLTIP =
+  'Demande déjà retournée au parent — validation impossible tant qu\'il n\'a pas re-uploadé.'
 
 // ─── Aperçu doc (download URL Storage) ──────────────────────────
 const downloadUrlByKind = ref<Map<string, string | null>>(new Map())
@@ -375,11 +397,11 @@ async function submitRefuse(): Promise<void> {
     request.value = await licenseRequestsStore.getPendingReview(request.value.id)
     showToast('rose', `${DOC_LABELS[kind]} — refusé, parent notifié`)
     closeRefuse()
-    // Refus -> status repasse en `pending_parent_docs`. La demande sort de
-    // la liste à reviewer ; on retourne à la liste.
-    window.setTimeout(() => {
-      void router.push({ name: 'license-reviews' })
-    }, 1200)
+    // Pas de redirection auto : si le coach voit d'autres docs problématiques,
+    // il doit pouvoir continuer à les refuser dans la même session avant de
+    // quitter via le CTA "Retour à la liste" en bas de page. Le statut bascule
+    // en `pending_parent_docs` côté serveur, mais la callable accepte les
+    // refus enchaînés depuis le fix 2026-05-24.
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     refuseError.value = `Échec du refus : ${message}`
@@ -451,27 +473,28 @@ function summaryLabel(): string {
         </div>
       </div>
 
-      <!-- Banner status post-action (rare — la demande quitte la liste) -->
+      <!-- Banner status post-action terminal (coach_validated…) -->
       <CbBanner
         v-if="isTerminal"
-        :tone="request.status === 'coach_validated' ? 'sky' : 'amber'"
-        :title="
-          request.status === 'coach_validated'
-            ? 'Demande transmise au trésorier'
-            : 'Demande retournée au parent'
-        "
+        tone="sky"
+        title="Demande transmise au trésorier"
       >
-        <template #icon>
-          <CheckCircle2 v-if="request.status === 'coach_validated'" :size="18" />
-          <CircleAlert v-else :size="18" />
-        </template>
-        <template v-if="request.status === 'coach_validated'">
-          Tous les documents ont été validés. Le trésorier prend le relais.
-        </template>
-        <template v-else>
-          Au moins un document a été refusé. Le parent a été notifié pour
-          re-téléverser.
-        </template>
+        <template #icon><CheckCircle2 :size="18" /></template>
+        Tous les documents ont été validés. Le trésorier prend le relais.
+      </CbBanner>
+
+      <!-- Banner "retournée au parent" — visible tant que d'autres refus sont
+           possibles dans la même session (le statut a basculé après le 1er
+           refus, mais le coach peut continuer à refuser les autres docs). -->
+      <CbBanner
+        v-else-if="isReturnedToParent"
+        tone="amber"
+        title="Demande retournée au parent"
+      >
+        <template #icon><CircleAlert :size="18" /></template>
+        Au moins un document a été refusé — le parent a été notifié pour
+        re-téléverser. Vous pouvez encore refuser d'autres documents avant
+        de quitter cette page. La validation est gelée jusqu'au re-upload.
       </CbBanner>
 
       <!-- Banner erreur callable -->
@@ -672,8 +695,14 @@ function summaryLabel(): string {
               type="button"
               class="cb-btn primary sm"
               style="flex: 1"
-              :disabled="pendingKind !== null || photoMissing"
-              :title="photoMissing ? PHOTO_TOOLTIP : undefined"
+              :disabled="pendingKind !== null || photoMissing || isReturnedToParent"
+              :title="
+                isReturnedToParent
+                  ? ACCEPT_DISABLED_RETURNED_TOOLTIP
+                  : photoMissing
+                    ? PHOTO_TOOLTIP
+                    : undefined
+              "
               @click="onAccept(entry.kind)"
             >
               <CheckCircle2 :size="14" /> Re-réviser (valider)
@@ -693,8 +722,14 @@ function summaryLabel(): string {
               type="button"
               class="cb-btn primary sm"
               style="flex: 1"
-              :disabled="pendingKind !== null || photoMissing"
-              :title="photoMissing ? PHOTO_TOOLTIP : undefined"
+              :disabled="pendingKind !== null || photoMissing || isReturnedToParent"
+              :title="
+                isReturnedToParent
+                  ? ACCEPT_DISABLED_RETURNED_TOOLTIP
+                  : photoMissing
+                    ? PHOTO_TOOLTIP
+                    : undefined
+              "
               @click="onAccept(entry.kind)"
             >
               <CheckCircle2 :size="14" /> Valider
@@ -714,10 +749,22 @@ function summaryLabel(): string {
     <!-- BottomBar récap -->
     <CbBottomBar v-if="!isTerminal && totalDocsCount > 0">
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%">
-        <CbPill :tone="allAccepted ? 'emerald' : 'amber'" :dot="!allAccepted">
+        <CbPill :tone="allAccepted ? 'emerald' : isReturnedToParent ? 'rose' : 'amber'" :dot="!allAccepted">
           {{ summaryLabel() }}
         </CbPill>
+        <!-- Demande retournée au parent → CTA explicite "Retour à la liste"
+             (les autres refus sont optionnels, le coach quitte quand il a fini). -->
         <button
+          v-if="isReturnedToParent"
+          type="button"
+          class="cb-btn primary"
+          @click="goBack"
+        >
+          <ArrowLeft :size="16" />
+          Retour à la liste
+        </button>
+        <button
+          v-else
           type="button"
           class="cb-btn primary"
           :disabled="!allAccepted || photoMissing"

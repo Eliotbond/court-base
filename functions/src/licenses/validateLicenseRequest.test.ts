@@ -6,7 +6,10 @@
  *  - approve crée /licenses pending + snapshot LicenseType + status approved ;
  *  - reject ne crée pas /licenses + status rejected ;
  *  - approve refusé si tous les docs ne sont pas treasurer-accepted ;
- *  - pré-condition : refus si status !== coach_validated ;
+ *  - bypass coach : approve autorisé en parent_docs_submitted /
+ *    pending_parent_docs si tous les docs sont treasurer-accepted ;
+ *  - pré-conditions : refus pour statuts hors set autorisé (terminal,
+ *    phase trésorier, legacy `pending`) ;
  *  - pré-condition : refus si aucun /licenseTypes joueur seedé.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -357,9 +360,55 @@ describe('validateLicenseRequest reject', () => {
 })
 
 describe('validateLicenseRequest preconditions', () => {
-  it('approve: throws failed-precondition when status is parent_docs_submitted', async () => {
+  it('approve: BYPASS COACH — accepté en parent_docs_submitted si tous les docs sont treasurer-accepted', async () => {
+    // Le trésorier a validé chaque doc en per-doc (via le bypass coach
+    // côté treasurerReviewLicenseDoc), donc allTreasurerAccepted=true. Il
+    // peut émettre la licence sans attendre la review coach.
+    const w = wire({
+      request: buildValidatedRequest({
+        status: 'parent_docs_submitted',
+        coachValidatedAt: null,
+        coachValidatedByUid: null,
+      }),
+      member: { firstName: 'Jean', lastName: 'Dupont' },
+    })
+    const out = (await buildHandler().run({
+      auth: { uid: 'tre-uid' },
+      data: { requestId: 'r-1', decision: 'approve' },
+    })) as { newStatus: string; licenseId: string | null }
+    expect(out.newStatus).toBe('approved')
+    expect(out.licenseId).toBe('lic-generated-1')
+    expect(w.capturedSet?.memberId).toBe('m-1')
+    expect(w.capturedUpdate?.status).toBe('approved')
+  })
+
+  it('approve: BYPASS COACH — accepté en pending_parent_docs si tous les docs sont treasurer-accepted', async () => {
+    // Cas tordu mais possible : un doc avait été refusé (status flippé), le
+    // parent a re-uploadé, le trésorier a re-validé en per-doc. Status
+    // reste `pending_parent_docs` (treasurerReviewLicenseDoc.accept ne flippe
+    // pas), mais allTreasurerAccepted=true → approve doit passer.
+    const w = wire({
+      request: buildValidatedRequest({
+        status: 'pending_parent_docs',
+        coachValidatedAt: null,
+        coachValidatedByUid: null,
+      }),
+      member: { firstName: 'A', lastName: 'B' },
+    })
+    const out = (await buildHandler().run({
+      auth: { uid: 'tre-uid' },
+      data: { requestId: 'r-1', decision: 'approve' },
+    })) as { newStatus: string; licenseId: string | null }
+    expect(out.newStatus).toBe('approved')
+    expect(out.licenseId).toBe('lic-generated-1')
+    expect(w.capturedUpdate?.status).toBe('approved')
+  })
+
+  it('approve: throws failed-precondition for statuses outside the allowed set', async () => {
+    // `awaiting_parent_signature` = phase trésorier interne, pas un état de
+    // décision finale. La callable doit refuser.
     wire({
-      request: buildValidatedRequest({ status: 'parent_docs_submitted' }),
+      request: buildValidatedRequest({ status: 'awaiting_parent_signature' }),
       member: { firstName: 'A', lastName: 'B' },
     })
     await expect(
@@ -367,7 +416,7 @@ describe('validateLicenseRequest preconditions', () => {
         auth: { uid: 'tre-uid' },
         data: { requestId: 'r-1', decision: 'approve' },
       }),
-    ).rejects.toThrow(/cannot approve in status 'parent_docs_submitted'/)
+    ).rejects.toThrow(/cannot approve in status 'awaiting_parent_signature'/)
   })
 
   it('reject: throws failed-precondition when status is pending_parent_docs', async () => {

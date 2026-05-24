@@ -324,14 +324,70 @@ describe('coachReviewLicenseDoc refuse flow', () => {
 })
 
 describe('coachReviewLicenseDoc preconditions', () => {
-  it('throws failed-precondition when request status is not parent_docs_submitted', async () => {
+  it('accept: throws failed-precondition when request status is not parent_docs_submitted', async () => {
     wire({ request: buildRequest({ status: 'coach_validated' }) })
     await expect(
       buildHandler().run({
         auth: { uid: 'coach-uid' },
         data: { requestId: 'r-1', kind: 'id_front', decision: 'accept' },
       }),
-    ).rejects.toThrow(/must be 'parent_docs_submitted'/)
+    ).rejects.toThrow(/cannot accept in status 'coach_validated'/)
+  })
+
+  it('accept: throws failed-precondition when request is already in pending_parent_docs', async () => {
+    // Un refus antérieur a fait basculer en `pending_parent_docs` — interdit
+    // d'accepter tant que le parent n'a pas re-uploadé.
+    wire({ request: buildRequest({ status: 'pending_parent_docs' }) })
+    await expect(
+      buildHandler().run({
+        auth: { uid: 'coach-uid' },
+        data: { requestId: 'r-1', kind: 'id_front', decision: 'accept' },
+      }),
+    ).rejects.toThrow(/cannot accept in status 'pending_parent_docs'/)
+  })
+
+  it('refuse: ENCHAÎNEMENT — accepté aussi en pending_parent_docs (refus consécutifs)', async () => {
+    // Cas d'usage : le coach refuse `id_front`, status bascule en
+    // `pending_parent_docs`, puis le coach veut refuser aussi `id_back` dans
+    // la même session. La callable doit accepter ce 2e refus.
+    const w = wire({
+      request: buildRequest({
+        status: 'pending_parent_docs',
+        coachValidatedAt: null,
+        coachValidatedByUid: null,
+      }),
+    })
+    const out = (await buildHandler().run({
+      auth: { uid: 'coach-uid' },
+      data: {
+        requestId: 'r-1',
+        kind: 'id_back',
+        decision: 'refuse',
+        refusalReason: 'Document également flou',
+      },
+    })) as { newStatus: string }
+    expect(out.newStatus).toBe('pending_parent_docs')
+    expect(w.capturedUpdate?.status).toBe('pending_parent_docs')
+    const review = w.capturedUpdate?.[
+      'uploadedDocs.id_back.coachReview'
+    ] as { decision: string; refusalReason: string } | undefined
+    expect(review?.decision).toBe('refused')
+    expect(review?.refusalReason).toBe('Document également flou')
+  })
+
+  it('refuse: throws failed-precondition for statuses other than parent_docs_submitted / pending_parent_docs', async () => {
+    wire({ request: buildRequest({ status: 'coach_validated' }) })
+    await expect(
+      buildHandler().run({
+        auth: { uid: 'coach-uid' },
+        data: {
+          requestId: 'r-1',
+          kind: 'id_front',
+          decision: 'refuse',
+          refusalReason: 'Refus tardif',
+        },
+      }),
+    ).rejects.toThrow(/cannot refuse in status 'coach_validated'/)
   })
 
   it('throws not-found when request does not exist', async () => {

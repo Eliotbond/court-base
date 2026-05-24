@@ -17,7 +17,11 @@ defineProps<{
   title?: string
   club?: string
   showBack?: boolean
-  notifBadge?: boolean
+  /**
+   * Badge cloche : `number > 0` → pastille avec compteur (cape à "9+"),
+   * `true` → dot legacy, `false`/`0`/`null` → cloche nue. Voir CbHeader.
+   */
+  notifBadge?: boolean | number | null
   tabs?: ReadonlyArray<CbTab>
   activeTab?: number
   /** Body en surface "plain" (blanc) au lieu du slate-50 par défaut. */

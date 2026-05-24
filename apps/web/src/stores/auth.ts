@@ -3,7 +3,6 @@ import { defineStore } from 'pinia'
 import type { User } from '@club-app/shared-types'
 import {
   getUserDoc,
-  signInWithApple as repoSignInWithApple,
   signInWithEmail,
   signInWithGoogle as repoSignInWithGoogle,
   signOutUser,
@@ -74,15 +73,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function signInWithApple(): Promise<void> {
-    loading.value = true
-    try {
-      await repoSignInWithApple()
-    } finally {
-      loading.value = false
-    }
-  }
-
   async function signOut(): Promise<void> {
     await signOutUser()
   }
@@ -99,7 +89,6 @@ export const useAuthStore = defineStore('auth', () => {
     init,
     signIn,
     signInWithGoogle,
-    signInWithApple,
     signOut,
   }
 })

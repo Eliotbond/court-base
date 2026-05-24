@@ -2,14 +2,25 @@
  * `treasurerReviewLicenseDoc` — review per-doc d'une `/licenseRequests/{id}`
  * par un trésorier/admin/secrétaire (PR3 du workflow).
  *
- * Symétrique à `coachReviewLicenseDoc` mais :
- *  - opère **après** le coach (pré-condition `status === 'coach_validated'`) ;
+ * Symétrique à `coachReviewLicenseDoc` mais peut court-circuiter le coach :
+ *  - **Accept** : pré-condition `status ∈ {parent_docs_submitted,
+ *    coach_validated, pending_parent_docs}` — le trésorier peut valider un
+ *    doc sans attendre la review coach (cas typique : coach absent, doc
+ *    évident, urgence saisonnière). Pas de transition de status — le coach
+ *    reste libre de faire sa propre review en parallèle.
+ *  - **Refuse** : pré-condition `status ∈ {coach_validated,
+ *    pending_parent_docs}` — le trésorier peut enchaîner plusieurs refus
+ *    sur des docs différents dans la même session (le premier refus
+ *    bascule en `pending_parent_docs`, les suivants doivent rester
+ *    possibles).
  *  - pose la review sur `uploadedDocs.{kind}.treasurerReview` ;
  *  - refus → reset cycle complet (status → `pending_parent_docs`,
  *    `coachValidatedAt/ByUid` à `null`) ;
- *  - accept de tous les docs → reste `coach_validated`. Le trésorier doit
- *    ensuite appeler `validateLicenseRequest` pour la décision finale et la
- *    création de `/licenses` (pas de transition automatique ici).
+ *  - accept → status inchangé. Le trésorier doit ensuite appeler
+ *    `validateLicenseRequest` pour la décision finale et la création de
+ *    `/licenses` (pas de transition automatique ici — et la garde
+ *    `validateLicenseRequest.approve` reste stricte sur `coach_validated`,
+ *    le bypass coach concerne uniquement la review per-doc).
  *
  * Auth : claim `rootAdmin` OU rôle `admin | treasurer | secretary`
  * (cf. `assertCanReviewAsTreasurer`).
@@ -106,10 +117,22 @@ export const treasurerReviewLicenseDoc = onCall(
         }
         const lr = snap.data() as LicenseRequestData
 
-        if (lr.status !== 'coach_validated') {
+        // Accept : `parent_docs_submitted | coach_validated |
+        // pending_parent_docs`. Le trésorier peut court-circuiter la review
+        // coach (cas vécu : coach absent, doc évident, urgence saisonnière).
+        // Refuse : `coach_validated | pending_parent_docs` — autorisé aussi
+        // en `pending_parent_docs` pour permettre d'enchaîner plusieurs refus
+        // sur des docs différents dans la même session (le premier refus a
+        // déjà fait basculer la demande).
+        const allowedStatuses: LicenseRequestStatus[] =
+          decision === 'refuse'
+            ? ['coach_validated', 'pending_parent_docs']
+            : ['parent_docs_submitted', 'coach_validated', 'pending_parent_docs']
+        if (!allowedStatuses.includes(lr.status)) {
+          const expected = allowedStatuses.map((s) => `'${s}'`).join(' | ')
           throw new HttpsError(
             'failed-precondition',
-            `[treasurerReviewLicenseDoc] cannot review in status '${lr.status}' — must be 'coach_validated'`,
+            `[treasurerReviewLicenseDoc] cannot ${decision} in status '${lr.status}' — must be ${expected}`,
           )
         }
         const docRef = assertReviewableKind(lr, kind)
@@ -146,8 +169,10 @@ export const treasurerReviewLicenseDoc = onCall(
           allTreasurerAccepted = false
         } else {
           allTreasurerAccepted = computeAllTreasurerAccepted(projection)
-          // Accept (partiel ou total) → status reste 'coach_validated'.
-          // L'approbation finale se fait via `validateLicenseRequest`.
+          // Accept (partiel ou total) → status inchangé (parent_docs_submitted,
+          // coach_validated ou pending_parent_docs selon le contexte). Le coach
+          // reste libre de poursuivre sa propre review et l'approbation finale
+          // se fait via `validateLicenseRequest` (qui exige coach_validated).
           newStatus = lr.status
         }
 

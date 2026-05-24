@@ -233,6 +233,27 @@ a { color: inherit; text-decoration: none; }
   border: 2px solid var(--bg);
   box-sizing: content-box;
 }
+/* Variante "compteur numérique" sur la cloche : pastille ovale en haut à
+   droite du bouton, lisible (10px / 700) — convention design système. */
+.cb-iconbtn .count-badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--rose-500);
+  color: #fff;
+  border: 2px solid var(--bg);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: content-box;
+}
 
 /* Logo */
 .cb-logo {

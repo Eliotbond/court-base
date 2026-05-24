@@ -1,6 +1,5 @@
 import {
   GoogleAuthProvider,
-  OAuthProvider,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -178,14 +177,6 @@ async function ensureProvisioned(cred: UserCredential): Promise<void> {
 
 export async function signInWithGoogle(): Promise<void> {
   const provider = new GoogleAuthProvider()
-  const cred = await signInWithPopup(auth, provider)
-  await ensureProvisioned(cred)
-}
-
-export async function signInWithApple(): Promise<void> {
-  const provider = new OAuthProvider('apple.com')
-  provider.addScope('email')
-  provider.addScope('name')
   const cred = await signInWithPopup(auth, provider)
   await ensureProvisioned(cred)
 }

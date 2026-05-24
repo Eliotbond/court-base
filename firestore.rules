@@ -812,5 +812,70 @@ service cloud.firestore {
       allow write: if isRootAdmin();
       // En pratique écrit par runMigrations (Function avec privilèges Admin SDK).
     }
+
+    // ========================================================================
+    // /replacementRequests — demandes de remplacement entre officiels
+    // ========================================================================
+    // Un officiel `confirmed` demande à un autre officiel de le remplacer.
+    // Lifecycle :
+    //  - create : par le demandeur (`requesterMemberId == userDoc().memberId`),
+    //    `status: 'pending'`. La cible peut être n'importe quel autre officiel.
+    //  - update : client direct uniquement pour
+    //      • decline (par la cible) : `status: 'declined'` + `declineReason`,
+    //      • cancel  (par le demandeur) : `status: 'cancelled'`.
+    //    Whitelist stricte `affectedKeys.hasOnly([status, respondedAt, declineReason])`.
+    //    L'**accept** ne passe PAS par cette rule — il passe par la callable
+    //    `acceptReplacement` qui fait le transfert atomique d'assignation
+    //    (Admin SDK).
+    //  - delete : interdit côté client.
+    //
+    // Cf. `packages/shared-types/src/replacementRequest.ts` (schéma) +
+    // `functions/src/officials/replacement.ts` (callable `acceptReplacement`).
+    match /replacementRequests/{requestId} {
+      // memberId du caller (résolu depuis /users/{uid}.memberId). Lecture
+      // défensive `.get('memberId', null)` au cas où un user staff sans
+      // memberId tenterait l'accès — il sera filtré par le résultat null.
+      function callerMember() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid))
+                 .data.get('memberId', null);
+      }
+
+      allow read: if isSignedIn() && (
+        resource.data.requesterMemberId == callerMember() ||
+        resource.data.targetMemberId == callerMember()
+      );
+
+      // Create : caller = requester, target != requester, status pending,
+      // champs requis présents.
+      allow create: if isSignedIn()
+        && request.resource.data.requesterMemberId == callerMember()
+        && request.resource.data.targetMemberId != request.resource.data.requesterMemberId
+        && request.resource.data.status == 'pending'
+        && request.resource.data.respondedAt == null
+        && request.resource.data.declineReason == null
+        && request.resource.data.parentKind in ['home', 'away']
+        && request.resource.data.parentId is string
+        && request.resource.data.originalAssignmentId is string
+        && request.resource.data.matchDateMs is number
+        && request.resource.data.officialLevel is number;
+
+      // Update : decline (target) OU cancel (requester). Accept passe par la
+      // callable `acceptReplacement` (Admin SDK — bypass des rules).
+      allow update: if isSignedIn()
+        && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'respondedAt', 'declineReason'])
+        && (
+          // Target : decline
+          (resource.data.targetMemberId == callerMember()
+            && request.resource.data.status == 'declined')
+          ||
+          // Requester : cancel
+          (resource.data.requesterMemberId == callerMember()
+            && request.resource.data.status == 'cancelled')
+        );
+
+      allow delete: if false;
+    }
   }
 }

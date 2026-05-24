@@ -32,6 +32,7 @@ export { fanoutNotification } from './notifications/fanoutNotification'
 // Officials
 export { autoOfficialsNeededNotification } from './officials/autoOfficialsNeeded'
 export { matchReminders } from './officials/matchReminders'
+export { acceptReplacement } from './officials/replacement'
 
 // Dues
 export { initiateDuesOnPlayerActivation } from './dues/initiateDuesOnPlayerActivation'
