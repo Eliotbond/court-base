@@ -182,9 +182,9 @@ const CHF = new Intl.NumberFormat('fr-CH', {
   maximumFractionDigits: 0,
 })
 
-const DATE_FMT = new Intl.DateTimeFormat('fr-CH', {
+const DATE_FMT = new Intl.DateTimeFormat('fr-FR', {
   day: '2-digit',
-  month: 'short',
+  month: '2-digit',
   year: 'numeric',
 })
 
@@ -1142,7 +1142,7 @@ function toggleBreakdown(event: Event): void {
             </label>
             <DatePicker
               v-model="markPaidForm.paidAt"
-              date-format="dd.mm.yy"
+              date-format="dd/mm/yy"
               show-icon
               class="w-full"
             />

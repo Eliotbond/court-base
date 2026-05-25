@@ -29,6 +29,9 @@ export { coachCreateAwayMatch } from './matches/coachCreateAwayMatch'
 // Notifications
 export { fanoutNotification } from './notifications/fanoutNotification'
 
+// Emails — trigger SMTP Plesk (cf. docs/emails/setup-plesk.md)
+export { emailSender } from './emails/sender'
+
 // Officials
 export { autoOfficialsNeededNotification } from './officials/autoOfficialsNeeded'
 export { matchReminders } from './officials/matchReminders'

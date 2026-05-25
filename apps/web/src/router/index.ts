@@ -54,28 +54,31 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', redirect: { name: 'dashboard' } },
       {
+        // Page en construction — la vue Dashboard.vue existe mais reste hors prod
+        // tant que le contenu n'est pas finalisé. Route conservée pour ne pas casser
+        // la redirection par défaut `/` → `/dashboard`.
         path: 'dashboard',
         name: 'dashboard',
-        component: () => import('@/views/Dashboard.vue'),
+        component: placeholder,
         meta: { title: 'Dashboard', subtitle: "Vue d'ensemble du club", allowedRoles: ALL_AUTHED },
       },
       {
         path: 'members',
         name: 'members',
         component: () => import('@/views/Members.vue'),
-        meta: { title: 'Members', allowedRoles: MEMBERS_ACCESS },
+        meta: { title: 'Membres', allowedRoles: MEMBERS_ACCESS },
       },
       {
         path: 'members/:id',
         name: 'member-detail',
         component: () => import('@/views/MemberDetail.vue'),
-        meta: { title: 'Member detail', allowedRoles: MEMBERS_ACCESS },
+        meta: { title: 'Fiche membre', allowedRoles: MEMBERS_ACCESS },
       },
       {
         path: 'teams',
         name: 'teams',
         component: () => import('@/views/Teams.vue'),
-        meta: { title: 'Teams', allowedRoles: ADMIN_COACH },
+        meta: { title: 'Équipes', allowedRoles: ADMIN_COACH },
       },
       {
         path: 'venues',
@@ -111,7 +114,7 @@ const routes: RouteRecordRaw[] = [
         path: 'officials',
         name: 'officials',
         component: () => import('@/views/Officials.vue'),
-        meta: { title: 'Officials', allowedRoles: ADMIN_ONLY },
+        meta: { title: 'Officiels', allowedRoles: ADMIN_ONLY },
       },
       {
         path: 'cotisations',
@@ -141,25 +144,26 @@ const routes: RouteRecordRaw[] = [
         path: 'exceptions',
         name: 'exceptions',
         component: placeholder,
-        meta: { title: 'Payment exceptions', allowedRoles: ADMIN_ONLY },
+        meta: { title: 'Exceptions de paiement', allowedRoles: ADMIN_ONLY },
       },
       {
+        // Page en construction — la vue Attendance.vue existe mais reste hors prod.
         path: 'attendance',
         name: 'attendance',
-        component: () => import('@/views/Attendance.vue'),
-        meta: { title: 'Attendance', allowedRoles: ADMIN_COACH },
+        component: placeholder,
+        meta: { title: 'Présences', allowedRoles: ADMIN_COACH },
       },
       {
         path: 'matches',
         name: 'matches',
         component: () => import('@/views/Matches.vue'),
-        meta: { title: 'Matches', allowedRoles: ADMIN_COACH },
+        meta: { title: 'Matchs', allowedRoles: ADMIN_COACH },
       },
       {
         path: 'court-history',
         name: 'court-history',
         component: placeholder,
-        meta: { title: 'Court history', allowedRoles: ADMIN_ONLY },
+        meta: { title: 'Historique des terrains', allowedRoles: ADMIN_ONLY },
       },
       {
         path: 'settings',
@@ -171,13 +175,13 @@ const routes: RouteRecordRaw[] = [
             path: 'club',
             name: 'settings-club',
             component: () => import('@/views/settings/Club.vue'),
-            meta: { title: 'Club info', allowedRoles: ADMIN_ONLY },
+            meta: { title: 'Infos du club', allowedRoles: ADMIN_ONLY },
           },
           {
             path: 'admin-team',
             name: 'settings-admin-team',
             component: () => import('@/views/settings/AdminTeam.vue'),
-            meta: { title: 'Admin team', allowedRoles: ADMIN_ONLY },
+            meta: { title: 'Équipe admin', allowedRoles: ADMIN_ONLY },
           },
           {
             path: 'categories',
@@ -201,25 +205,25 @@ const routes: RouteRecordRaw[] = [
             path: 'roles',
             name: 'settings-roles',
             component: () => import('@/views/settings/Roles.vue'),
-            meta: { title: 'Member roles', allowedRoles: ADMIN_ONLY },
+            meta: { title: 'Rôles membres', allowedRoles: ADMIN_ONLY },
           },
           {
             path: 'officials',
             name: 'settings-officials',
             component: () => import('@/views/settings/Officials.vue'),
-            meta: { title: 'Officials', allowedRoles: ADMIN_ONLY },
+            meta: { title: 'Officiels', allowedRoles: ADMIN_ONLY },
           },
           {
             path: 'match-types',
             name: 'settings-match-types',
             component: () => import('@/views/settings/MatchTypes.vue'),
-            meta: { title: 'Match types', allowedRoles: ADMIN_ONLY },
+            meta: { title: 'Types de match', allowedRoles: ADMIN_ONLY },
           },
           {
             path: 'closure-periods',
             name: 'settings-closure-periods',
             component: () => import('@/views/settings/ClosurePeriods.vue'),
-            meta: { title: 'Closure periods', allowedRoles: ADMIN_ONLY },
+            meta: { title: 'Périodes de fermeture', allowedRoles: ADMIN_ONLY },
           },
           {
             path: 'license-types',
@@ -231,7 +235,7 @@ const routes: RouteRecordRaw[] = [
             path: 'dues',
             name: 'settings-dues',
             component: () => import('@/views/settings/Dues.vue'),
-            meta: { title: 'Dues config', allowedRoles: ADMIN_ONLY },
+            meta: { title: 'Configuration cotisations', allowedRoles: ADMIN_ONLY },
           },
           {
             path: 'integrations/basketplan',

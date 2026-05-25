@@ -356,7 +356,7 @@ async function submitCreate(): Promise<void> {
     <div class="flex items-end justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-[22px] font-semibold tracking-tight">
-          Members
+          Membres
         </h1>
         <p class="text-[13px] text-surface-500 mt-0.5">
           {{ headingSubline }}
@@ -645,7 +645,7 @@ async function submitCreate(): Promise<void> {
         </Column>
 
         <Column
-          header="Off. level"
+          header="Niveau off."
           :pt="{
             headerCell: { style: 'width: 96px', class: 'text-center' },
             bodyCell: { class: 'text-center' },
@@ -706,7 +706,7 @@ async function submitCreate(): Promise<void> {
         </Column>
 
         <Column
-          header="Dernier login"
+          header="Dernière connexion"
           :pt="{ headerCell: { style: 'width: 128px' } }"
         >
           <template #body="{ data }">

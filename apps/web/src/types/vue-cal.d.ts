@@ -41,3 +41,10 @@ declare module 'vue-cal' {
 }
 
 declare module 'vue-cal/dist/vuecal.css'
+
+/**
+ * Locale FR pour vue-cal (`weekDays`, `months`, libellés). Importée
+ * silencieusement pour effet de bord côté `vue-cal` (la lib enregistre
+ * automatiquement la locale au chargement du module).
+ */
+declare module 'vue-cal/dist/i18n/fr.es.js'

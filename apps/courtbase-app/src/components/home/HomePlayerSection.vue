@@ -4,9 +4,7 @@ import { useRouter } from 'vue-router'
 import { FirebaseError } from 'firebase/app'
 import {
   CalendarDays,
-  ChevronRight,
   MapPin,
-  Receipt,
 } from 'lucide-vue-next'
 
 import CbEmptyState from '@/components/ui/CbEmptyState.vue'
@@ -16,23 +14,18 @@ import { useBookingsStore, type BookingRow } from '@/stores/bookings'
 import { useMyProfileStore } from '@/stores/myProfile'
 
 /**
- * Section Home — bloc joueur (réécrite 2026-05-24, branchée Firestore partielle).
+ * Section Home — bloc joueur (Firestore réel via stores Pinia).
  *
  * Rendue uniquement si le user porte le rôle `player` (gate dans `Home.vue`).
  *
  * Source data :
- *  - **`useMyProfileStore`** (Firestore réel) : `member` + `teams` du joueur.
- *  - **`useBookingsStore`** (Firestore réel) : `bookingsForTeam(teamId)` pour
- *    chaque team du joueur, filtré côté JS pour les prochains événements à
- *    venir. Top 3 affichés.
- *  - **MOCK** : "Mes cotisations" (pas de store /dues côté courtbase-app).
- *  - **MOCK** : état de ma licence (pas encore exposé côté courtbase-app —
- *    la pill licence s'affiche depuis `member.licenseNumber` quand présent).
+ *  - `useMyProfileStore` : `member` + `teams` du joueur.
+ *  - `useBookingsStore.bookingsForTeam(teamId)` : prochains événements à venir
+ *    pour chaque équipe du joueur (top 3 affichés).
  *
  * Affichage :
- *  1. Prochains rendez-vous (max 3) — Firestore réel via bookings store.
- *  2. État licence (depuis member, pill emerald si licenseNumber présent).
- *  3. CTA Mes cotisations — MOCK.
+ *  1. Prochains rendez-vous (max 3).
+ *  2. État licence (pill emerald si `member.licenseNumber` présent).
  */
 
 const router = useRouter()
@@ -138,9 +131,6 @@ function openAgenda(): void {
   // l'Agenda club-wide (réservé aux coachs/admins).
   router.push({ name: 'my-calendar' })
 }
-function openProfile(): void {
-  router.push({ name: 'profile-settings' })
-}
 </script>
 
 <template>
@@ -203,25 +193,6 @@ function openProfile(): void {
         Licence non encore délivrée
       </CbPill>
     </div>
-
-    <!-- ─── Mes cotisations — MOCK ────────────────────────────── -->
-    <button
-      type="button"
-      class="home-section__action-btn home-section__action-btn--violet"
-      @click="openProfile"
-    >
-      <span class="home-section__action-icon home-section__action-icon--violet">
-        <Receipt :size="18" />
-      </span>
-      <span class="home-section__action-body">
-        <span class="home-section__action-title">Mes cotisations</span>
-        <span class="home-section__action-sub">
-          <CbPill tone="amber" solid>MOCK</CbPill>
-          à brancher
-        </span>
-      </span>
-      <ChevronRight :size="18" />
-    </button>
   </section>
 </template>
 
@@ -283,54 +254,5 @@ function openProfile(): void {
 
 .home-section__license {
   padding: 4px 2px;
-}
-
-.home-section__action-btn {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  border: 0;
-  padding: 12px 14px;
-  border-radius: 12px;
-  cursor: pointer;
-  text-align: left;
-  font-family: inherit;
-}
-.home-section__action-btn--violet {
-  background: var(--violet-50);
-  color: var(--violet-700);
-  box-shadow: inset 0 0 0 1px var(--violet-200);
-}
-.home-section__action-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 17px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.home-section__action-icon--violet {
-  background: var(--violet-100);
-}
-.home-section__action-body {
-  flex: 1;
-  line-height: 1.2;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.home-section__action-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-.home-section__action-sub {
-  font-size: 12px;
-  opacity: 0.75;
-  margin-top: 2px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 </style>

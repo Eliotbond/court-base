@@ -345,16 +345,11 @@ function onBack(): void {
   void router.push({ name: 'team' })
 }
 
-function onNotifClick(): void {
-  void router.push({ name: 'notifications' })
-}
-
 function onTabSelect(index: number): void {
   if (index === 0) void router.push({ name: 'team' })
   else if (index === 1) {
     /* déjà sur planning */
   } else if (index === 2) void router.push({ name: 'registrations' })
-  else if (index === 3) void router.push({ name: 'notifications' })
 }
 
 function onNavSelect(index: number): void {
@@ -363,7 +358,6 @@ function onNavSelect(index: number): void {
   else if (index === 2) {
     /* déjà sur planning */
   } else if (index === 3) void router.push({ name: 'registrations' })
-  else if (index === 4) void router.push({ name: 'notifications' })
 }
 
 // auth est utilisé pour le label desktop user (CbDesktopShell)
@@ -463,10 +457,8 @@ const userDisplayName = computed(() => auth.displayName)
     v-else
     :title="headerTitle"
     show-back
-    :notif-badge="false"
     :tabs="tabs"
     @back="onBack"
-    @notif-click="onNotifClick"
     @tab-select="onTabSelect"
   >
     <!-- Toolbar : segmented + nav + label période -->

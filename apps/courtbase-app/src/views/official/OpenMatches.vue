@@ -32,10 +32,12 @@ import { Timestamp as FsTimestamp } from 'firebase/firestore'
  * (cards / banner / chips / shells) reste la transcription littérale du JSX
  * `O1Mobile` — seuls les bindings data ont été branchés.
  *
- * Filtre par défaut = opportunités ouvertes (HOME où il manque un slot du
- * niveau du caller OU AWAY non staffé OU HOME sans salle) via
- * `openOpportunitiesForLevel(level)`. Toggle "Tous" via la chip `all` :
- * inclut tous les matchs FUTURS, même complets.
+ * Filtre par défaut (depuis 2026-05-25) = "Tous" — agrégation directe des
+ * matchs futurs HOME (via `bookingsStore.allBookings`) + AWAY (via
+ * `officialsStore.awayMatches`) avec opponent confirmé. Ordre des chips :
+ * Tous (default) > Ouverts > Domicile > Extérieur. "Ouverts" (`all`) = ex-
+ * défaut, opportunités où il manque un slot du niveau du caller via
+ * `openOpportunitiesForLevel(level)`.
  */
 
 const router = useRouter()
@@ -68,16 +70,19 @@ onMounted(async () => {
 const showNoLicenseBanner = computed(() => !auth.hasActiveOfficialLicense)
 
 // ─── Filtres chips ────────────────────────────────────────────
-// 4 modes : Tous (= toutes opportunités OPEN, défaut), Domicile (HOME OPEN),
-// Extérieur (AWAY OPEN), "Tous matchs" inclut aussi les complets futurs.
+// 4 modes : "Tous" (= tous matchs futurs avec opponent confirmé, défaut depuis
+// 2026-05-25 — vision exhaustive de l'activité club, pas seulement les slots
+// disponibles au niveau du caller), "Ouverts" (= opportunités OPEN au niveau
+// du caller, ex-default), Domicile (HOME du base courant), Extérieur (AWAY du
+// base courant). Ordre d'affichage : Tous, Ouverts, Domicile, Extérieur.
 type FilterKind = 'all' | 'home' | 'away' | 'allMatches'
 const filters: ReadonlyArray<{ id: FilterKind; label: string }> = [
+  { id: 'allMatches', label: 'Tous' },
   { id: 'all', label: 'Ouverts' },
   { id: 'home', label: 'Domicile' },
   { id: 'away', label: 'Extérieur' },
-  { id: 'allMatches', label: 'Tous' },
 ]
-const activeFilter = ref<FilterKind>('all')
+const activeFilter = ref<FilterKind>('allMatches')
 
 function setFilter(id: FilterKind): void {
   if (activeFilter.value === id) return
@@ -199,6 +204,22 @@ const isLoading = computed(
     bookingsStore.loading,
 )
 
+/**
+ * Sous-titre desktop. Quand le filtre actif est "Tous" (vue exhaustive des
+ * matchs futurs avec opponent confirmé), le compte ne correspond plus à des
+ * slots disponibles au niveau du caller — on bascule sur "X match(s) à venir".
+ * Pour les 3 autres filtres (Ouverts / Domicile / Extérieur), conserve le
+ * texte historique "disponible(s) à votre niveau".
+ */
+const headSubtitle = computed<string>(() => {
+  const n = displayedList.value.length
+  const plural = n > 1 ? 's' : ''
+  if (activeFilter.value === 'allMatches') {
+    return `${n} match${plural} à venir`
+  }
+  return `${n} match${plural} disponible${plural} à votre niveau`
+})
+
 // ─── Formatage date FR ───────────────────────────────────────
 const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
   weekday: 'short',
@@ -274,23 +295,16 @@ function openMatchDetail(parentId: string): void {
 }
 
 // ─── Shells ──────────────────────────────────────────────────
-const notifBadgeCount = computed(() => 0) // notifs non encore branchées (Phase 5)
 
 function onTabSelect(index: number): void {
   if (index === 0) return // on est déjà ici
   if (index === 1) router.push({ name: 'my-assignments' })
-  if (index === 2) router.push({ name: 'notifications' })
 }
 
 function onNavSelect(index: number): void {
   if (index === 0) router.push({ name: 'home' })
   if (index === 1) return // courant
   if (index === 2) router.push({ name: 'my-assignments' })
-  if (index === 3) router.push({ name: 'notifications' })
-}
-
-function onNotifClick(): void {
-  router.push({ name: 'notifications' })
 }
 </script>
 
@@ -308,7 +322,7 @@ function onNotifClick(): void {
   >
     <CbPageHead
       title="Matchs à pourvoir"
-      :subtitle="`${displayedList.length} match${displayedList.length > 1 ? 's' : ''} disponible${displayedList.length > 1 ? 's' : ''} à votre niveau`"
+      :subtitle="headSubtitle"
     />
 
     <CbBanner v-if="showNoLicenseBanner" tone="amber" title="Pas de licence officiel active">
@@ -364,9 +378,7 @@ function onNotifClick(): void {
     v-else
     title="Matchs à pourvoir"
     club="BCA"
-    :notif-badge="notifBadgeCount > 0"
     :tabs="tabs"
-    @notif-click="onNotifClick"
     @tab-select="onTabSelect"
   >
     <div style="height: 100%; overflow: auto">

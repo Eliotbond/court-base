@@ -122,7 +122,7 @@ function tsToDate(entry: AccountingEntry): Date {
 }
 
 function formatDate(d: Date): string {
-  return d.toLocaleDateString('fr-CH', {
+  return d.toLocaleDateString('fr-FR', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',

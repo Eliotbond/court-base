@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { FirebaseError } from 'firebase/app'
 import {
-  AlertTriangle,
   CalendarDays,
   ChevronRight,
   Clipboard,
@@ -13,37 +12,30 @@ import {
 
 import CbPill from '@/components/ui/CbPill.vue'
 import CbSectionHeader from '@/components/ui/CbSectionHeader.vue'
-import { listMembersByTeam, type MockTeam } from '@/repositories/mock'
+import type { MockTeam } from '@/repositories/mock'
 import { useAuthStore } from '@/stores/auth'
 import { useBookingsStore, type BookingRow } from '@/stores/bookings'
 import { useLicenseRequestsStore } from '@/stores/licenseRequests'
 import { useRegistrationsStore } from '@/stores/registrations'
 import { useTeamsStore } from '@/stores/teams'
-import { bucketFor } from '@/utils/registrationBuckets'
 
 /**
- * Section Home — bloc coach (réécrite 2026-05-24, branchée Firestore).
+ * Section Home — bloc coach (Firestore réel via stores Pinia, fallback mock
+ * pour le dev local).
  *
  * Rendue uniquement si `auth.isCoach` (gate dans `Home.vue` — PR-M-C).
  *
- * Source data (hybride mock + Firestore réel — cf. mémoire
- * `courtbase_app_firestore_wiring`) :
- *  - `teamsStore.loadForCoach(...)` : **Firestore réel** quand le user a
- *    `userDoc.memberId`, fallback **mock** sinon.
- *  - `registrationsStore.load(teamIds)` : **Firestore réel** quand des teams
- *    sont chargées, fallback **mock**. Compte le bucket `actionable` (demande
- *    + essai en cours) pour l'action "à valider".
- *  - `licenseRequestsStore.loadPendingReviewForCoach()` : idem hybride
- *    (Firestore avec scope teamIds réels, sinon `MOCK_LICENSE_REQUESTS`).
- *  - `bookingsStore.loadActiveContext()` : Firestore réel — alimente le
- *    "prochain rendez-vous" par équipe.
- *  - `listMembersByTeam(team.id)` (excluded count) : **mock-only** — pas
- *    encore de fetch `/cotisations` côté coach app. La pill "exclus" s'affiche
- *    uniquement en mode mock (count 0 en prod tant que non branché).
+ * Source data :
+ *  - `teamsStore.loadForCoach(...)` : équipes coachées.
+ *  - `registrationsStore.load(teamIds)` : compte du bucket `actionable`
+ *    (demandes + essais en cours).
+ *  - `licenseRequestsStore.loadPendingReviewForCoach()` : demandes de licence
+ *    en attente de validation coach.
+ *  - `bookingsStore.loadActiveContext()` : prochain rendez-vous par équipe.
  *
  * Affichage :
- *  1. Cards par équipe (nom + catégorie + prochain rendez-vous Firestore).
- *  2. "À traiter" : inscriptions actionables + licences à valider + exclus.
+ *  1. Cards par équipe (nom + catégorie + prochain rendez-vous).
+ *  2. "À traiter" : inscriptions actionables + licences à valider.
  */
 
 const router = useRouter()
@@ -80,29 +72,7 @@ const registrationsToTreatCount = computed(
   () => registrationsStore.counts.actionable,
 )
 
-/**
- * Compte des exclusions cotisation — **mock-only** tant que `/cotisations`
- * n'est pas branché côté coach app. En mode firestore réel, `duesStatus` est
- * defaulté à `'paid'` côté `members.repo` ; ce count restera donc à 0 jusqu'à
- * la PR cotisations.
- */
-const excludedMembersCount = computed(() => {
-  if (teamsStore.source !== 'mock') return 0
-  const seen = new Set<string>()
-  for (const team of coachTeams.value) {
-    for (const m of listMembersByTeam(team.id)) {
-      if (m.duesStatus === 'excluded') seen.add(m.id)
-    }
-  }
-  return seen.size
-})
-
 const licenseReviewsCount = computed(() => licenseRequestsStore.pendingReviewList.length)
-
-function countExcludedInTeam(teamId: string): number {
-  if (teamsStore.source !== 'mock') return 0
-  return listMembersByTeam(teamId).filter((m) => m.duesStatus === 'excluded').length
-}
 
 // ─── Prochain rendez-vous par équipe (Firestore réel) ────────────
 
@@ -172,10 +142,6 @@ function openTeams(): void {
 function openRegistrations(): void {
   router.push({ name: 'registrations' })
 }
-function openExcluded(): void {
-  const first = coachTeams.value[0]
-  router.push(first ? { name: 'team-roster', params: { teamId: first.id } } : { name: 'team' })
-}
 function openLicenseReviews(): void {
   router.push({ name: 'license-reviews' })
 }
@@ -206,9 +172,6 @@ function openLicenseReviews(): void {
               <div class="cb-h3">{{ t.name }}</div>
               <CbPill v-if="t.tagName" tone="slate">{{ t.tagName }}</CbPill>
             </div>
-            <CbPill v-if="countExcludedInTeam(t.id) > 0" tone="rose" dot>
-              {{ countExcludedInTeam(t.id) }} exclus
-            </CbPill>
           </div>
           <div class="cb-sub home-section__team-sub">
             {{ t.playerIds.length }} joueurs
@@ -266,27 +229,6 @@ function openLicenseReviews(): void {
       </button>
 
       <button
-        v-if="excludedMembersCount > 0"
-        type="button"
-        class="home-section__action-btn home-section__action-btn--rose"
-        @click="openExcluded"
-      >
-        <span class="home-section__action-icon home-section__action-icon--rose">
-          <AlertTriangle :size="18" />
-        </span>
-        <span class="home-section__action-body">
-          <span class="home-section__action-title">
-            {{ excludedMembersCount }} exclusion{{ excludedMembersCount > 1 ? 's' : '' }} à gérer
-          </span>
-          <span class="home-section__action-sub">
-            <CbPill tone="amber" solid>MOCK</CbPill>
-            cotisation non branchée
-          </span>
-        </span>
-        <ChevronRight :size="18" />
-      </button>
-
-      <button
         v-if="licenseReviewsCount > 0"
         type="button"
         class="home-section__action-btn home-section__action-btn--violet"
@@ -307,7 +249,7 @@ function openLicenseReviews(): void {
 
       <!-- Empty state inline si aucune action ──────────────────── -->
       <div
-        v-if="registrationsToTreatCount === 0 && excludedMembersCount === 0 && licenseReviewsCount === 0"
+        v-if="registrationsToTreatCount === 0 && licenseReviewsCount === 0"
         class="home-section__empty-inline"
       >
         <CalendarDays :size="14" />

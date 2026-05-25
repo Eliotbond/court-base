@@ -33,7 +33,7 @@ functions/
 
 ## Functions requises (voir `docs/firebase.md` pour détails)
 
-`generateSeasonBookings`, `previewSeasonBookings`, `applyClosurePeriod`, `handleMatchSlotChange`, `autoOfficialsNeededNotification`, `matchReminders`, `initiateDuesOnPlayerActivation`, `issueDuesScheduled`, `markOverdueScheduled`, `syncMemberDuesStatus`, `markDuePaid`, `updateDue`, `applyPaymentException`, `applyLicenseRequest`, `coachReviewLicenseDoc`, `treasurerReviewLicenseDoc`, `validateLicenseRequest`, `runMigrations`, `fanoutNotification`, `coachCreateMember`, `coachUpdateMember`, `coachDeactivateMember`, `coachCreateAwayMatch`, `syncUserRolesFromMember`, `setMemberLicensePhoto`, `removeMemberLicensePhoto`.
+`generateSeasonBookings`, `previewSeasonBookings`, `applyClosurePeriod`, `handleMatchSlotChange`, `autoOfficialsNeededNotification`, `matchReminders`, `initiateDuesOnPlayerActivation`, `issueDuesScheduled`, `markOverdueScheduled`, `syncMemberDuesStatus`, `markDuePaid`, `updateDue`, `applyPaymentException`, `applyLicenseRequest`, `coachReviewLicenseDoc`, `treasurerReviewLicenseDoc`, `validateLicenseRequest`, `runMigrations`, `fanoutNotification`, `emailSender`, `coachCreateMember`, `coachUpdateMember`, `coachDeactivateMember`, `coachCreateAwayMatch`, `syncUserRolesFromMember`, `setMemberLicensePhoto`, `removeMemberLicensePhoto`.
 
 ### `updateDue` (callable) — édition d'une cotisation
 

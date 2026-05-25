@@ -712,19 +712,24 @@ Le type partagé `OfficialAssignment` (`packages/shared-types/src/booking.ts`) c
 
 ```ts
 {
-  to: string[]                       // emails destinataires
-  subject: string
-  body: string                       // plain text ou HTML selon le template
-  templateKey: string                // "majority_guardian_notify" | "majority_member_confirm" | ...
-  context: Record<string, unknown>   // données utilisées par le template (memberId, memberName, etc.)
+  to: string | string[] | null       // emails destinataires (polymorphe : producteurs historiques posent string, dues posent string[], null = aucun résoluble)
+  template: string                   // ex. "registration_submitted_confirm" — clé qui détermine le rendu côté sender
+  context: Record<string, unknown>   // données utilisées par le template (typage strict via `ContextByTemplate[K]` côté functions/src/emails/types.ts)
   createdAt: Timestamp
-  sentAt: Timestamp | null           // null tant qu'aucun vendor n'a délivré
-  status: "pending" | "sent" | "failed"
-  error: string | null
+  sentAt: Timestamp | null           // posé par le sender en cas de succès
+  status: "pending" | "sent" | "failed"  // cycle de vie
+  error: string | null               // posé par le sender en cas d'échec (code court + message tronqué)
+  messageId?: string | null          // Message-ID retourné par Plesk en cas de succès
+  attempts?: number                  // incrementé à chaque tentative du sender
+  lastAttemptAt?: Timestamp | null   // posé à chaque tentative (audit même si status reste pending)
 }
 ```
 
-**Stub d'envoi d'email**. Le vendor réel (SendGrid / Resend / Postmark) sera wiré ultérieurement via une Function trigger `onCreate /pendingEmails/{id}`. Tant que pas de vendor, les docs s'accumulent en `status: 'pending'` et restent inspectables par l'admin.
+**Vendor wiré (2026-05-25)** : trigger `emailSender` (`functions/src/emails/sender.ts`) consomme `/pendingEmails/{id}` via `onDocumentCreated` et envoie via Plesk SMTP (Nodemailer + 6 secrets `SMTP_*`). Cf. `docs/emails/setup-plesk.md` pour la configuration serveur (boîte Plesk, DKIM/SPF/DMARC, secrets Firebase).
+
+**Anti-boucle infinie** : le trigger est `onDocumentCreated` (pas `onWrite`), donc l'update final du sender (`status: 'sent'` + `sentAt`) ne le re-déclenche pas. Garde explicite côté handler (skip si `status === 'sent'` ou `sentAt != null`) en ceinture+bretelles.
+
+**Retry** : `retry: false`. Un échec laisse le doc en `status: 'failed'` avec `error` court. Pas de retry auto en PR1. Backlog : callable manuelle `retryFailedEmail({emailId})` ou cron `retryTransientEmails` pour les erreurs réseau.
 
 **Conventions de Doc ID** — déterministes pour idempotence des Functions productrices (cf. mémoire `firestore_functions_phase1` → IDs déterministes) :
 

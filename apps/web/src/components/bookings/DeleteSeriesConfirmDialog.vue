@@ -3,6 +3,7 @@ import Dialog from 'primevue/dialog'
 import Button from 'primevue/button'
 import { TriangleAlert } from 'lucide-vue-next'
 import type { SeriesSummary } from '@/stores/bookings'
+import { formatDateShort } from '@/utils/dates'
 
 /**
  * Dialog de confirmation pour la suppression d'une série de réservations.
@@ -25,15 +26,9 @@ const emit = defineEmits<{
   (e: 'confirm'): void
 }>()
 
-const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-})
-
-/** Formatte un Timestamp neutre (shared-types) en `dd/MM/yyyy`. */
+/** Formatte un Timestamp neutre (shared-types) en `DD/MM/YYYY`. */
 function formatTimestamp(ts: { seconds: number }): string {
-  return dateFormatter.format(new Date(ts.seconds * 1000))
+  return formatDateShort(ts)
 }
 
 function close(): void {

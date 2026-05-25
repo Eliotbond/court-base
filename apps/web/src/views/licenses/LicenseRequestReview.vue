@@ -583,12 +583,16 @@ function goBack(): void {
 
 <template>
   <section class="p-6 space-y-4 max-w-5xl">
-    <header class="space-y-2">
+    <header>
+      <!-- `w-fit` + `whitespace-nowrap` : empêche le PrimeVue Button de se
+           comporter en block 100% (cas vécu sur le screenshot : libellé
+           "Retour aux demandes" qui wrappait en "Retour aux mand[…]es"). -->
       <Button
         size="small"
         severity="secondary"
         text
         aria-label="Retour à la liste"
+        class="!w-fit whitespace-nowrap"
         @click="goBack"
       >
         <template #icon>
@@ -632,10 +636,24 @@ function goBack(): void {
     </div>
 
     <template v-else>
-      <!-- ====================== INFO CARD ======================= -->
+      <!-- ====================== INFO CARD =======================
+           Layout :
+             [thumbnail 80x80]  [bloc texte vertical: nom / meta / helper]   [pill status]
+                                  └─ bouton "Ouvrir la fiche membre" en dessous (full row)
+
+           Choix :
+             - thumbnail + bloc texte sont sur la même rangée avec `items-center`
+               (le bouton "Ouvrir la fiche membre" n'est plus dans cette rangée :
+                il passe sur sa propre ligne avec `mt-3`, plus de chevauchement).
+             - Le Pill status est en `self-start` pour rester en haut à droite,
+               même si le bloc texte s'allonge.
+             - `min-w-0` partout où il y a un enfant `truncate` ou `flex-1` pour
+               permettre le shrink correct (sinon les conteneurs flex peuvent
+               imposer une largeur minimale qui pousse le Pill hors écran).
+      -->
       <div class="card p-5 space-y-3">
         <div class="flex items-start justify-between gap-3 flex-wrap">
-          <div class="flex items-start gap-3 min-w-0 flex-1">
+          <div class="flex items-center gap-3 min-w-0 flex-1">
             <!-- Thumbnail photo licence — cf. docs/members/license-photo.md.
                  Si pas de photo : placeholder gris + helper text invitant à
                  uploader via la fiche membre. -->
@@ -673,8 +691,8 @@ function goBack(): void {
               </div>
             </div>
 
-            <div class="space-y-1 min-w-0">
-              <h1 class="text-[17px] font-semibold tracking-tight">
+            <div class="space-y-1 min-w-0 flex-1">
+              <h1 class="text-[17px] font-semibold tracking-tight truncate">
                 {{ memberName(request) }}
               </h1>
               <div class="text-[12px] text-surface-500">
@@ -686,31 +704,40 @@ function goBack(): void {
               >
                 Aucune photo licence — uploader via fiche membre.
               </div>
-              <div
-                v-if="member"
-                class="pt-1"
-              >
-                <Button
-                  size="small"
-                  severity="secondary"
-                  outlined
-                  aria-label="Ouvrir la fiche membre"
-                  @click="goToMember"
-                >
-                  <template #icon>
-                    <UserIcon
-                      :size="13"
-                      :stroke-width="2"
-                    />
-                  </template>
-                  <span class="ml-1">Ouvrir la fiche membre</span>
-                </Button>
-              </div>
             </div>
           </div>
-          <Pill :variant="statusPill(request.status).variant">
+          <Pill
+            :variant="statusPill(request.status).variant"
+            class="self-start"
+          >
             {{ statusPill(request.status).label }}
           </Pill>
+        </div>
+
+        <!-- Bouton fiche membre — sorti de la rangée thumbnail/textes pour
+             éviter le chevauchement vu sur le screenshot. `w-fit` +
+             `whitespace-nowrap` empêchent le wrap des libellés (cas vécu :
+             "Ouvrir la fiche memb[re]" tronqué). -->
+        <div
+          v-if="member"
+          class="pt-1"
+        >
+          <Button
+            size="small"
+            severity="secondary"
+            outlined
+            aria-label="Ouvrir la fiche membre"
+            class="!w-fit whitespace-nowrap"
+            @click="goToMember"
+          >
+            <template #icon>
+              <UserIcon
+                :size="13"
+                :stroke-width="2"
+              />
+            </template>
+            <span class="ml-1">Ouvrir la fiche membre</span>
+          </Button>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-[12.5px]">

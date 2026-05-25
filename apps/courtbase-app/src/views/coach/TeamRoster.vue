@@ -323,17 +323,12 @@ function onBack(): void {
   router.push({ name: 'team' })
 }
 
-function onNotifClick(): void {
-  router.push({ name: 'notifications' })
-}
-
 function onTabSelect(index: number): void {
   if (index === 0) router.push({ name: 'team' })
   else if (index === 1) {
     if (team.value) router.push({ name: 'planning', params: { teamId: team.value.id } })
     else router.push({ name: 'home' })
   } else if (index === 2) router.push({ name: 'registrations' })
-  else if (index === 3) router.push({ name: 'notifications' })
 }
 
 function onNavSelect(index: number): void {
@@ -343,7 +338,6 @@ function onNavSelect(index: number): void {
     if (team.value) router.push({ name: 'planning', params: { teamId: team.value.id } })
     else router.push({ name: 'home' })
   } else if (index === 3) router.push({ name: 'registrations' })
-  else if (index === 4) router.push({ name: 'notifications' })
 }
 
 // ─── Labels segmented ────────────────────────────────────────────
@@ -572,10 +566,8 @@ const SKEL_COUNT = 6
     v-else
     title="Effectif"
     show-back
-    notif-badge
     :tabs="tabs"
     @back="onBack"
-    @notif-click="onNotifClick"
     @tab-select="onTabSelect"
   >
     <!-- Sub-header avec 3 stats inline ─────────────────────── -->

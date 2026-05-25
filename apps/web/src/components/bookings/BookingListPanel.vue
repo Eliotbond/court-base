@@ -6,6 +6,7 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import {
   Calendar,
+  Plus,
   RefreshCw,
   Repeat,
   Trash2,
@@ -14,8 +15,18 @@ import {
 import Pill from '@/components/ui/Pill.vue'
 import { useBookingsStore, type SeriesSummary } from '@/stores/bookings'
 import type { BookingRow } from '@/repositories/bookings.repo'
-import type { BookingStatus, RecurrenceRule } from '@club-app/shared-types'
+import type { BookingStatus, RecurrenceRule, SlotType } from '@club-app/shared-types'
 import DeleteSeriesConfirmDialog from './DeleteSeriesConfirmDialog.vue'
+import { formatDateShort } from '@/utils/dates'
+
+/**
+ * `create` est émis quand l'utilisateur clique sur "Nouvelle réservation".
+ * Le parent (`Bookings.vue`) ouvre alors le `BookingFormDialog` partagé —
+ * on évite de monter une seconde instance du dialog dans ce composant.
+ */
+const emit = defineEmits<{
+  (e: 'create'): void
+}>()
 
 /**
  * Panneau "Liste" de l'écran /bookings — affiche toutes les réservations
@@ -86,25 +97,15 @@ const sortedSeries = computed<SeriesSummary[]>(() => {
 })
 
 // ---------------------------------------------------------------------------
-// Formatters
+// Formatters — délègue au helper central `formatDateShort` (DD/MM/YYYY fr-CH).
 // ---------------------------------------------------------------------------
 
-const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-})
-
 function formatBookingDate(b: BookingRow): string {
-  // any: même contrainte que Bookings.vue → le Timestamp neutre n'expose pas
-  // `.toDate()` ; on lit `seconds` (présent partout).
-  const ts = b.date as unknown as { seconds: number; toDate?: () => Date }
-  const d = typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts.seconds * 1000)
-  return dateFormatter.format(d)
+  return formatDateShort(b.date as unknown as { seconds: number })
 }
 
 function formatTimestamp(ts: { seconds: number }): string {
-  return dateFormatter.format(new Date(ts.seconds * 1000))
+  return formatDateShort(ts)
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,27 @@ function statusLabel(status: BookingStatus): string {
   if (status === 'scheduled') return 'Planifié'
   if (status === 'cancelled') return 'Annulé'
   return 'Libéré'
+}
+
+/**
+ * Libellé FR d'un `SlotType`. Utilisé en fallback dans le tableau quand
+ * `teamName` est nul (sinon le code interne `training` / `match_home` /
+ * etc. fuiterait à l'écran).
+ */
+function slotTypeLabel(t: SlotType): string {
+  switch (t) {
+    case 'training':
+      return 'Entraînement'
+    case 'match_home':
+      return 'Match à domicile'
+    case 'match_away':
+      return 'Match à l\'extérieur'
+    case 'reserve':
+      return 'Réserve'
+    case 'custom':
+    default:
+      return 'Personnalisé'
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -217,8 +239,8 @@ async function confirmDeleteSeries(): Promise<void> {
 
 <template>
   <div class="space-y-6">
-    <!-- Header : titre + refresh -->
-    <div class="flex items-center justify-between gap-2">
+    <!-- Header : titre + actions (nouvelle réservation + rafraîchir) -->
+    <div class="flex items-center justify-between gap-2 flex-wrap">
       <div>
         <h2 class="text-[15px] font-semibold">
           Toutes les réservations
@@ -227,19 +249,33 @@ async function confirmDeleteSeries(): Promise<void> {
           Saison active — séries récurrentes et réservations individuelles.
         </div>
       </div>
-      <Button
-        severity="secondary"
-        size="small"
-        outlined
-        :disabled="store.listLoading"
-        @click="refresh"
-      >
-        <RefreshCw
-          :size="14"
-          :stroke-width="2"
-        />
-        <span class="ml-1.5">Rafraîchir</span>
-      </Button>
+      <div class="flex items-center gap-2">
+        <Button
+          severity="primary"
+          size="small"
+          aria-label="Nouvelle réservation"
+          @click="emit('create')"
+        >
+          <Plus
+            :size="14"
+            :stroke-width="2"
+          />
+          <span class="ml-1.5">Nouvelle réservation</span>
+        </Button>
+        <Button
+          severity="secondary"
+          size="small"
+          outlined
+          :disabled="store.listLoading"
+          @click="refresh"
+        >
+          <RefreshCw
+            :size="14"
+            :stroke-width="2"
+          />
+          <span class="ml-1.5">Rafraîchir</span>
+        </Button>
+      </div>
     </div>
 
     <!-- Error banner — listError (store) ou localError (post-action) -->
@@ -427,7 +463,7 @@ async function confirmDeleteSeries(): Promise<void> {
           <Column header="Titre / Équipe">
             <template #body="{ data }: { data: BookingRow }">
               <div class="font-medium truncate">
-                {{ data.teamName ?? data.slotType }}
+                {{ data.teamName ?? slotTypeLabel(data.slotType) }}
               </div>
             </template>
           </Column>
@@ -495,7 +531,7 @@ async function confirmDeleteSeries(): Promise<void> {
           class="card p-3 space-y-1 text-[12px]"
         >
           <div class="font-medium">
-            {{ bookingToDelete.teamName ?? bookingToDelete.slotType }}
+            {{ bookingToDelete.teamName ?? slotTypeLabel(bookingToDelete.slotType) }}
           </div>
           <div class="text-surface-600 num">
             {{ formatBookingDate(bookingToDelete) }}

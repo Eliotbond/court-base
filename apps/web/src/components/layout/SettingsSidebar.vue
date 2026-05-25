@@ -36,8 +36,8 @@ const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: 'Club',
     items: [
-      { to: '/settings/club', label: 'Club info', icon: Building2 },
-      { to: '/settings/admin-team', label: 'Admin team', icon: Users },
+      { to: '/settings/club', label: 'Infos du club', icon: Building2 },
+      { to: '/settings/admin-team', label: 'Équipe admin', icon: Users },
     ],
   },
   {
@@ -50,14 +50,14 @@ const NAV_GROUPS: readonly NavGroup[] = [
   },
   {
     label: 'Membres',
-    items: [{ to: '/settings/roles', label: 'Member roles', icon: Tags }],
+    items: [{ to: '/settings/roles', label: 'Rôles membres', icon: Tags }],
   },
   {
     label: 'Saison / Compétition',
     items: [
-      { to: '/settings/officials', label: 'Officials', icon: Siren },
-      { to: '/settings/match-types', label: 'Match types', icon: Trophy },
-      { to: '/settings/closure-periods', label: 'Closure periods', icon: CalendarX },
+      { to: '/settings/officials', label: 'Officiels', icon: Siren },
+      { to: '/settings/match-types', label: 'Types de match', icon: Trophy },
+      { to: '/settings/closure-periods', label: 'Périodes de fermeture', icon: CalendarX },
     ],
   },
   {
@@ -66,7 +66,7 @@ const NAV_GROUPS: readonly NavGroup[] = [
   },
   {
     label: 'Finances',
-    items: [{ to: '/settings/dues', label: 'Dues config', icon: Banknote }],
+    items: [{ to: '/settings/dues', label: 'Configuration cotisations', icon: Banknote }],
   },
   {
     label: 'Intégrations',

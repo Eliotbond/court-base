@@ -867,7 +867,7 @@ async function onUnlinkBasketplan(
     <div class="flex items-end justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-[22px] font-semibold tracking-tight">
-          Teams
+          Équipes
         </h1>
         <p class="text-[13px] text-surface-500 mt-0.5">
           {{ headingSubline }}

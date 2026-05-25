@@ -32,7 +32,7 @@ const activeTab = ref<TabId>('matches')
     <!-- ================= Page heading =================== -->
     <div>
       <h1 class="text-[22px] font-semibold tracking-tight">
-        Officials
+        Officiels
       </h1>
       <p class="text-[13px] text-surface-500 mt-0.5">
         Staffing des matchs (domicile et extérieur) et rentabilité des officiels.

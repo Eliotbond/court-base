@@ -46,8 +46,16 @@ const selectedCourts = computed<Court[]>(() => store.selectedCourts)
 // Helpers dates / coordonnées
 // ---------------------------------------------------------------------------
 
+// Format DD/MM/YYYY — utilisé pour l'affichage des dates de fermeture.
+// Note : `toLocaleDateString('fr-CH')` produit DD.MM.YYYY (points), donc on
+// formate manuellement avec des slashs pour rester cohérent avec le reste de
+// l'app (DatePicker en `dd/mm/yy`).
 function formatTimestamp(ts: Timestamp): string {
-  return new Date(ts.seconds * 1000).toLocaleDateString('fr-CH')
+  const d = new Date(ts.seconds * 1000)
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  return `${dd}/${mm}/${yyyy}`
 }
 
 function formatCoord(lat: number, lng: number): string {
@@ -643,7 +651,7 @@ async function removeClosure(index: number): Promise<void> {
     <div class="flex items-end justify-between gap-4 flex-wrap flex-shrink-0">
       <div>
         <h1 class="text-[22px] font-semibold tracking-tight">
-          Venues &amp; courts
+          Salles &amp; courts
         </h1>
         <p class="text-[13px] text-surface-500 mt-0.5">
           {{ totals.venues }} salle<span v-if="totals.venues > 1">s</span>
@@ -947,7 +955,7 @@ async function removeClosure(index: number): Promise<void> {
                   <button
                     type="button"
                     class="btn btn-ghost btn-sm !px-1.5 text-surface-500"
-                    aria-label="Actions court"
+                    aria-label="Actions du court"
                     @click="openCourtMenu($event, court)"
                   >
                     <MoreHorizontal
@@ -1134,7 +1142,7 @@ async function removeClosure(index: number): Promise<void> {
                 class="flex-shrink-0 mt-0.5"
               />
               Les périodes de fermeture du club (vacances scolaires) se gèrent dans
-              <span class="text-surface-400 cursor-not-allowed line-through">Settings → Closure periods</span>
+              <span class="text-surface-400 cursor-not-allowed line-through">Paramètres → Périodes de fermeture</span>
               <span class="text-surface-400">(disponible prochainement).</span>
             </p>
           </div>

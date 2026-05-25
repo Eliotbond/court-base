@@ -107,18 +107,18 @@ function formatRelativeDate(ts: Timestamp | null | undefined): string {
   const days = Math.round(hours / 24)
   if (days < 30) return `Il y a ${days} j`
   // > 1 mois → date FR courte
-  return new Date(dateMs).toLocaleDateString('fr-CH', {
+  return new Date(dateMs).toLocaleDateString('fr-FR', {
     day: '2-digit',
-    month: 'short',
+    month: '2-digit',
     year: 'numeric',
   })
 }
 
 function formatFullDate(ts: Timestamp | null | undefined): string {
   if (!ts || !ts.seconds) return '—'
-  return new Date(ts.seconds * 1000).toLocaleString('fr-CH', {
+  return new Date(ts.seconds * 1000).toLocaleString('fr-FR', {
     day: '2-digit',
-    month: 'short',
+    month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
@@ -127,9 +127,9 @@ function formatFullDate(ts: Timestamp | null | undefined): string {
 
 function formatBirthDate(ts: Timestamp | null | undefined): string {
   if (!ts || !ts.seconds || ts.seconds < 1000) return '—'
-  return new Date(ts.seconds * 1000).toLocaleDateString('fr-CH', {
+  return new Date(ts.seconds * 1000).toLocaleDateString('fr-FR', {
     day: '2-digit',
-    month: 'short',
+    month: '2-digit',
     year: 'numeric',
   })
 }

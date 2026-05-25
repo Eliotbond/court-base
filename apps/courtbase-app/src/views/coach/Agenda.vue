@@ -791,7 +791,6 @@ const userDisplayName = computed(() => auth.displayName)
     v-else
     title="Agenda"
     :tabs="tabs"
-    @notif-click="router.push({ name: 'notifications' })"
   >
     <div class="agenda-tabs-mobile">
       <div class="cb-segmented agenda-segmented-full">

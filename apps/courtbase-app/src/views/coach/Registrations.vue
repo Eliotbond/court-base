@@ -264,9 +264,6 @@ function onTabSelect(index: number): void {
       break
     case 2:
       return
-    case 3:
-      router.push({ name: 'notifications' })
-      break
   }
 }
 
@@ -283,14 +280,7 @@ function onNavSelect(index: number): void {
       break
     case 3:
       return
-    case 4:
-      router.push({ name: 'notifications' })
-      break
   }
-}
-
-function onNotifClick(): void {
-  router.push({ name: 'notifications' })
 }
 
 function onBackClick(): void {
@@ -397,7 +387,6 @@ void Icons
     title="Inscriptions"
     club="BCA"
     :tabs="tabs"
-    @notif-click="onNotifClick"
     @tab-select="onTabSelect"
     @back-click="onBackClick"
   >

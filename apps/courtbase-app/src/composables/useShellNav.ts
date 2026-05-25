@@ -1,6 +1,5 @@
 import { computed } from 'vue'
 import {
-  Bell,
   BellRing,
   CalendarCheck,
   CalendarDays,
@@ -19,7 +18,6 @@ import {
 import { listRequests } from '@/repositories/mock'
 import { useAuthStore } from '@/stores/auth'
 import { useLicenseRequestsStore } from '@/stores/licenseRequests'
-import { useNotificationsStore } from '@/stores/notifications'
 import { useOfficialsStore } from '@/stores/officials'
 import { useRegistrationsStore } from '@/stores/registrations'
 import type { CbNavItem, CbNavItemGroup } from '@/components/ui/CbSidebar.vue'
@@ -58,17 +56,18 @@ import type { AppRole } from '@/types/roles'
 export function useShellNav() {
   const authStore = useAuthStore()
   const licenseRequestsStore = useLicenseRequestsStore()
-  const notificationsStore = useNotificationsStore()
   const officialsStore = useOfficialsStore()
   const registrationsStore = useRegistrationsStore()
 
   /**
-   * Badge "non lues" — lit `useNotificationsStore.unreadCount` (refactor
-   * 2026-05-24). Avant : `countUnread()` (fonction pure) → le computed Vue
-   * n'était jamais invalidé, le badge restait figé y compris après
-   * `markRead`. Maintenant : ref Pinia réactif, propagé jusqu'au shell.
+   * **Alpha 2026-05-25** : badge notifs neutralisé en attendant la Phase 5
+   * (FCM web push). Conservé comme `ComputedRef<null>` pour ne pas casser
+   * les call-sites (vues qui passent `:notif-badge="notifBadge ?? false"`
+   * au shell — un badge falsy fait disparaître la cloche/pastille).
+   * Quand on rebranchera les notifs, restaurer la lecture sur
+   * `useNotificationsStore().unreadCount`.
    */
-  const notifBadge = computed(() => notificationsStore.unreadCount || null)
+  const notifBadge = computed<number | null>(() => null)
   /**
    * Badge "Inscriptions" coach — uniquement les inscriptions **actionables**
    * (bucket `demande` + `essai`, cf. `bucketFor`). Source : store réel
@@ -105,26 +104,22 @@ export function useShellNav() {
     { icon: Users, label: 'Équipes', routeName: 'team', activeRoutes: ['team-roster', 'member', 'member-edit', 'member-new', 'planning', 'training-attendance', 'away-match-create'] },
     { icon: CalendarDays, label: 'Agenda', routeName: 'agenda' },
     { icon: Clipboard, label: 'Inscriptions', routeName: 'registrations', activeRoutes: ['registration-detail'], badge: coachRegistrationsBadge.value },
-    { icon: Bell, label: 'Notifs', routeName: 'notifications', badge: notifBadge.value },
   ])
 
   const officialTabs = computed<CbTab[]>(() => [
     { icon: BellRing, label: 'À pourvoir', routeName: 'matches-open', activeRoutes: ['match-detail'], badge: officialOpenMatchesBadge.value },
     { icon: CalendarDays, label: 'Mes matchs', routeName: 'my-assignments' },
-    { icon: Bell, label: 'Notifs', routeName: 'notifications', badge: notifBadge.value },
   ])
 
   const adminTabs = computed<CbTab[]>(() => [
     { icon: BellRing, label: 'Staffing', routeName: 'staffing', activeRoutes: ['staffing-detail'] },
     { icon: Inbox, label: 'Demandes', routeName: 'requests', activeRoutes: ['request-detail', 'license-requests'], badge: adminRequestsBadge.value },
     { icon: Megaphone, label: 'Diffuser', routeName: 'broadcast' },
-    { icon: Bell, label: 'Notifs', routeName: 'notifications', badge: notifBadge.value },
   ])
 
   const playerTabs = computed<CbTab[]>(() => [
     { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
     { icon: CalendarDays, label: 'Agenda', routeName: 'agenda' },
-    { icon: Bell, label: 'Notifs', routeName: 'notifications', badge: notifBadge.value },
   ])
 
   /**
@@ -135,13 +130,11 @@ export function useShellNav() {
     { icon: HomeIcon, label: 'Coach' },
     { icon: BellRing, label: 'Officiel' },
     { icon: Shield, label: 'Admin' },
-    { icon: Bell, label: 'Notifs', routeName: 'notifications', badge: notifBadge.value },
   ])
 
   /** Tab bar minimaliste (fallback générique). */
   const basicTabs = computed<CbTab[]>(() => [
     { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
-    { icon: Bell, label: 'Notifs', routeName: 'notifications', badge: notifBadge.value },
   ])
 
   // ─── Sidebars desktop legacy (rétro-compat) ─────────────────────
@@ -153,15 +146,13 @@ export function useShellNav() {
     { icon: CalendarDays, label: 'Agenda', routeName: 'agenda' },
     { icon: Clipboard, label: 'Inscriptions', routeName: 'registrations', activeRoutes: ['registration-detail'], badge: coachRegistrationsBadge.value },
     { icon: FileCheck, label: 'Licences', routeName: 'license-reviews', activeRoutes: ['license-request-review'], badge: coachLicenseReviewsBadge.value },
-    { icon: Bell, label: 'Notifications', routeName: 'notifications', badge: notifBadge.value },
   ])
 
   const officialNav = computed<CbNavItem[]>(() => [
     { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
     { icon: CalendarCheck, label: 'Mon calendrier', routeName: 'my-calendar' },
     { icon: BellRing, label: 'Matchs à pourvoir', routeName: 'matches-open', activeRoutes: ['match-detail'], badge: officialOpenMatchesBadge.value },
-    { icon: CalendarDays, label: 'Mes assignations', routeName: 'my-assignments' },
-    { icon: Bell, label: 'Notifications', routeName: 'notifications', badge: notifBadge.value },
+    { icon: CalendarDays, label: 'Calendrier des Officiels', routeName: 'my-assignments' },
   ])
 
   const adminNav = computed<CbNavItem[]>(() => [
@@ -172,13 +163,11 @@ export function useShellNav() {
     { icon: FileCheck, label: 'Demandes licence', routeName: 'license-requests' },
     { icon: CalendarDays, label: 'Agenda', routeName: 'agenda' },
     { icon: Megaphone, label: 'Diffuser', routeName: 'broadcast' },
-    { icon: Bell, label: 'Notifications', routeName: 'notifications', badge: notifBadge.value },
   ])
 
   const playerNav = computed<CbNavItem[]>(() => [
     { icon: HomeIcon, label: 'Accueil', routeName: 'home' },
     { icon: CalendarCheck, label: 'Mon calendrier', routeName: 'my-calendar' },
-    { icon: Bell, label: 'Notifications', routeName: 'notifications', badge: notifBadge.value },
     { icon: UserIcon, label: 'Mon profil', routeName: 'profile-settings' },
   ])
 
@@ -204,8 +193,13 @@ export function useShellNav() {
   // ─── Nouvelle API (PR-M-A) ──────────────────────────────────────
 
   /**
-   * Rôles actifs du user, dans l'ordre canonique Coach > Officiel > Admin >
-   * Joueur. Utilisé pour construire `tabs` et `nav`.
+   * Rôles actifs du user, dans l'ordre canonique Coach > Officiel > Joueur.
+   *
+   * **Alpha 2026-05-25** : la branche `admin` a été retirée — la partie
+   * admin de l'app (broadcast, staffing, demandes) est désactivée le temps
+   * que les workflows soient finalisés. Le flag `authStore.isAdmin` reste
+   * disponible pour d'autres usages (gates Firestore Rules côté UI, badges),
+   * mais ne contribue plus aux tabs/nav du shell.
    */
   const activeRoles = computed<AppRole[]>(() => {
     // Lit les flags **inclusifs** `is*` du store auth (rôle déclaré OU
@@ -216,7 +210,6 @@ export function useShellNav() {
     const ordered: AppRole[] = []
     if (authStore.isCoach) ordered.push('coach')
     if (authStore.isOfficial) ordered.push('official')
-    if (authStore.isAdmin) ordered.push('admin')
     // 'player' n'a pas de flag inclusif (pas de notion de "joueur actif via
     // licence" distincte de l'appartenance à une équipe) — lecture directe.
     if (authStore.roles.includes('player')) ordered.push('player')
@@ -240,7 +233,11 @@ export function useShellNav() {
       case 'official':
         return {
           icon: ClipboardList,
-          label: 'Assignations',
+          // Label court "Calendrier" pour la tab bar mobile (espace limité —
+          // "Calendrier des Officiels" est trop long). Cohérent avec le
+          // titre desktop long "Calendrier des Officiels" porté par les vues
+          // (cf. MyAssignments.vue / officialNav legacy).
+          label: 'Calendrier',
           routeName: 'my-assignments',
           activeRoutes: ['match-detail', 'matches-open'],
         }
@@ -264,14 +261,13 @@ export function useShellNav() {
 
   /**
    * Tab bar mobile (max 4 items). Slot 1 = Home. Slots 2-4 = 1 item par rôle
-   * actif (Coach > Officiel > Admin > Joueur).
+   * actif (Coach > Officiel > Joueur).
    *
-   * **Cas > 3 rôles actifs** (coach + official + admin + player, très rare) :
-   * slot 4 devient "Plus" (icône `MoreHorizontal`, route `notifications`).
-   * Décision : on garde les 2 rôles "principaux" (Coach, Officiel) + un
-   * fourre-tout. Le 3e+4e rôles restent atteignables via la sidebar desktop
-   * et via les sections empilées de Home. À itérer si UX feedback : ouvrir
-   * une sheet listant les rôles dépriorisés + Notifs + Profil.
+   * **Cas > 3 rôles actifs** : avec admin désactivé en alpha (2026-05-25)
+   * le cas est techniquement injoignable (max 3 rôles actifs : coach,
+   * official, player). On garde la branche `MoreHorizontal` comme garde-fou
+   * en cas d'ajout futur d'un 4e rôle, mais elle pointe maintenant vers
+   * `home` (la route `notifications` n'est plus dans l'allowlist).
    */
   const tabs = computed<CbTab[]>(() => {
     const home: CbTab = { icon: HomeIcon, label: 'Accueil', routeName: 'home' }
@@ -279,12 +275,11 @@ export function useShellNav() {
     if (roleTabs.length <= 3) {
       return [home, ...roleTabs]
     }
-    // > 3 rôles → garder les 2 premiers + un slot "Plus" pour les autres.
+    // > 3 rôles → garder les 2 premiers + un slot "Plus" inerte.
     const morePlaceholder: CbTab = {
       icon: MoreHorizontal,
       label: 'Plus',
-      routeName: 'notifications',
-      badge: notifBadge.value,
+      routeName: 'home',
     }
     return [home, roleTabs[0]!, roleTabs[1]!, morePlaceholder]
   })
@@ -307,7 +302,7 @@ export function useShellNav() {
       case 'official':
         return [
           { icon: BellRing, label: 'Matchs à pourvoir', routeName: 'matches-open', activeRoutes: ['match-detail'], badge: officialOpenMatchesBadge.value },
-          { icon: CalendarDays, label: 'Mes assignations', routeName: 'my-assignments' },
+          { icon: CalendarDays, label: 'Calendrier des Officiels', routeName: 'my-assignments' },
         ]
       case 'admin':
         return [
@@ -376,17 +371,13 @@ export function useShellNav() {
   })
 
   /**
-   * Item Notifications dédié au footer sidebar (au-dessus du userchip).
-   * Porte le `notifBadge` réactif — c'est le **seul** endroit où l'utilisateur
-   * desktop voit le compteur non-lues depuis la nav principale (le bell du
-   * header existe seulement en mobile).
+   * **Alpha 2026-05-25** : item Notifications désactivé en attendant la
+   * Phase 5 (FCM web push). On retourne `undefined` ; `CbDesktopShell` /
+   * `CbSidebar` rendent l'item conditionnellement (`v-if="notifItem"`),
+   * donc l'entrée disparaît proprement du footer sidebar. Le type reste
+   * compatible avec les call-sites qui passent au shell sans destructurer.
    */
-  const notifItem = computed<CbNavItem>(() => ({
-    icon: Bell,
-    label: 'Notifications',
-    routeName: 'notifications',
-    badge: notifBadge.value,
-  }))
+  const notifItem = computed<CbNavItem | undefined>(() => undefined)
 
   /**
    * Label de rôle principal pour l'avatar du shell. Priorité dédiée

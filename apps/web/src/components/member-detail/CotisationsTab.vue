@@ -748,7 +748,7 @@ const isEmpty = computed(
         <span class="text-[12px] text-surface-600">Date du paiement</span>
         <DatePicker
           v-model="payForm.date"
-          date-format="dd.mm.yy"
+          date-format="dd/mm/yy"
           show-icon
           class="mt-1 w-full"
         />

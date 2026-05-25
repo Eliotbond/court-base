@@ -11,7 +11,6 @@ import {
   CircleHelp,
   ClipboardCheck,
   ClipboardList,
-  IdCard,
   Trophy,
   History,
   Settings,
@@ -26,11 +25,13 @@ import {
   ShieldCheck,
 } from 'lucide-vue-next'
 import { computed, onMounted, type Component } from 'vue'
+import Tag from 'primevue/tag'
 import Pill from '@/components/ui/Pill.vue'
 import { useMembersStore } from '@/stores/members'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
 import { useCotisationsStore } from '@/stores/cotisations'
+import { useLicenseRequestsStore } from '@/stores/licenseRequests'
 
 type NavItem = {
   to: string
@@ -38,12 +39,20 @@ type NavItem = {
   icon: Component
   badge?: { text: string; variant: 'rose' | 'amber' | 'slate' }
   count?: string
+  /**
+   * `dev: true` ajoute un Tag PrimeVue `<Tag severity="warning">dev</Tag>`
+   * à côté du label. Sert à marquer les sections pas encore prêtes pour la
+   * mise en prod (Licences, Comptabilité, …) — UI déjà visible mais workflow
+   * en cours de validation.
+   */
+  dev?: boolean
 }
 
 const membersStore = useMembersStore()
 const settingsStore = useSettingsStore()
 const authStore = useAuthStore()
 const cotisationsStore = useCotisationsStore()
+const licenseRequestsStore = useLicenseRequestsStore()
 
 // La route `/cotisations` est `ADMIN_ONLY` ; on ne charge le store que pour
 // les rôles capables d'y accéder. `rootAdmin` bypasse également la rule
@@ -51,6 +60,19 @@ const cotisationsStore = useCotisationsStore()
 // inutile pour un coach connecté qui voit la sidebar mais pas l'entrée.
 const canSeeCotisations = computed(
   () => authStore.rootAdmin || authStore.roles.includes('admin'),
+)
+
+// La route `/license-requests` est gatée `LICENSES_ACCESS` =
+// `admin | treasurer | secretary` (cf. `router/index.ts`) + bypass
+// `rootAdmin`. On ne charge le store que pour ce périmètre, sinon
+// `permission-denied` côté rules pour un coach connecté. Le coach gère ses
+// propres demandes depuis `apps/courtbase-app`, pas depuis cette sidebar.
+const canSeeLicenseRequests = computed(
+  () =>
+    authStore.rootAdmin ||
+    authStore.roles.includes('admin') ||
+    authStore.roles.includes('treasurer') ||
+    authStore.roles.includes('secretary'),
 )
 
 onMounted(() => {
@@ -73,6 +95,13 @@ onMounted(() => {
   ) {
     void cotisationsStore.load()
   }
+  // Idem pour les demandes de licence — `load()` est idempotent (re-appel
+  // = no-op si déjà chargé) et la page `/license-requests` lit le même
+  // store : pas de double fetch lors de la navigation. Alimente le badge
+  // `licenseRequestsBadge` (cf. ci-dessous).
+  if (canSeeLicenseRequests.value && !licenseRequestsStore.loading) {
+    void licenseRequestsStore.load()
+  }
 })
 
 /**
@@ -88,6 +117,32 @@ const cotisationsBadge = computed<NavItem['badge'] | null>(() => {
   return {
     text: count > 99 ? '99+' : String(count),
     variant: 'rose',
+  }
+})
+
+/**
+ * Badge "Demandes de licence" — compte des demandes pour lesquelles le
+ * staff trésorier (treasurer / admin / secretary / rootAdmin) a une
+ * action concrète à mener. Source : getter `pendingTreasurer` du store —
+ * union canonique `coach_validated | parent_signed | form_confirmed |
+ * sent_paid` (cf. `stores/licenseRequests.ts` §TREASURER_ACTIONABLE_STATUSES).
+ *
+ * Le badge ne reflète PAS le total des demandes en cours : les statuts
+ * `pending_parent_docs`, `parent_docs_submitted`, `awaiting_parent_signature`
+ * sont en attente côté parent ou coach — rien à traiter côté staff. La
+ * page liste affiche bien la totalité, le badge reste sur le sous-set
+ * actionnable pour ne pas crier au loup.
+ *
+ * Renvoie `null` quand le compte vaut 0 (pas de pastille inutile).
+ * Variant `amber` aligné sur le ton "à traiter" des chips trésorier.
+ */
+const licenseRequestsBadge = computed<NavItem['badge'] | null>(() => {
+  if (!canSeeLicenseRequests.value) return null
+  const count = licenseRequestsStore.pendingTreasurer.length
+  if (count <= 0) return null
+  return {
+    text: count > 99 ? '99+' : String(count),
+    variant: 'amber',
   }
 })
 
@@ -122,8 +177,13 @@ const operations = computed<NavItem[]>(() => {
       icon: Banknote,
       ...(cotisationsBadge.value ? { badge: cotisationsBadge.value } : {}),
     },
-    { to: '/license-requests', label: 'Demandes de licence', icon: ShieldCheck },
-    { to: '/licenses', label: 'Licences', icon: BadgeCheck },
+    {
+      to: '/license-requests',
+      label: 'Demandes de licence',
+      icon: ShieldCheck,
+      ...(licenseRequestsBadge.value ? { badge: licenseRequestsBadge.value } : {}),
+    },
+    { to: '/licenses', label: 'Licences', icon: BadgeCheck, dev: true },
     { to: '/exceptions', label: 'Payment exceptions', icon: CircleHelp },
     { to: '/attendance', label: 'Attendance', icon: ClipboardCheck },
     { to: '/matches', label: 'Matches', icon: Trophy },
@@ -131,8 +191,11 @@ const operations = computed<NavItem[]>(() => {
   return items
 })
 
+// Entrée "Member detail" retirée du menu — la fiche membre reste accessible
+// via Members → ligne (route `/members/:id` toujours déclarée). L'entrée de
+// nav vers `/members/_preview` n'avait de sens qu'en mode design preview.
 const details: NavItem[] = [
-  { to: '/members/_preview', label: 'Member detail', icon: IdCard },
+  // { to: '/members/_preview', label: 'Member detail', icon: IdCard },
   { to: '/court-history', label: 'Court history', icon: History },
 ]
 
@@ -145,14 +208,18 @@ const canSeeAccounting = computed(
   () => authStore.rootAdmin || authStore.roles.includes('treasurer'),
 )
 
+// Toutes les pages Comptabilité sont marquées `dev: true` — le module est livré
+// côté UI mais reste en cours de validation métier (cf. docs/compta.md). Le Tag
+// "dev" à côté de chaque label permet au trésorier de naviguer en sachant que
+// le workflow comptable n'est pas encore officiellement déployé.
 const accounting: NavItem[] = [
-  { to: '/comptabilite', label: 'Comptabilité', icon: Wallet },
-  { to: '/comptabilite/comptes', label: 'Plan comptable', icon: BookOpen },
-  { to: '/comptabilite/credits', label: 'Crédits', icon: PlusCircle },
-  { to: '/comptabilite/factures', label: 'Factures', icon: FileText },
-  { to: '/comptabilite/journal', label: 'Journal', icon: ScrollText },
-  { to: '/comptabilite/bilan', label: 'Bilan', icon: Scale },
-  { to: '/comptabilite/resultat', label: 'Compte de résultat', icon: Calculator },
+  { to: '/comptabilite', label: 'Comptabilité', icon: Wallet, dev: true },
+  { to: '/comptabilite/comptes', label: 'Plan comptable', icon: BookOpen, dev: true },
+  { to: '/comptabilite/credits', label: 'Crédits', icon: PlusCircle, dev: true },
+  { to: '/comptabilite/factures', label: 'Factures', icon: FileText, dev: true },
+  { to: '/comptabilite/journal', label: 'Journal', icon: ScrollText, dev: true },
+  { to: '/comptabilite/bilan', label: 'Bilan', icon: Scale, dev: true },
+  { to: '/comptabilite/resultat', label: 'Compte de résultat', icon: Calculator, dev: true },
 ]
 
 const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }]
@@ -205,6 +272,12 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
           :stroke-width="2"
         />
         <span>{{ item.label }}</span>
+        <Tag
+          v-if="item.dev"
+          value="dev"
+          severity="warning"
+          class="!text-[10px] !py-0 !px-1.5 !leading-4"
+        />
         <span
           v-if="item.count"
           class="ml-auto text-[11px] text-surface-400 num"
@@ -231,6 +304,12 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
           :stroke-width="2"
         />
         <span>{{ item.label }}</span>
+        <Tag
+          v-if="item.dev"
+          value="dev"
+          severity="warning"
+          class="!text-[10px] !py-0 !px-1.5 !leading-4"
+        />
         <Pill
           v-if="item.badge"
           :variant="item.badge.variant"
@@ -279,6 +358,12 @@ const setup: NavItem[] = [{ to: '/settings', label: 'Settings', icon: Settings }
             :stroke-width="2"
           />
           <span>{{ item.label }}</span>
+          <Tag
+            v-if="item.dev"
+            value="dev"
+            severity="warning"
+            class="!text-[10px] !py-0 !px-1.5 !leading-4"
+          />
         </RouterLink>
       </template>
 

@@ -40,7 +40,7 @@ import { useReplacementsStore } from '@/stores/replacements'
  *  2. URGENT — opportunités à moins de 3 jours, à mon niveau (encadré rose).
  *  3. Mes prochaines assignations (pending + confirmed, top 3, actions inline).
  *  4. Matchs à pourvoir cette semaine (à mon niveau, top 3).
- *  5. Demandes de remplacement reçues en attente — CTA vers "Mes assignations".
+ *  5. Demandes de remplacement reçues en attente — CTA vers "Calendrier des Officiels".
  *
  * Pas de duplication d'actions vers `/assignments` ou `/matches/open` — un
  * simple "Voir tout" sur chaque header. Les vrais workflows (confirm/decline)

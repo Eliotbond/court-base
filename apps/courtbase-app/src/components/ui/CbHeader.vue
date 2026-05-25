@@ -79,15 +79,25 @@ const badge = computed<{ kind: 'count'; value: string } | { kind: 'dot' } | null
     </div>
     <div class="title">{{ title }}</div>
     <div class="right">
+      <!--
+        Alpha 2026-05-25 : la cloche notifications est désactivée tant que
+        FCM web push n'est pas branché (Phase 5). Le bouton est conservé
+        dans le code mais ne s'affiche que si `notifBadge` est explicitement
+        truthy — ce qui n'arrive plus dans aucune vue depuis qu'on a
+        neutralisé `useShellNav().notifBadge` (retourne `null` constant).
+        Quand on rebranchera les notifs : retirer le `v-if` (ou passer
+        `notif-badge` truthy depuis l'appelant).
+      -->
       <button
+        v-if="badge"
         type="button"
         class="cb-iconbtn"
         aria-label="Notifications"
         @click="$emit('notifClick')"
       >
         <Bell :size="20" />
-        <span v-if="badge?.kind === 'count'" class="count-badge">{{ badge.value }}</span>
-        <span v-else-if="badge?.kind === 'dot'" class="dot" />
+        <span v-if="badge.kind === 'count'" class="count-badge">{{ badge.value }}</span>
+        <span v-else-if="badge.kind === 'dot'" class="dot" />
       </button>
       <slot name="right">
         <button

@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRouter } from 'vue-router'
 
 import CbDesktopShell from '@/components/ui/CbDesktopShell.vue'
 import CbMobileShell from '@/components/ui/CbMobileShell.vue'
-import HomeAdminSection from '@/components/home/HomeAdminSection.vue'
 import HomeCoachSection from '@/components/home/HomeCoachSection.vue'
 import HomeEmpty from '@/components/home/HomeEmpty.vue'
 import HomeOfficialSection from '@/components/home/HomeOfficialSection.vue'
@@ -19,31 +17,27 @@ import { useAuthStore } from '@/stores/auth'
  * 1. Choisit le shell (Mobile vs Desktop) via `useViewport().isDesktop`.
  * 2. Lit `useShellNav()` (nouvelle API : `tabs`, `nav`, `primaryRoleLabel`).
  * 3. Empile les sections conditionnelles par rôle dans l'ordre canonique :
- *    Coach > Officiel > Admin > Joueur. Aucune section = `HomeEmpty`.
+ *    Coach > Officiel > Joueur. Aucune section = `HomeEmpty`.
+ *
+ * **Alpha 2026-05-25** : la section admin (`HomeAdminSection`) et la cloche
+ * notifications sont désactivées en attendant les phases ultérieures
+ * (broadcast / staffing finalisés + FCM web push Phase 5). Le composant
+ * `HomeAdminSection.vue` reste dans le repo — seul son rendu est retiré ici.
  *
  * Aucun fetch ici : chaque `Home*Section` est responsable du chargement
  * scopé à son rôle (cf. brief §"Data loading scope" et CLAUDE.md
  * §"Menu unifié single-page > Règle 'scope data per section'").
  *
- * Divergence d'API shells (mobile = `title/tabs`, desktop = `items/userRole`)
- * → on garde deux `v-if` séparés plutôt qu'un `<component :is>` qui aurait
- * imposé un wrapper de props artificiel.
- *
  * Source de vérité produit : `docs/courtbase-app/menu-refactor.md`.
  */
 
 const auth = useAuthStore()
-const router = useRouter()
 const { isDesktop } = useViewport()
-const { tabs, nav, notifItem, notifBadge, primaryRoleLabel } = useShellNav()
-
-function goToNotifications(): void {
-  void router.push({ name: 'notifications' })
-}
+const { tabs, nav, primaryRoleLabel } = useShellNav()
 
 const isPlayer = computed(() => auth.roles.includes('player'))
 const hasAnyRole = computed(
-  () => auth.isCoach || auth.isOfficial || auth.isAdmin || isPlayer.value,
+  () => auth.isCoach || auth.isOfficial || isPlayer.value,
 )
 </script>
 
@@ -51,7 +45,6 @@ const hasAnyRole = computed(
   <CbDesktopShell
     v-if="isDesktop"
     :items="nav"
-    :notif-item="notifItem"
     brand-name="BC Aigles"
     brand-sub="Saison 2025/26"
     club-initials="BCA"
@@ -63,7 +56,6 @@ const hasAnyRole = computed(
       <template v-else>
         <HomeCoachSection v-if="auth.isCoach" />
         <HomeOfficialSection v-if="auth.isOfficial" />
-        <HomeAdminSection v-if="auth.isAdmin" />
         <HomePlayerSection v-if="isPlayer" />
       </template>
     </div>
@@ -74,15 +66,12 @@ const hasAnyRole = computed(
     title="Accueil"
     club="BCA"
     :tabs="tabs"
-    :notif-badge="notifBadge ?? false"
-    @notif-click="goToNotifications"
   >
     <div class="cb-home-main">
       <HomeEmpty v-if="!hasAnyRole" />
       <template v-else>
         <HomeCoachSection v-if="auth.isCoach" />
         <HomeOfficialSection v-if="auth.isOfficial" />
-        <HomeAdminSection v-if="auth.isAdmin" />
         <HomePlayerSection v-if="isPlayer" />
       </template>
     </div>

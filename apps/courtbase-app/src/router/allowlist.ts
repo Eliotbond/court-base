@@ -14,6 +14,15 @@ import type { AppRole } from '@/types/roles'
  * Aligné sur `docs/courtbase-app.md` § "Shell restreint — allowlist par rôle"
  * + le brief design `docs/design-brief-courtbase-app.md`.
  */
+/**
+ * **Alpha 2026-05-25** : la section admin et la page notifications sont
+ * désactivées en attendant les phases ultérieures (broadcast / staffing /
+ * FCM web push). On garde le type `AppRole` complet et l'entrée `admin`
+ * dans la map (tableau vide) pour ne pas casser les call-sites côté UI
+ * (`auth.isAdmin`, `useShellNav`, etc.). Conséquence : toutes les routes
+ * admin et la route `notifications` retombent sur le fallback `home` via
+ * le guard router (cf. `router/index.ts`).
+ */
 export const ALLOW: Record<AppRole, ReadonlyArray<string>> = {
   coach: [
     'home',
@@ -32,7 +41,6 @@ export const ALLOW: Record<AppRole, ReadonlyArray<string>> = {
     'match-request-create',
     'license-reviews',
     'license-request-review',
-    'notifications',
     'profile-settings',
   ],
   official: [
@@ -41,30 +49,13 @@ export const ALLOW: Record<AppRole, ReadonlyArray<string>> = {
     'my-assignments',
     'match-detail',
     'my-calendar',
-    'notifications',
     'profile-settings',
   ],
-  admin: [
-    'home',
-    'team',
-    'team-roster',
-    'member',
-    'staffing',
-    'staffing-detail',
-    'requests',
-    'request-detail',
-    'license-requests',
-    'agenda',
-    'my-calendar',
-    'broadcast',
-    'notifications',
-    'profile-settings',
-  ],
+  admin: [],
   player: [
     'home',
     'agenda',
     'my-calendar',
-    'notifications',
     'profile-settings',
   ],
 } as const

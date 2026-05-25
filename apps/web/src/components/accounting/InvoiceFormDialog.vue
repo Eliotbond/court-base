@@ -196,7 +196,7 @@ function onSubmit(): void {
           </label>
           <DatePicker
             v-model="form.issueDate"
-            date-format="dd.mm.yy"
+            date-format="dd/mm/yy"
             show-icon
             class="w-full"
           />
@@ -207,7 +207,7 @@ function onSubmit(): void {
           </label>
           <DatePicker
             v-model="form.dueDate"
-            date-format="dd.mm.yy"
+            date-format="dd/mm/yy"
             show-icon
             show-button-bar
             placeholder="Optionnel"

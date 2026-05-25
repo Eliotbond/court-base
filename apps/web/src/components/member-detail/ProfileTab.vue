@@ -1373,7 +1373,7 @@ function onDeleted(memberId: string): void {
         <span class="text-[12px] text-surface-600">Date</span>
         <DatePicker
           v-model="birthDateForm"
-          date-format="dd.mm.yy"
+          date-format="dd/mm/yy"
           show-icon
           class="mt-1 w-full"
           :max-date="new Date()"

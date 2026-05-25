@@ -2,7 +2,6 @@
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Bell,
   Calendar,
   Check,
   Clipboard,
@@ -20,7 +19,6 @@ import type { CbNavItem } from '@/components/ui/CbSidebar.vue'
 import type { CbTab } from '@/components/ui/CbTabBar.vue'
 import { useViewport } from '@/composables/useViewport'
 import {
-  countUnread,
   getTeam,
   listMembersByTeam,
   listRegistrationsToTreat,
@@ -165,7 +163,6 @@ function onCancel(): void {
 }
 
 // ─── Shell coach (tabs mobile + sidebar desktop) ─────────────────
-const notifBadgeCount = computed(() => countUnread())
 const registrationsToTreatCount = computed(() => listRegistrationsToTreat().length)
 
 const tabsCoach = computed<CbTab[]>(() => [
@@ -176,7 +173,6 @@ const tabsCoach = computed<CbTab[]>(() => [
     label: 'Inscriptions',
     badge: registrationsToTreatCount.value || undefined,
   },
-  { icon: Bell, label: 'Notifs', badge: notifBadgeCount.value || undefined },
 ])
 
 const navCoach = computed<CbNavItem[]>(() => [
@@ -188,7 +184,6 @@ const navCoach = computed<CbNavItem[]>(() => [
     label: 'Inscriptions',
     badge: registrationsToTreatCount.value || undefined,
   },
-  { icon: Bell, label: 'Notifications', badge: notifBadgeCount.value || undefined },
 ])
 
 function onTabSelect(index: number): void {
@@ -197,7 +192,6 @@ function onTabSelect(index: number): void {
     if (team.value) router.push({ name: 'planning', params: { teamId: team.value.id } })
     else router.push({ name: 'team' })
   } else if (index === 2) router.push({ name: 'registrations' })
-  else if (index === 3) router.push({ name: 'notifications' })
 }
 
 function onNavSelect(index: number): void {
@@ -207,11 +201,6 @@ function onNavSelect(index: number): void {
     if (team.value) router.push({ name: 'planning', params: { teamId: team.value.id } })
     else router.push({ name: 'team' })
   } else if (index === 3) router.push({ name: 'registrations' })
-  else if (index === 4) router.push({ name: 'notifications' })
-}
-
-function onNotifClick(): void {
-  router.push({ name: 'notifications' })
 }
 
 function onBack(): void {
@@ -349,11 +338,9 @@ function radioStyle(opt: RadioOpt, active: boolean, dis: boolean): string {
     v-else
     title="Présences"
     show-back
-    :notif-badge="notifBadgeCount > 0"
     :tabs="tabsCoach"
     :active-tab="1"
     @back="onBack"
-    @notif-click="onNotifClick"
     @tab-select="onTabSelect"
   >
     <!-- Header booking (transcription JSX lignes 437-446) -->

@@ -1,6 +1,12 @@
 <script setup lang="ts">
 /**
- * O2 — Mes assignations (officiel).
+ * O2 — Calendrier des Officiels (officiel).
+ *
+ * Renommé depuis "Mes assignations" le 2026-05-25 — le contenu (mes assignations
+ * + matchs à pourvoir au niveau du caller) n'a pas changé, seul le titre exposé
+ * a évolué pour mieux refléter la vue "calendrier officiel" (assignations
+ * confirmées + opportunités urgentes). Le nom de route `my-assignments` reste
+ * inchangé (identifiant technique).
  *
  * Orchestrateur de 2 tabs + inbox de remplacements :
  *  - **Inbox remplacements** (au-dessus des tabs, visible si demandes pending
@@ -91,10 +97,6 @@ function goToMatch(payload: { parentId: string; kind: 'home' | 'away' }): void {
   router.push({ name: 'match-detail', params: { id: payload.parentId } })
 }
 
-function goNotifications(): void {
-  router.push({ name: 'notifications' })
-}
-
 // ───────────────────────────────────────────────────────────────
 // Dialog "Demander un remplacement"
 // ───────────────────────────────────────────────────────────────
@@ -128,10 +130,8 @@ const officialLevelLabel = computed<string>(() => {
   <!-- ─── Mobile shell (<1024px) ─────────────────────────────── -->
   <CbMobileShell
     v-if="!isDesktop"
-    title="Mes assignations"
-    notif-badge
+    title="Calendrier des Officiels"
     :tabs="tabs"
-    @notif-click="goNotifications"
   >
     <!-- Inbox des demandes de remplacement reçues (auto-hide si vide) -->
     <ReplacementInbox v-if="!isLoading" />
@@ -182,7 +182,7 @@ const officialLevelLabel = computed<string>(() => {
     :items="nav"
     :user-role="primaryRoleLabel"
   >
-    <CbPageHead title="Mes assignations" :subtitle="officialLevelLabel">
+    <CbPageHead title="Calendrier des Officiels" :subtitle="officialLevelLabel">
       <template #actions>
         <div class="cb-segmented">
           <button

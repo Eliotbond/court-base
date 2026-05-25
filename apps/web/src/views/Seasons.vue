@@ -92,10 +92,10 @@ function statusPill(status: SeasonStatus): StatusPillDef {
     case 'active':
       return { variant: 'emerald', label: 'active' }
     case 'draft':
-      return { variant: 'amber', label: 'draft' }
+      return { variant: 'amber', label: 'brouillon' }
     case 'archived':
     default:
-      return { variant: 'slate', label: 'archived' }
+      return { variant: 'slate', label: 'archivée' }
   }
 }
 
@@ -182,7 +182,7 @@ function onNewSeason(): void {
     <div class="flex items-end justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-[22px] font-semibold tracking-tight">
-          Seasons
+          Saisons
         </h1>
         <p class="text-[13px] text-surface-500 mt-0.5">
           {{ headingSubline }}
@@ -226,7 +226,7 @@ function onNewSeason(): void {
         <div class="text-[12px] text-emerald-800/80 mt-0.5">
           {{ formatRange(activeSeason.startDate, activeSeason.endDate) }}
           · {{ activeSeason.teamsCount }} équipes
-          · <span class="num">{{ activeSeason.bookingsCount }}</span> bookings générés
+          · <span class="num">{{ activeSeason.bookingsCount }}</span> réservations générées
         </div>
       </div>
       <Pill
@@ -302,8 +302,8 @@ function onNewSeason(): void {
                 <div class="font-medium">
                   {{ data.name }}
                 </div>
-                <div class="text-[11px] text-surface-500 font-mono">
-                  {{ data.id }}
+                <div class="text-[11px] text-surface-500">
+                  {{ formatRange(data.startDate, data.endDate) }}
                 </div>
               </div>
             </div>
@@ -333,7 +333,7 @@ function onNewSeason(): void {
         </Column>
 
         <Column
-          header="Venues"
+          header="Salles"
           :pt="{ headerCell: { style: 'width: 200px' } }"
         >
           <template #body="{ data }">
@@ -375,7 +375,7 @@ function onNewSeason(): void {
         </Column>
 
         <Column
-          header="Bookings"
+          header="Réservations"
           :pt="{ headerCell: { style: 'width: 140px' } }"
         >
           <template #body="{ data }">

@@ -114,7 +114,7 @@ async function confirmDeleteClosure(id: string, name: string): Promise<void> {
 // Date helpers (formatter Intl, identique à Settings.vue ligne 2049-2102)
 // ---------------------------------------------------------------------------
 
-const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
+const dateFormatter = new Intl.DateTimeFormat('fr-FR', {
   day: '2-digit',
   month: '2-digit',
   year: 'numeric',
@@ -149,7 +149,7 @@ const isSaved = computed<boolean>(() => store.lastSaved === 'closurePeriods')
     <div class="flex items-start justify-between gap-4">
       <div>
         <h2 class="text-[16px] font-semibold">
-          Closure periods
+          Périodes de fermeture
         </h2>
         <p class="text-[13px] text-surface-500">
           Périodes de fermeture réutilisables entre saisons (vacances, travaux).

@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowLeft,
   ArrowRight,
-  Calendar,
   CalendarRange,
   Check,
   CheckCheck,
@@ -14,6 +13,8 @@ import {
   Users,
   X,
 } from 'lucide-vue-next'
+import DatePicker from 'primevue/datepicker'
+import PickList from 'primevue/picklist'
 import { useSeasonsStore } from '@/stores/seasons'
 import { useTeamsStore } from '@/stores/teams'
 import { useVenuesStore } from '@/stores/venues'
@@ -58,7 +59,7 @@ interface StepDef {
 const STEPS: readonly StepDef[] = [
   { index: 1, label: 'Identité' },
   { index: 2, label: 'Équipes' },
-  { index: 3, label: 'Venues' },
+  { index: 3, label: 'Salles' },
   { index: 4, label: 'Vérification' },
 ] as const
 
@@ -71,15 +72,14 @@ const submitError = ref<string | null>(null)
 // ---------------------------------------------------------------------------
 
 /** Préremplit avec la prochaine saison (1er sept de l'année courante → 30 juin). */
-function defaultStart(): string {
+function defaultStart(): Date {
   const year = new Date().getFullYear()
-  // ISO YYYY-MM-DD pour <input type="date">
-  return `${year}-09-01`
+  return new Date(year, 8, 1) // 8 = septembre (0-indexed)
 }
 
-function defaultEnd(): string {
+function defaultEnd(): Date {
   const year = new Date().getFullYear() + 1
-  return `${year}-06-30`
+  return new Date(year, 5, 30) // 5 = juin (0-indexed)
 }
 
 function defaultName(): string {
@@ -87,7 +87,13 @@ function defaultName(): string {
   return `Saison ${startYear}-${(startYear + 1) % 100}`
 }
 
-const form = ref({
+const form = ref<{
+  name: string
+  startDate: Date | null
+  endDate: Date | null
+  selectedTeamIds: Set<string>
+  selectedVenueIds: Set<string>
+}>({
   name: defaultName(),
   startDate: defaultStart(),
   endDate: defaultEnd(),
@@ -141,25 +147,73 @@ function ensureDefaultSelections(): void {
   if (form.value.selectedVenueIds.size === 0 && availableVenues.value.length > 0) {
     form.value.selectedVenueIds = new Set(availableVenues.value.map((v) => v.id))
   }
+  syncTeamPickList()
 }
 
 // ---------------------------------------------------------------------------
-// Toggles.
+// PickList — équipes participantes.
+//
+// PrimeVue PickList consomme un v-model `[source, target]` (deux listes
+// d'objets). Pour rester aligné avec le contrat `selectedTeamIds: Set<string>`,
+// on construit `pickListTeams` à partir des équipes disponibles + de la
+// sélection courante, puis on resync `selectedTeamIds` à chaque mutation de
+// la liste cible (déplacement utilisateur).
 // ---------------------------------------------------------------------------
 
-function toggleTeam(teamId: string): void {
-  const next = new Set(form.value.selectedTeamIds)
-  if (next.has(teamId)) {
-    next.delete(teamId)
-  } else {
-    next.add(teamId)
+interface TeamPickItem {
+  id: string
+  name: string
+  subtitle: string
+}
+
+function teamToItem(team: TeamRow): TeamPickItem {
+  const parts: string[] = []
+  if (team.category?.name) parts.push(team.category.name)
+  if (team.gender) parts.push(team.gender)
+  if (team.coachLabels.length > 0)
+    parts.push(`coach ${team.coachLabels.join(', ')}`)
+  return {
+    id: team.id,
+    name: team.name,
+    subtitle: parts.join(' · ') || '—',
   }
-  form.value.selectedTeamIds = next
 }
 
-function isTeamSelected(teamId: string): boolean {
-  return form.value.selectedTeamIds.has(teamId)
+/** v-model du PickList : [source = disponibles, target = sélectionnées]. */
+const pickListTeams = ref<[TeamPickItem[], TeamPickItem[]]>([[], []])
+
+function syncTeamPickList(): void {
+  const selected: TeamPickItem[] = []
+  const available: TeamPickItem[] = []
+  for (const team of availableTeams.value) {
+    const item = teamToItem(team)
+    if (form.value.selectedTeamIds.has(team.id)) selected.push(item)
+    else available.push(item)
+  }
+  pickListTeams.value = [available, selected]
 }
+
+// Resync quand la liste des équipes change (chargement async des stores).
+watch(
+  () => availableTeams.value.map((t) => t.id).join('|'),
+  () => syncTeamPickList(),
+)
+
+// Resync `selectedTeamIds` quand l'utilisateur déplace des éléments dans le
+// PickList. PrimeVue mute directement le v-model — on le détecte via watch
+// sur le contenu de la liste cible.
+watch(
+  () => pickListTeams.value[1].map((t) => t.id).join('|'),
+  () => {
+    form.value.selectedTeamIds = new Set(
+      pickListTeams.value[1].map((t) => t.id),
+    )
+  },
+)
+
+// ---------------------------------------------------------------------------
+// Toggles (venues — reste sur ToggleSwitch ; teams passe au PickList).
+// ---------------------------------------------------------------------------
 
 function toggleVenue(venueId: string): void {
   const next = new Set(form.value.selectedVenueIds)
@@ -183,7 +237,7 @@ const step1Valid = computed<boolean>(() => {
   const f = form.value
   if (!f.name.trim()) return false
   if (!f.startDate || !f.endDate) return false
-  return new Date(f.startDate).getTime() < new Date(f.endDate).getTime()
+  return f.startDate.getTime() < f.endDate.getTime()
 })
 
 const step2Valid = computed<boolean>(() => form.value.selectedTeamIds.size > 0)
@@ -266,6 +320,7 @@ function goToVenues(): void {
 
 async function onSubmit(): Promise<void> {
   if (!canAdvance.value || submitting.value) return
+  if (!form.value.startDate || !form.value.endDate) return
   submitting.value = true
   submitError.value = null
   try {
@@ -276,8 +331,8 @@ async function onSubmit(): Promise<void> {
       .map((v) => v.name)
     const newId = await seasonsStore.create({
       name: form.value.name.trim(),
-      startDate: new Date(form.value.startDate),
-      endDate: new Date(form.value.endDate),
+      startDate: form.value.startDate,
+      endDate: form.value.endDate,
       teamIds,
       venueIds,
       venueLabels,
@@ -306,9 +361,9 @@ const shortDateFormatter = new Intl.DateTimeFormat('fr-CH', {
   year: 'numeric',
 })
 
-function formatIsoDate(iso: string): string {
-  if (!iso) return '—'
-  return shortDateFormatter.format(new Date(iso))
+function formatDateValue(d: Date | null): string {
+  if (!d) return '—'
+  return shortDateFormatter.format(d)
 }
 
 const selectedTeamLabels = computed<string[]>(() =>
@@ -337,7 +392,7 @@ const selectedVenueLabels = computed<string[]>(() =>
           :size="12"
           :stroke-width="2"
         />
-        Seasons
+        Saisons
       </button>
       <span>·</span>
       <span class="text-surface-700">Nouvelle saison</span>
@@ -350,7 +405,7 @@ const selectedVenueLabels = computed<string[]>(() =>
         </h1>
         <p class="text-[13px] text-surface-500 mt-0.5">
           4 étapes. À la fin, on crée la saison en brouillon — l'activation
-          (génération des bookings) se fait depuis la liste, avec dry-run.
+          (génération des réservations) se fait depuis la liste.
         </p>
       </div>
       <button
@@ -475,26 +530,28 @@ const selectedVenueLabels = computed<string[]>(() =>
 
         <label class="block">
           <span class="text-[12px] text-surface-600 font-medium">Début de saison</span>
-          <div class="input-wrap mt-1">
-            <Calendar />
-            <input
-              v-model="form.startDate"
-              type="date"
-              class="input input-with-icon num"
-            >
-          </div>
+          <DatePicker
+            v-model="form.startDate"
+            class="w-full mt-1"
+            date-format="dd/mm/yy"
+            placeholder="JJ/MM/AAAA"
+            show-icon
+            icon-display="input"
+            :manual-input="true"
+          />
         </label>
 
         <label class="block">
           <span class="text-[12px] text-surface-600 font-medium">Fin de saison</span>
-          <div class="input-wrap mt-1">
-            <Calendar />
-            <input
-              v-model="form.endDate"
-              type="date"
-              class="input input-with-icon num"
-            >
-          </div>
+          <DatePicker
+            v-model="form.endDate"
+            class="w-full mt-1"
+            date-format="dd/mm/yy"
+            placeholder="JJ/MM/AAAA"
+            show-icon
+            icon-display="input"
+            :manual-input="true"
+          />
         </label>
       </div>
 
@@ -528,7 +585,7 @@ const selectedVenueLabels = computed<string[]>(() =>
             Équipes participantes
           </h2>
           <p class="text-[12px] text-surface-500 mt-1">
-            Active les équipes qui jouent cette saison.
+            Déplace dans « Sélectionnées » les équipes qui jouent cette saison.
             <span class="num">{{ form.selectedTeamIds.size }}</span> sur
             <span class="num">{{ availableTeams.length }}</span> sélectionnée<span
               v-if="form.selectedTeamIds.size > 1"
@@ -640,7 +697,7 @@ const selectedVenueLabels = computed<string[]>(() =>
         </div>
         <div class="text-[12px] text-surface-500 max-w-md">
           Toutes les équipes du club sont archivées. Désarchive-en une depuis
-          la page Teams, ou crée-en une nouvelle.
+          la page Équipes, ou crée-en une nouvelle.
         </div>
         <button
           type="button"
@@ -654,36 +711,37 @@ const selectedVenueLabels = computed<string[]>(() =>
           />
         </button>
       </div>
-      <ul
+      <PickList
         v-else
-        class="divide-y divide-surface-200 border border-surface-200 rounded-md"
+        v-model="pickListTeams"
+        data-key="id"
+        :show-source-controls="false"
+        :show-target-controls="false"
+        :striped-rows="true"
+        :pt="{
+          sourceListContainer: { style: 'max-height: 360px; overflow-y: auto;' },
+          targetListContainer: { style: 'max-height: 360px; overflow-y: auto;' },
+        }"
       >
-        <li
-          v-for="team in availableTeams"
-          :key="team.id"
-          class="flex items-center gap-3 px-4 py-3"
-        >
-          <div class="flex-1 min-w-0">
-            <div class="text-[13px] font-medium">
-              {{ team.name }}
-            </div>
-            <div class="text-[11px] text-surface-500">
-              {{ team.category?.name ?? '—' }} · {{ team.gender }}
-              <template v-if="team.coachLabels.length > 0">
-                · coach
-                <span class="text-surface-700">
-                  {{ team.coachLabels.join(', ') }}
-                </span>
-              </template>
-            </div>
+        <template #sourceheader>
+          <span class="text-[12px] font-semibold text-surface-700">
+            Disponibles
+            <span class="num text-surface-500">({{ pickListTeams[0].length }})</span>
+          </span>
+        </template>
+        <template #targetheader>
+          <span class="text-[12px] font-semibold text-surface-700">
+            Sélectionnées
+            <span class="num text-surface-500">({{ pickListTeams[1].length }})</span>
+          </span>
+        </template>
+        <template #option="{ option }">
+          <div class="flex flex-col leading-tight">
+            <span class="text-[13px] font-medium">{{ option.name }}</span>
+            <span class="text-[11px] text-surface-500">{{ option.subtitle }}</span>
           </div>
-          <ToggleSwitch
-            :model-value="isTeamSelected(team.id)"
-            :aria-label="`Inscrire ${team.name} dans la saison`"
-            @update:model-value="toggleTeam(team.id)"
-          />
-        </li>
-      </ul>
+        </template>
+      </PickList>
 
       <div
         v-if="!step2Valid"
@@ -711,12 +769,12 @@ const selectedVenueLabels = computed<string[]>(() =>
             :stroke-width="2"
             class="text-surface-500"
           />
-          Venues actives
+          Salles actives
         </h2>
         <p class="text-[12px] text-surface-500 mt-1">
-          Les venues utilisés cette saison (= `activeVenueIds`).
+          Les salles utilisées cette saison.
           <span class="num">{{ form.selectedVenueIds.size }}</span> sur
-          <span class="num">{{ availableVenues.length }}</span> sélectionné<span
+          <span class="num">{{ availableVenues.length }}</span> sélectionnée<span
             v-if="form.selectedVenueIds.size > 1"
           >s</span>.
         </p>
@@ -822,7 +880,7 @@ const selectedVenueLabels = computed<string[]>(() =>
         </div>
         <div class="text-[12px] text-surface-500 max-w-md">
           Aucune salle n'a de court actif. Ajoute des courts ou réactive-en
-          depuis la page Venues pour pouvoir les inscrire dans la saison.
+          depuis la page Salles pour pouvoir les inscrire dans la saison.
         </div>
         <button
           type="button"
@@ -870,7 +928,7 @@ const selectedVenueLabels = computed<string[]>(() =>
           :size="13"
           :stroke-width="2"
         />
-        Sélectionne au moins un venue pour continuer.
+        Sélectionne au moins une salle pour continuer.
       </div>
     </div>
 
@@ -905,7 +963,7 @@ const selectedVenueLabels = computed<string[]>(() =>
               Période
             </dt>
             <dd class="font-medium mt-0.5 num">
-              {{ formatIsoDate(form.startDate) }} → {{ formatIsoDate(form.endDate) }}
+              {{ formatDateValue(form.startDate) }} → {{ formatDateValue(form.endDate) }}
             </dd>
           </div>
           <div>
@@ -924,14 +982,14 @@ const selectedVenueLabels = computed<string[]>(() =>
           </div>
           <div>
             <dt class="text-[11px] uppercase tracking-wider text-surface-500 font-semibold">
-              Venues ({{ selectedVenueLabels.length }})
+              Salles ({{ selectedVenueLabels.length }})
             </dt>
             <dd class="mt-0.5">
               <span
                 v-if="selectedVenueLabels.length === 0"
                 class="text-surface-400"
               >
-                Aucun
+                Aucune
               </span>
               <span v-else>{{ selectedVenueLabels.join(' · ') }}</span>
             </dd>
@@ -941,7 +999,7 @@ const selectedVenueLabels = computed<string[]>(() =>
         <div class="text-[12px] text-surface-500 border-t border-surface-200 pt-3">
           La saison sera créée en
           <strong class="text-surface-700">brouillon</strong>. La génération
-          des bookings se déclenche depuis l'écran Seasons, après dry-run.
+          des réservations se déclenche depuis l'écran Saisons.
         </div>
       </div>
 

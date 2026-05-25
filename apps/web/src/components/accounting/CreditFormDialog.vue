@@ -149,7 +149,7 @@ function onSubmit(): void {
           <label class="text-[12px] font-medium text-surface-600">Date</label>
           <DatePicker
             v-model="form.date"
-            date-format="dd.mm.yy"
+            date-format="dd/mm/yy"
             show-icon
             class="w-full"
           />

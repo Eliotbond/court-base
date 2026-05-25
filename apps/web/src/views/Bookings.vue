@@ -22,6 +22,10 @@ import TabPanels from 'primevue/tabpanels'
 import TabPanel from 'primevue/tabpanel'
 import VueCal, { type VueCalEvent, type VueCalSplit } from 'vue-cal'
 import 'vue-cal/dist/vuecal.css'
+// Locale FR — enregistrée par effet de bord auprès de vue-cal (labels jours /
+// mois / "Aujourd'hui" / etc.). Sans cet import, le composant reste en
+// anglais malgré la prop `locale="fr"`.
+import 'vue-cal/dist/i18n/fr.es.js'
 import { useBookingsStore } from '@/stores/bookings'
 import { useTeamsStore } from '@/stores/teams'
 import type { BookingRow } from '@/repositories/bookings.repo'
@@ -35,6 +39,7 @@ import BookingEditScopeDialog from '@/components/bookings/BookingEditScopeDialog
 import BookingEditFormDialog from '@/components/bookings/BookingEditFormDialog.vue'
 import BookingFormDialog from '@/components/bookings/BookingFormDialog.vue'
 import BookingListPanel from '@/components/bookings/BookingListPanel.vue'
+import { formatDateShort, formatDateTime } from '@/utils/dates'
 
 const store = useBookingsStore()
 const teamsStore = useTeamsStore()
@@ -206,7 +211,7 @@ function eventClass(b: BookingRow): string {
 function eventTitle(b: BookingRow): string {
   const opponent = b.opponentName?.trim()
   if (b.slotType === 'match_home' && opponent) {
-    return `${b.teamName ?? 'Match'} vs ${opponent}`
+    return `${b.teamName ?? 'Match'} contre ${opponent}`
   }
   if (b.slotType === 'match_away' && opponent) {
     return `À ${opponent}`
@@ -264,31 +269,29 @@ function onEventClick(payload: unknown): void {
 // ---------------------------------------------------------------------------
 // Navigation — boutons custom pour conserver l'identité visuelle (vue-cal a
 // son propre title bar qu'on cache via `:hide-title-bar="true"`).
+//
+// Le label est construit en DD/MM/YYYY (cohérent avec le reste de la page —
+// helper `formatDateShort`). Pour la vue mois, on reste sur un libellé
+// "mois/AAAA" (un mois ne se résume pas en DD/MM/YYYY).
 // ---------------------------------------------------------------------------
 
-const longDateFormatter = new Intl.DateTimeFormat('fr-CH', {
-  weekday: 'long',
-  day: 'numeric',
+const monthYearFormatter = new Intl.DateTimeFormat('fr-CH', {
   month: 'long',
   year: 'numeric',
 })
 
 const dateLabel = computed<string>(() => {
   if (activeView.value === 'day') {
-    const raw = longDateFormatter.format(selectedDate.value)
-    return raw.charAt(0).toUpperCase() + raw.slice(1)
+    return formatDateShort(selectedDate.value)
   }
   if (activeView.value === 'week') {
     const start = startOfWeek(selectedDate.value)
     const end = new Date(start)
     end.setDate(end.getDate() + 6)
-    const fmt = new Intl.DateTimeFormat('fr-CH', { day: 'numeric', month: 'long' })
-    const yearFmt = new Intl.DateTimeFormat('fr-CH', { year: 'numeric' })
-    return `${fmt.format(start)} → ${fmt.format(end)} ${yearFmt.format(end)}`
+    return `${formatDateShort(start)} → ${formatDateShort(end)}`
   }
-  // month
-  const fmt = new Intl.DateTimeFormat('fr-CH', { month: 'long', year: 'numeric' })
-  const raw = fmt.format(selectedDate.value)
+  // Vue mois — on garde un libellé mois/AAAA, capitalisé.
+  const raw = monthYearFormatter.format(selectedDate.value)
   return raw.charAt(0).toUpperCase() + raw.slice(1)
 })
 
@@ -377,16 +380,16 @@ const selectedBooking = computed<BookingRow | null>(() => {
 function slotTypeLabel(t: SlotType): string {
   switch (t) {
     case 'training':
-      return 'Training'
+      return 'Entraînement'
     case 'match_home':
-      return 'Match home'
+      return 'Match à domicile'
     case 'match_away':
-      return 'Match away'
+      return 'Match à l\'extérieur'
     case 'reserve':
-      return 'Reserve'
+      return 'Réserve'
     case 'custom':
     default:
-      return 'Custom'
+      return 'Personnalisé'
   }
 }
 
@@ -423,24 +426,12 @@ function slotTypePillVariant(
 }
 
 function formatLongDate(b: BookingRow): string {
-  const ms = bookingDateMillis(b)
-  const raw = longDateFormatter.format(new Date(ms))
-  return raw.charAt(0).toUpperCase() + raw.slice(1)
+  // Convention DD/MM/YYYY — cohérent avec le reste de la page.
+  return formatDateShort(b.date as unknown as { seconds: number; toDate?: () => Date })
 }
 
 function formatActionLogTime(entry: BookingActionLogEntry): string {
-  // any: comme `bookingDateMillis`, on lit `seconds` (le Timestamp neutre
-  // exporté par shared-types n'expose pas `.toDate()`).
-  const ts = entry.at as unknown as { seconds: number; toDate?: () => Date }
-  const d = typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts.seconds * 1000)
-  const fmt = new Intl.DateTimeFormat('fr-CH', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-  return fmt.format(d)
+  return formatDateTime(entry.at as unknown as { seconds: number; toDate?: () => Date })
 }
 
 function statusPill(b: BookingRow): {
@@ -522,8 +513,23 @@ function handleEditSaved(): void {
 </script>
 
 <template>
-  <section class="p-6 space-y-4">
-    <Tabs v-model:value="activeTab">
+  <!--
+    Layout responsive : la page occupe toute la hauteur disponible (viewport
+    moins le header `h-14`). En mode "planning", le calendrier vue-cal
+    s'étire pour occuper toute la place restante (flex-1, min-h-0) — la
+    barre d'outils (sticky top) reste prioritaire en hauteur, le reste va
+    au calendrier. Côté largeur : le conteneur fluide (w-full) laisse
+    vue-cal prendre toute la largeur du `<main>` (calculée par le grid de
+    l'AppLayout : `[240px_1fr]`). Sur écran 1280px+ : pleine largeur. Sur
+    mobile (≤640px) : la grille reste utilisable, on cache les splits par
+    court (cf. <style scoped>) et on impose un scroll horizontal léger.
+  -->
+  <section class="p-4 md:p-6 flex flex-col gap-4 h-[calc(100vh-3.5rem)] min-h-0">
+    <Tabs
+      v-model:value="activeTab"
+      class="flex-1 min-h-0 flex flex-col"
+      :pt="{ panels: { class: 'flex-1 min-h-0 flex flex-col p-0 pt-3' } }"
+    >
       <TabList>
         <Tab value="planning">
           Planning
@@ -533,10 +539,13 @@ function handleEditSaved(): void {
         </Tab>
       </TabList>
       <TabPanels>
-        <TabPanel value="planning">
-          <div class="space-y-4">
+        <TabPanel
+          value="planning"
+          class="flex-1 min-h-0 flex flex-col"
+        >
+          <div class="flex-1 min-h-0 flex flex-col gap-4">
             <!-- Toolbar : nav + view switch + venue filter + create -->
-            <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center gap-3 flex-wrap shrink-0">
               <div class="flex items-center gap-1.5">
                 <Button
                   severity="secondary"
@@ -676,10 +685,12 @@ function handleEditSaved(): void {
               </div>
             </div>
 
-            <!-- Calendrier vue-cal -->
+            <!-- Calendrier vue-cal — `flex-1 min-h-0` pour occuper toute la
+                 place verticale restante. `bookings-vuecal-wrap` porte les
+                 overrides CSS (largeur 100%, scroll horizontal mobile). -->
             <div
               v-else
-              class="card overflow-hidden"
+              class="card overflow-hidden flex-1 min-h-0 bookings-vuecal-wrap"
             >
               <VueCal
                 v-model:selected-date="selectedDate"
@@ -697,6 +708,7 @@ function handleEditSaved(): void {
                 :events-on-month-view="'short'"
                 locale="fr"
                 :twelve-hour="false"
+                style="height: 100%; width: 100%;"
                 @event-click="onEventClick"
               />
             </div>
@@ -919,31 +931,44 @@ function handleEditSaved(): void {
                 </div>
               </template>
             </Drawer>
-
-            <BookingFormDialog v-model:visible="showCreateDialog" />
-
-            <BookingEditScopeDialog
-              v-model:visible="showScopeDialog"
-              :intent="scopeIntent"
-              :is-series="isSelectedBookingSeries"
-              :is-past="isSelectedBookingPast"
-              @confirm="handleScopeConfirm"
-            />
-
-            <BookingEditFormDialog
-              v-model:visible="showEditFormDialog"
-              :booking="selectedBooking"
-              :scope="editScope"
-              :is-past="isSelectedBookingPast"
-              @saved="handleEditSaved"
-            />
           </div>
         </TabPanel>
-        <TabPanel value="list">
-          <BookingListPanel />
+        <TabPanel
+          value="list"
+          class="flex-1 min-h-0 overflow-y-auto"
+        >
+          <!--
+            `@create` ouvre le même dialog `BookingFormDialog` que le bouton
+            "Nouvelle réservation" du panneau Planning — on évite de monter
+            une seconde instance du dialog (réutilise `showCreateDialog`).
+          -->
+          <BookingListPanel @create="openCreateDialog" />
         </TabPanel>
       </TabPanels>
     </Tabs>
+
+    <!--
+      Dialogs partagés — montés au niveau racine (hors des TabPanels) pour
+      rester disponibles quel que soit l'onglet actif (le PrimeVue Tabs
+      détruit le contenu des panneaux inactifs par défaut).
+    -->
+    <BookingFormDialog v-model:visible="showCreateDialog" />
+
+    <BookingEditScopeDialog
+      v-model:visible="showScopeDialog"
+      :intent="scopeIntent"
+      :is-series="isSelectedBookingSeries"
+      :is-past="isSelectedBookingPast"
+      @confirm="handleScopeConfirm"
+    />
+
+    <BookingEditFormDialog
+      v-model:visible="showEditFormDialog"
+      :booking="selectedBooking"
+      :scope="editScope"
+      :is-past="isSelectedBookingPast"
+      @saved="handleEditSaved"
+    />
   </section>
 </template>
 
@@ -960,9 +985,35 @@ function handleEditSaved(): void {
  * du scope Vue. On évite `!important` quand un poids plus élevé suffit.
  */
 
+/*
+ * Wrapper de vue-cal — width 100% pour absorber toute la largeur dispo
+ * (la grille parente AppLayout impose déjà `1fr` sur la colonne main).
+ * On gère également le scroll horizontal en mode "day" sur petit écran :
+ * quand la grille split-days dépasse la largeur (beaucoup de courts), un
+ * scroll horizontal apparaît plutôt que d'écraser les colonnes.
+ */
+.bookings-vuecal-wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.bookings-vuecal-wrap > :deep(.vuecal) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Mode `day` avec splits : autorise un scroll horizontal interne plutôt que
+   d'écraser les colonnes (utile quand il y a beaucoup de courts ou un
+   viewport étroit). */
+.bookings-vuecal-wrap :deep(.vuecal--day-view .vuecal__bg) {
+  overflow-x: auto;
+}
+
 :deep(.vuecal) {
   font-size: 12px;
   font-family: inherit;
+  width: 100%;
 }
 
 :deep(.vuecal__title-bar) {
@@ -1066,5 +1117,38 @@ function handleEditSaved(): void {
 /* Cellule du jour en cours. */
 :deep(.vuecal--day-view .vuecal__cell--today) {
   background: rgb(254 252 232 / 0.4);
+}
+
+/*
+ * Mobile (≤ 640px) — desktop reste prioritaire (cf. tâche : "ok si
+ * utilisable" sur mobile). On serre la densité visuelle (police plus
+ * petite, padding réduit, labels splits compacts) et on rappelle le
+ * scroll horizontal pour éviter l'overflow. La vue "day" reste
+ * utilisable colonne par colonne via swipe.
+ */
+@media (max-width: 640px) {
+  :deep(.vuecal) {
+    font-size: 11px;
+  }
+  :deep(.vuecal__event) {
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+  :deep(.vuecal__event-content) {
+    font-size: 9.5px;
+  }
+  :deep(.vuecal__split-days-headers .day-split-header) {
+    font-size: 9.5px;
+    padding: 4px 2px;
+    letter-spacing: 0.02em;
+  }
+  :deep(.vuecal__time-column .vuecal__time-cell-label) {
+    font-size: 9px;
+  }
+  /* Largeur minimale d'une colonne split en mobile pour rester lisible —
+     déclenche le scroll horizontal si la grille dépasse. */
+  :deep(.vuecal--day-view .vuecal__cell-split) {
+    min-width: 110px;
+  }
 }
 </style>

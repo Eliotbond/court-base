@@ -65,10 +65,15 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/Home.vue'),
   },
   {
+    // Alpha 2026-05-25 : la route est conservée pour ne pas casser les
+    // lazy imports / liens internes, mais elle n'est listée dans **aucun**
+    // rôle de `allowlist.ts`. Le `publicWithinAuth` a été retiré pour
+    // qu'elle retombe sous l'allowlist standard → redirige vers `home`
+    // pour tous les rôles tant que les notifs ne sont pas branchées
+    // (FCM web push prévu en Phase 5).
     path: '/notifications',
     name: 'notifications',
     component: () => import('@/views/common/Notifications.vue'),
-    meta: { publicWithinAuth: true },
   },
   {
     path: '/profile',

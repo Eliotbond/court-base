@@ -81,7 +81,7 @@ const isSaved = computed<boolean>(() => store.lastSaved === 'dues')
   <section class="space-y-5">
     <div>
       <h2 class="text-[16px] font-semibold">
-        Dues — cycle de cotisation
+        Cycle de cotisation
       </h2>
       <p class="text-[13px] text-surface-500">
         Configuration du lifecycle automatique géré par les Cloud Functions
@@ -91,7 +91,7 @@ const isSaved = computed<boolean>(() => store.lastSaved === 'dues')
 
     <div class="grid grid-cols-2 gap-6">
       <label class="block">
-        <span class="text-[12px] text-surface-600">Grace period (jours)</span>
+        <span class="text-[12px] text-surface-600">Période de grâce (jours)</span>
         <InputNumber
           v-model="duesForm.gracePeriodDays"
           :min="0"

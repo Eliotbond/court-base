@@ -851,7 +851,6 @@ const userDisplayName = computed(() => auth.displayName)
     v-else
     title="Mon Calendrier"
     :tabs="tabs"
-    @notif-click="router.push({ name: 'notifications' })"
   >
     <div class="mc-tabs-mobile">
       <div class="cb-segmented mc-segmented-full">

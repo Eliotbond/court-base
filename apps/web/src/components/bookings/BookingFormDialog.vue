@@ -15,6 +15,7 @@ import type {
 } from '@club-app/shared-types'
 import { useBookingsStore } from '@/stores/bookings'
 import { useTeamsStore } from '@/stores/teams'
+import { formatDateShort } from '@/utils/dates'
 
 /**
  * Wizard de création d'une réservation manuelle — one-shot ou récurrente
@@ -627,17 +628,12 @@ async function submit(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Format helpers (preview)
+// Format helpers (preview) — délègue au helper central pour cohérence
+// DD/MM/YYYY sur toute la page Bookings.
 // ---------------------------------------------------------------------------
 
-const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric',
-})
-
 function formatDate(d: Date): string {
-  return dateFormatter.format(d)
+  return formatDateShort(d)
 }
 
 const MAX_CONFLICT_DATES_SHOWN = 5

@@ -220,7 +220,7 @@ async function submitRolesDialog(): Promise<void> {
     <div class="flex items-start justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-[22px] font-semibold tracking-tight">
-          Admin team
+          Équipe admin
         </h1>
         <p class="text-[13px] text-surface-500 mt-0.5">
           Utilisateurs portant le rôle <code class="font-mono text-[11px]">admin</code>

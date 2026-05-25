@@ -224,7 +224,7 @@ async function submit(): Promise<void> {
           </label>
           <DatePicker
             v-model="form.activatedAt"
-            date-format="dd.mm.yy"
+            date-format="dd/mm/yy"
             show-icon
             class="w-full"
             :disabled="submitting"
@@ -249,7 +249,7 @@ async function submit(): Promise<void> {
           </label>
           <DatePicker
             v-model="form.issuedAt"
-            date-format="dd.mm.yy"
+            date-format="dd/mm/yy"
             show-icon
             show-button-bar
             class="w-full"
@@ -262,7 +262,7 @@ async function submit(): Promise<void> {
           </label>
           <DatePicker
             v-model="form.dueAt"
-            date-format="dd.mm.yy"
+            date-format="dd/mm/yy"
             show-icon
             show-button-bar
             class="w-full"

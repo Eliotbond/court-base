@@ -304,7 +304,7 @@ async function confirmDeleteMatchType(): Promise<void> {
     <div class="flex items-start justify-between gap-4">
       <div>
         <h2 class="text-[16px] font-semibold">
-          Match types
+          Types de match
         </h2>
         <p class="text-[13px] text-surface-500">
           Référentiel des types de compétition (CSJC, AFBB, Amical, …).

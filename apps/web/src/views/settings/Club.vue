@@ -1,26 +1,19 @@
 <script setup lang="ts">
 /**
- * Settings → Club info.
+ * Settings → Informations du club.
  *
- * Cette vue regroupe trois cards :
+ * Cette vue regroupe deux cards :
  *   1. Identité du club (nom, code court, adresse, contact, logo)
- *   2. Abonnement (read-only)
- *   3. Infos bancaires (IBAN, BIC, titulaire, instructions)
+ *   2. Infos bancaires (IBAN, BIC, titulaire, instructions)
  *
  * Architecture : aucune lecture/écriture Firestore directe — tout passe par
  * `useSettingsStore` (cf. `docs/frontend-desktop.md` §architecture en couches).
- *
- * Extrait depuis l'ancien `Settings.vue` monolithique (lignes 140-456 du script,
- * 2173-2553 du template, 2046-2078 pour les helpers d'abonnement). Le wrapper
- * `v-if="activeSection === 'general'"` a été supprimé : la vue n'est rendue que
- * lorsque la route `/settings/club` est active.
  */
 
 import { onMounted, ref, watch } from 'vue'
 import { Banknote, Building2, Check, Dribbble } from 'lucide-vue-next'
 import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
-import Pill from '@/components/ui/Pill.vue'
 import { useSettingsStore } from '@/stores/settings'
 import {
   BANKING_FIELD_LIMITS,
@@ -30,11 +23,7 @@ import {
   validateBic,
   validateIban,
 } from '@/utils/banking'
-import type {
-  ClubAddress,
-  SubscriptionStatus,
-  Timestamp,
-} from '@club-app/shared-types'
+import type { ClubAddress } from '@club-app/shared-types'
 
 const store = useSettingsStore()
 
@@ -369,42 +358,6 @@ function resetBanking(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Subscription card — display helpers (extraits de Settings.vue lignes 2046-2078).
-// ---------------------------------------------------------------------------
-
-const dateFormatter = new Intl.DateTimeFormat('fr-CH', {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-})
-
-function tsToDate(t: Timestamp | null): Date | null {
-  if (!t) return null
-  return new Date(t.seconds * 1000)
-}
-
-function fmtDate(d: Date | null): string {
-  if (!d) return '—'
-  return dateFormatter.format(d)
-}
-
-function subscriptionPillVariant(
-  status: SubscriptionStatus,
-): 'emerald' | 'sky' | 'amber' | 'rose' {
-  switch (status) {
-    case 'paid':
-      return 'emerald'
-    case 'trial':
-      return 'sky'
-    case 'free_tier':
-      return 'amber'
-    case 'past_due':
-    default:
-      return 'rose'
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Saved banner helpers (per-section) — version locale puisque la vue n'a que
 // deux sections (`general` et `banking`).
 // ---------------------------------------------------------------------------
@@ -424,10 +377,10 @@ function isSavedThis(section: 'general' | 'banking'): boolean {
     <div class="flex items-end justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-[22px] font-semibold tracking-tight">
-          Club info
+          Informations du club
         </h1>
         <p class="text-[13px] text-surface-500 mt-0.5">
-          Identité du club, abonnement et coordonnées bancaires.
+          Identité du club et coordonnées bancaires.
         </p>
       </div>
     </div>
@@ -448,7 +401,7 @@ function isSavedThis(section: 'general' | 'banking'): boolean {
             Configuration générale
           </h2>
           <p class="text-[13px] text-surface-500">
-            Identité du club et statut d'abonnement.
+            Identité du club, logo et coordonnées de contact.
           </p>
         </div>
       </div>
@@ -576,60 +529,6 @@ function isSavedThis(section: 'general' | 'banking'): boolean {
         >
           Supprimer
         </button>
-      </div>
-
-      <!-- Subscription card -->
-      <div>
-        <h3 class="text-[14px] font-semibold mb-2">
-          Abonnement
-        </h3>
-        <div class="grid grid-cols-3 gap-3">
-          <div class="border border-surface-200 rounded-md p-3">
-            <div
-              class="text-[11px] uppercase tracking-wider text-surface-400 font-semibold"
-            >
-              Statut
-            </div>
-            <div class="mt-1 flex items-center gap-2">
-              <template v-if="store.subscription">
-                <Pill :variant="subscriptionPillVariant(store.subscription.status)">
-                  {{ store.subscription.status }}
-                </Pill>
-                <span class="text-[12px] text-surface-500">
-                  renouvellement {{ fmtDate(tsToDate(store.subscription.renewsAt)) }}
-                </span>
-              </template>
-              <template v-else>
-                <span class="text-[12px] text-surface-400">—</span>
-              </template>
-            </div>
-          </div>
-          <div class="border border-surface-200 rounded-md p-3">
-            <div
-              class="text-[11px] uppercase tracking-wider text-surface-400 font-semibold"
-            >
-              Plan
-            </div>
-            <div class="mt-1 font-medium">
-              {{ store.subscription?.planLabel ?? '—' }}
-            </div>
-          </div>
-          <div class="border border-surface-200 rounded-md p-3">
-            <div
-              class="text-[11px] uppercase tracking-wider text-surface-400 font-semibold"
-            >
-              Membres inclus
-            </div>
-            <div class="mt-1 num font-medium">
-              <template v-if="store.subscription">
-                {{ store.subscription.memberCount }} / {{ store.subscription.memberCap }}
-              </template>
-              <template v-else>
-                —
-              </template>
-            </div>
-          </div>
-        </div>
       </div>
 
       <!-- Footer actions -->

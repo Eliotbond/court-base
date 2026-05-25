@@ -375,7 +375,7 @@ function dismissFreedNotice(): void {
 // ce soit quand `externalSource !== 'basketplan'`).
 // ---------------------------------------------------------------------------
 
-const syncedAtFormatter = new Intl.DateTimeFormat('fr-CH', {
+const syncedAtFormatter = new Intl.DateTimeFormat('fr-FR', {
   day: '2-digit',
   month: '2-digit',
   year: 'numeric',
@@ -498,7 +498,7 @@ function quarterRows(m: MatchRow): QuarterRow[] | null {
     <div class="flex items-end justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-[22px] font-semibold tracking-tight">
-          Matches
+          Matchs
         </h1>
         <p class="text-[13px] text-surface-500 mt-0.5">
           {{ headingSubline }}
@@ -731,7 +731,7 @@ function quarterRows(m: MatchRow): QuarterRow[] | null {
           </Column>
 
           <Column
-            header="Match type"
+            header="Type de match"
             :pt="{ headerCell: { style: 'width: 160px' } }"
           >
             <template #body="{ data }">

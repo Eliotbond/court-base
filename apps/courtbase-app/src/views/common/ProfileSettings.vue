@@ -246,10 +246,6 @@ function onBack(): void {
   else router.push({ name: 'home' })
 }
 
-function goNotifications(): void {
-  router.push({ name: 'notifications' })
-}
-
 function onEditProfile(): void {
   // Reuse ProfileSetup en mode "edit" pour la prochaine itération.
   router.push({ name: 'profile-setup' })
@@ -271,10 +267,8 @@ onMounted(async () => {
     title="Mon profil"
     club="BCA"
     show-back
-    notif-badge
     :tabs="tabs"
     @back="onBack"
-    @notif-click="goNotifications"
   >
     <div class="cb-page profile-page">
       <!-- Card user -->
